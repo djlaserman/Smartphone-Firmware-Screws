@@ -1,0 +1,48 @@
+# Ignore all files by default
+*
+
+# Allow only specific files and directories
+!_smart_firm_alltoolkit.py
+!tools/
+
+# Allow all contents of tools directory
+!tools/**
+
+# Ignore specific files in tools if needed (none currently)
+# tools/some-file-to-ignore
+
+# Ignore git files
+.git/
+.gitignore
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Ignore OS specific files
+.DS_Store
+Thumbs.db
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore build artifacts
+dist/
+build/
+*.egg-info/
+
+# Ignore crash logs and debug files
+crash_log.txt
+startup_debug.log
+elevation_log.txt
+appmap.log
