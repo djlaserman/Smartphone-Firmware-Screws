@@ -54,7 +54,7 @@ except Exception:
 # Configuration & Constants
 # -------------------------
 APP_TITLE = "Smartphone Firmware Screws"
-VERSION = "4.2.0"  # Updated for fixes
+VERSION = "1.0.0"  # Updated for fixes
 TOOLS_DIR = os.path.join(os.path.dirname(__file__), "tools")
 
 # Configure a file handler for startup logging
