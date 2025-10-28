@@ -1829,10 +1829,15 @@ class HexEditorWidget(ttk.Frame):
 
     # Find / Replace / Goto
     def find_dialog(self):
-        # Create a simple find dialog
+        # Create a persistent find dialog
+        if hasattr(self, 'find_window') and self.find_window.winfo_exists():
+            self.find_window.lift()
+            return
+
         find_window = tk.Toplevel(self)
         find_window.title("Find (hex or text)")
-        find_window.geometry("400x150")
+        find_window.geometry("450x200")
+        self.find_window = find_window
 
         ttk.Label(find_window, text="Pattern (hex bytes space-separated or text):").pack(pady=5)
         find_entry = ttk.Entry(find_window, width=50)
@@ -1841,24 +1846,33 @@ class HexEditorWidget(ttk.Frame):
         is_hex_var = tk.BooleanVar(value=False)  # Default to text search
         ttk.Checkbutton(find_window, text="Hex input", variable=is_hex_var).pack(pady=5)
 
+        # Occurrence counter label
+        self.occurrence_label = ttk.Label(find_window, text="")
+        self.occurrence_label.pack(pady=5)
+
+        # Buttons frame
+        button_frame = ttk.Frame(find_window)
+        button_frame.pack(pady=10)
+
         def do_find():
             pattern = find_entry.get().strip()
             if not pattern:
-                find_window.destroy()
                 return
             result = (pattern, is_hex_var.get())
-            find_window.destroy()
             # Process the find result
             self._process_find_result(result)
 
-        ttk.Button(find_window, text="Find", command=do_find).pack(pady=10)
+        ttk.Button(button_frame, text="Find", command=do_find).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Previous", command=self.find_previous).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Next", command=self.find_next).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close", command=find_window.destroy).pack(side=tk.LEFT, padx=5)
+
         find_entry.focus_set()
         find_window.transient(self.winfo_toplevel())
-        find_window.grab_set()
+        find_window.protocol("WM_DELETE_WINDOW", lambda: setattr(self, 'find_window', None))
 
     def _process_find_result(self, result):
         pattern, is_hex = result
-        start = 0
         data = self._get_slice(0, self._get_len())
         if is_hex:
             try:
@@ -1868,14 +1882,91 @@ class HexEditorWidget(ttk.Frame):
                 return
         else:
             pat = pattern.encode("utf-8")
-        idx = data.find(pat, start)
-        if idx >= 0:
-            self.offset_top = max(0, idx - 256)
-            self.refresh_view()
-            self.update_selection_info(idx, len(pat))
-            self.set_status(f"Found at 0x{idx:08X}")
-        else:
+
+        # Store current pattern for highlighting
+        self.current_find_pattern = pat
+
+        # Find all occurrences
+        self.find_occurrences = []
+        start = 0
+        while True:
+            idx = data.find(pat, start)
+            if idx == -1:
+                break
+            self.find_occurrences.append(idx)
+            start = idx + len(pat)
+
+        if not self.find_occurrences:
+            self.occurrence_label.config(text="No occurrences found")
             messagebox.showinfo("Find", "Pattern not found")
+            return
+
+        # Initialize current occurrence index
+        self.current_occurrence = 0
+        self._goto_occurrence(self.current_occurrence)
+
+    def _goto_occurrence(self, index):
+        if not hasattr(self, 'find_occurrences') or not self.find_occurrences:
+            return
+
+        idx = self.find_occurrences[index]
+        # Get the actual pattern length from the stored pattern
+        if hasattr(self, 'current_find_pattern'):
+            pat_len = len(self.current_find_pattern)
+        else:
+            pat_len = 1  # Fallback
+
+        # Highlight the current occurrence
+        self._highlight_occurrence(idx, pat_len)
+
+        # Update view and selection
+        self.offset_top = max(0, idx - 256)
+        self.refresh_view()
+        self.update_selection_info(idx, pat_len)
+        self.set_status(f"Found at 0x{idx:08X}")
+
+        # Update occurrence counter
+        self.occurrence_label.config(text=f"{index + 1} of {len(self.find_occurrences)}")
+
+    def _highlight_occurrence(self, offset, length):
+        """Highlight a specific occurrence in the hex view"""
+        # Clear previous highlights
+        self.hex_text.tag_remove("find_highlight", "1.0", tk.END)
+
+        # Calculate which lines contain this occurrence
+        bytes_per_line = self.bytes_per_line
+        start_line = offset // bytes_per_line
+        end_line = (offset + length - 1) // bytes_per_line
+
+        for line_idx in range(start_line, end_line + 1):
+            line_start_offset = line_idx * bytes_per_line
+            line_end_offset = min(line_start_offset + bytes_per_line, self._get_len())
+
+            # Find the range within this line
+            occ_start = max(offset, line_start_offset)
+            occ_end = min(offset + length, line_end_offset)
+
+            if occ_start < occ_end:
+                # Convert to text positions
+                char_start = 10 + (occ_start - line_start_offset) * 3  # 3 chars per byte (XX + space)
+                char_end = 10 + (occ_end - line_start_offset) * 3 - 1  # -1 to exclude trailing space
+
+                self.hex_text.tag_add("find_highlight", f"{line_idx + 1}.{char_start}", f"{line_idx + 1}.{char_end}")
+
+        # Configure highlight tag
+        self.hex_text.tag_config("find_highlight", background="yellow", foreground="black")
+
+    def find_next(self):
+        if not hasattr(self, 'find_occurrences') or not self.find_occurrences:
+            return
+        self.current_occurrence = (self.current_occurrence + 1) % len(self.find_occurrences)
+        self._goto_occurrence(self.current_occurrence)
+
+    def find_previous(self):
+        if not hasattr(self, 'find_occurrences') or not self.find_occurrences:
+            return
+        self.current_occurrence = (self.current_occurrence - 1) % len(self.find_occurrences)
+        self._goto_occurrence(self.current_occurrence)
 
     def replace_dialog(self):
         # Create a simple replace dialog
@@ -1891,12 +1982,15 @@ class HexEditorWidget(ttk.Frame):
         replace_entry = ttk.Entry(replace_window, width=50)
         replace_entry.pack(pady=2)
 
-        is_hex_var = tk.BooleanVar(value=True)
+        is_hex_var = tk.BooleanVar(value=False)  # Default to text search
         ttk.Checkbutton(replace_window, text="Hex input", variable=is_hex_var).pack(pady=5)
 
         def do_replace():
             find_pat = find_entry.get().strip()
             replace_pat = replace_entry.get().strip()
+            if not find_pat:
+                messagebox.showerror("Error", "Find pattern cannot be empty")
+                return
             result = (find_pat, replace_pat, is_hex_var.get())
             replace_window.destroy()
             # Process the replace result
