@@ -1,6 +1,6 @@
 # Smartphone Firmware Screws
 
-**Ultimate Firmware Kitchen - Complete Android ROM & Firmware Toolkit**
+## Ultimate Firmware Kitchen - Complete Android ROM & Firmware Toolkit
 
 Professional-grade ROM building, firmware modification, and device flashing toolkit. This comprehensive suite provides everything needed for Android firmware development, from source code compilation to device flashing.
 
@@ -24,6 +24,7 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 ### Detailed Functionality
 
 #### Firmware Operations
+
 - **Firmware Loading**: Load and analyze .tar.md5 firmware files
 - **Entry Extraction**: Extract individual partitions and files from firmware
 - **Entry Replacement**: Modify firmware entries in-place with MD5 updates
@@ -31,18 +32,21 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 - **MD5 Verification**: Verify firmware integrity and signatures
 
 #### ROM Development
+
 - **System Image Extraction**: Extract system.img using simg2img and mount
 - **ROM Building**: Create custom ROM ZIP files from extracted images
 - **Property Modification**: Edit build.prop and system properties
 - **Keystore Management**: Create and manage signing keystores
 
 #### APK Manipulation
+
 - **APK Decompilation**: Convert APK to source code using apktool
 - **APK Recompilation**: Build APK from modified source
 - **APK Signing**: Sign APKs with debug or custom keystores
 - **Compression Optimization**: Fix APK compression for Android R+ compatibility
 
 #### Boot Image Tools
+
 - **Boot Image Unpacking**: Extract kernel, ramdisk, and dtb from boot.img
 - **Boot Image Repacking**: Create new boot images from modified components
 - **Kernel Extraction**: Extract and modify Linux kernels
@@ -50,17 +54,20 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 - **Ramdisk Management**: Extract, modify, and repack ramdisk cpio archives
 
 #### Compression & Archives
+
 - **LZ4 Support**: Compress/decompress LZ4 files
 - **TAR Operations**: Handle TAR archives with MD5 footers
 - **7z/Zip Support**: Comprehensive archive manipulation
 - **Sparse Conversion**: Convert between sparse and raw Android images
 
 #### Device Integration
+
 - **Heimdall Flashing**: Flash firmware to Samsung devices via USB
 - **Device Detection**: Automatic device recognition and connection
 - **Admin Privileges**: Windows UAC elevation for flashing operations
 
 #### Advanced Features
+
 - **Hex Editor**: Built-in hex editor with live data analysis
 - **File Editor**: Advanced text editor with syntax highlighting
 - **Entropy Analysis**: Analyze file entropy for security research
@@ -85,11 +92,13 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 ## Usage
 
 ### GUI Mode (Recommended)
+
 ```bash
 python src/smartphone_firmware_screws.py
 ```
 
 ### Command Line
+
 The application provides a comprehensive GUI interface with the following main sections:
 
 - **Firmware Tab**: Load, analyze, and modify firmware files
@@ -105,6 +114,7 @@ The application provides a comprehensive GUI interface with the following main s
 The application integrates with 30+ external tools located in the `tools/` directory:
 
 ### Required Tools
+
 - **Java**: APK compilation and signing
 - **7z**: Archive manipulation
 - **bsdtar**: TAR/CPIO operations
@@ -118,6 +128,7 @@ The application integrates with 30+ external tools located in the `tools/` direc
 - **notepad++**: Advanced text editing
 
 ### Optional Tools
+
 - **dtc**: Device tree compilation
 - **extract-dtb**: Kernel DTB extraction
 - **dtb-converter**: Device tree conversion
@@ -125,7 +136,7 @@ The application integrates with 30+ external tools located in the `tools/` direc
 
 ## Project Structure
 
-```
+```text
 SmartPhone Firmware Screws/
 ├── src/
 │   └── smartphone_firmware_screws.py  # Main application
@@ -141,11 +152,13 @@ SmartPhone Firmware Screws/
 This project uses a **dual licensing model**:
 
 ### Open Source License
+
 - **GNU General Public License v2.0 (GPL-2.0)** with commercial use restrictions
 - Permits non-commercial use, modification, and distribution
 - **Commercial use requires a separate commercial license**
 
 ### Commercial License
+
 - Available for commercial use, redistribution, and proprietary development
 - Contact the copyright holder for licensing terms
 - Includes support and custom development options
