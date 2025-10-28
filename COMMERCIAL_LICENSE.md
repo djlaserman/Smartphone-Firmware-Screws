@@ -38,7 +38,6 @@ Support, maintenance, and custom development (if any) will be handled according 
 
 Contact & payment links: see https://gravatar.com/djlaserman for preferred contact email, payment links and instructions.
 
-(Optional placeholders — replaced by the Gravatar/contact page above)
 - Contact email: [see Gravatar profile]
 - Preferred payment methods: [see Gravatar profile for links / instructions]
 - Pricing examples (placeholders only): One-time fee: [TBD], Annual subscription: [TBD]
