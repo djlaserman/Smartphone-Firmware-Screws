@@ -17,7 +17,7 @@ Complete feature set:
 - Project-based workflow
 - Utilizes 30+ tools from tools/ folder
 
-Author: Generated with Claude | License: MIT
+Author: Isaki Dube | License: Dual 
 """
 
 import os
@@ -38,18 +38,17 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font, simpledialog, scrolledtext
 import ctypes # For checking admin privileges on Windows
-import sys # For checking platform
 import logging # Added for detailed startup logging
 import traceback # Added for detailed exception logging
-from datetime import datetime # Ensure datetime is imported for logging timestamps
+import math
+import mmap
 
-# Configure a file handler for startup logging
-startup_logger = logging.getLogger('startup_logger')
-startup_logger.setLevel(logging.DEBUG)
-file_handler = logging.FileHandler('startup_debug.log')
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-startup_logger.addHandler(file_handler)
+# Optional plotting for entropy (install matplotlib to enable)
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB = True
+except Exception:
+    MATPLOTLIB = False
 
 # -------------------------
 # Configuration & Constants
@@ -57,6 +56,14 @@ startup_logger.addHandler(file_handler)
 APP_TITLE = "Smartphone Firmware Screws"
 VERSION = "4.2.0"  # Updated for fixes
 TOOLS_DIR = os.path.join(os.path.dirname(__file__), "tools")
+
+# Configure a file handler for startup logging
+startup_logger = logging.getLogger('startup_logger')
+startup_logger.setLevel(logging.DEBUG)
+log_handler = logging.FileHandler('startup_debug.log')
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+log_handler.setFormatter(formatter)
+startup_logger.addHandler(log_handler)
 
 COLORS = {
     'bg_primary': '#0a0e14',
@@ -205,10 +212,16 @@ def _is_valid_executable(path: str) -> bool:
             # or scripts that are meant to be executed directly (e.g., .bat, .cmd)
             if path.lower().endswith('.exe') or path.lower().endswith('.bat') or path.lower().endswith('.cmd'):
                 return True
-            return False # If it's not an exe/bat/cmd and doesn't have MZ, it's likely not a valid Win32 app
+            # JAR files start with 'PK' (ZIP header) and are valid for Java execution
+            if path.lower().endswith('.jar') and header.startswith(b'PK'):
+                return True
+            return False # If it's not an exe/bat/cmd/jar and doesn't have MZ, it's likely not a valid Win32 app
         else:
             # Unix/Linux: ELF executable starts with '\x7fELF'
             if header.startswith(b'\x7fELF'):
+                return True
+            # JAR files start with 'PK' (ZIP header) and are valid for Java execution
+            if path.lower().endswith('.jar') and header.startswith(b'PK'):
                 return True
             # Could be a script (e.g., Python, Shell script)
             # Check for shebang or assume valid if it's not a known binary type
@@ -1101,6 +1114,1426 @@ class LogConsole(ttk.Frame):
                 f.write(self.text.get('1.0', tk.END))
 
 # -------------------------
+# GUI: Text Output Dialog
+# -------------------------
+class TextOutputDialog(tk.Toplevel):
+    """A simple dialog to display text output."""
+    def __init__(self, parent, title: str, text_content: str):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("600x400")
+        self.resizable(True, True)
+
+        self.text_area = scrolledtext.ScrolledText(self, wrap='word', font=('Consolas', 10),
+                                                  bg=COLORS['log_bg'], fg=COLORS['log_fg'])
+        self.text_area.insert(tk.END, text_content)
+        self.text_area.config(state='disabled') # Make it read-only
+        self.text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        close_button = ttk.Button(self, text="Close", command=self.destroy)
+        close_button.pack(pady=5)
+
+        self.transient(parent)
+        self.grab_set()
+        self.wait_window(self)
+
+# -------------------------
+# GUI: Hex Editor Widget
+# -------------------------
+class HexEditorWidget(ttk.Frame):
+    """Hex Editor widget integrated with the main application"""
+
+    def __init__(self, parent, log_callback, status_callback):
+        super().__init__(parent)
+        self.log_callback = log_callback
+        self.status_callback = status_callback
+        self.set_status = status_callback  # For compatibility with existing code
+        self._init_state()
+        self._build_ui()
+        self._bind_shortcuts()
+
+    def _init_state(self):
+        self.file_path = None
+        self.data = bytearray()
+        self.mmap_file = None
+        self.file_handle = None
+        self.modified = False
+        self.offset_top = 0
+        self.bytes_per_line = 16
+        self.endian = "big"  # default big-endian
+        self.undo_stack = []
+        self.redo_stack = []
+        self.bookmarks = {}
+        self.current_selection = (None, None)  # (start, end)
+        self.windowed = False
+
+    def _build_ui(self):
+        # Apply consistent background colors to match the application theme
+        # Note: Frame background is handled by ttk style
+
+        # Menu items are handled by the parent application
+
+        # Top frame controls
+        top_frame = ttk.Frame(self, style='Card.TFrame')
+        top_frame.pack(side=tk.TOP, fill=tk.X)
+
+        ttk.Button(top_frame, text="Open", command=self.open_file).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top_frame, text="Save", command=self.save_file).pack(side=tk.LEFT, padx=2)
+        ttk.Label(top_frame, text=" Endian: ").pack(side=tk.LEFT, padx=2)
+        self.endian_var = tk.StringVar(value=self.endian)
+        endian_combo = ttk.Combobox(top_frame, textvariable=self.endian_var, values=("big", "little"), width=6)
+        endian_combo.pack(side=tk.LEFT)
+        endian_combo.bind("<<ComboboxSelected>>", lambda e: self.set_endian(self.endian_var.get()))
+        ttk.Button(top_frame, text="Entropy", command=self.entropy_analysis).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top_frame, text="Strings", command=self.show_strings).pack(side=tk.LEFT, padx=4)
+
+        # Main panes: left = hex view, right = converters / analysis
+        main_pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL, style='Card.TFrame')
+        main_pane.pack(fill=tk.BOTH, expand=True)
+
+        # Left frame: hex text view
+        left_frame = ttk.Frame(main_pane, style='Card.TFrame')
+        self.hex_text = tk.Text(left_frame, font=("Courier New", 10), wrap="none", undo=False,
+                               bg=COLORS['log_bg'], fg=COLORS['log_fg'], insertbackground=COLORS['text_primary'])
+        self.hex_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.hex_text.bind("<<Selection>>", self.on_selection)
+        self.hex_text.bind("<Button-1>", self.on_click)
+        self.hex_text.bind("<KeyRelease>", self.on_hex_key_release)
+        # Scrollbars
+        yscroll = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.hex_text.yview)
+        self.hex_text.configure(yscrollcommand=yscroll.set)
+        yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.hex_text.xview)
+        self.hex_text.configure(xscrollcommand=xscroll.set)
+        xscroll.pack(side=tk.BOTTOM, fill=tk.X)
+
+        main_pane.add(left_frame, weight=3)
+
+        # Right frame: converters and tools
+        right_frame = ttk.Frame(main_pane, width=420, style='Card.TFrame')
+        main_pane.add(right_frame, weight=1)
+
+        # Create a scrollable frame for the right panel
+        right_canvas = tk.Canvas(right_frame, bg=COLORS['bg_card'], highlightthickness=0)
+        right_scrollbar = ttk.Scrollbar(right_frame, orient=tk.VERTICAL, command=right_canvas.yview)
+        right_scrollable_frame = ttk.Frame(right_canvas, style='Card.TFrame')
+
+        right_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+        )
+
+        right_canvas.create_window((0, 0), window=right_scrollable_frame, anchor="nw")
+        right_canvas.configure(yscrollcommand=right_scrollbar.set)
+
+        # Make the scrollable frame fill the canvas
+        def resize_canvas(event):
+            right_canvas.itemconfig(right_canvas.find_all()[0], width=event.width)
+
+        right_canvas.bind('<Configure>', resize_canvas)
+
+        # Bind mouse wheel to scroll the canvas
+        def on_mousewheel(event):
+            right_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+        right_canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        right_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Selection info - make it fill more space
+        info_frame = ttk.LabelFrame(right_scrollable_frame, text="Selection / Offset")
+        info_frame.pack(fill=tk.X, padx=6, pady=(6, 3))
+        self.offset_label = ttk.Label(info_frame, text="Offset: -")
+        self.offset_label.pack(anchor="w", padx=4, pady=2)
+        self.length_label = ttk.Label(info_frame, text="Length: -")
+        self.length_label.pack(anchor="w", padx=4, pady=2)
+
+        # Byte edit box
+        edit_frame = ttk.LabelFrame(right_scrollable_frame, text="Edit Bytes")
+        edit_frame.pack(fill=tk.X, padx=6, pady=(3, 6))
+        self.byte_entry = ttk.Entry(edit_frame)
+        self.byte_entry.pack(fill=tk.X, padx=4, pady=4)
+        ttk.Button(edit_frame, text="Write Bytes (hex space-separated)", command=self.write_bytes_from_entry).pack(padx=4, pady=4)
+
+        # Converter outputs - make it expand to fill space
+        conv_frame = ttk.LabelFrame(right_scrollable_frame, text="Converters (live)")
+        conv_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 3))
+        # Endian toggle
+        self.endian_display = ttk.Label(conv_frame, text=f"Endian: {self.endian}")
+        self.endian_display.pack(anchor="w", padx=4, pady=2)
+
+        # Integer display
+        self.int_signed_var = tk.BooleanVar(value=False)
+        chk = ttk.Checkbutton(conv_frame, text="Signed", variable=self.int_signed_var, command=self.refresh_converters)
+        chk.pack(anchor="w", padx=4)
+        self.int_label = ttk.Label(conv_frame, text="Integer:")
+        self.int_label.pack(anchor="w", padx=4, pady=2)
+
+        # Float display (32 / 64)
+        self.float32_label = ttk.Label(conv_frame, text="Float32:")
+        self.float32_label.pack(anchor="w", padx=4, pady=2)
+        self.float64_label = ttk.Label(conv_frame, text="Float64:")
+        self.float64_label.pack(anchor="w", padx=4, pady=2)
+
+        # String interpretations
+        self.utf8_label = ttk.Label(conv_frame, text="UTF-8:")
+        self.utf8_label.pack(anchor="w", padx=4, pady=2)
+        self.utf16_label = ttk.Label(conv_frame, text="UTF-16:")
+        self.utf16_label.pack(anchor="w", padx=4, pady=2)
+        self.utf32_label = ttk.Label(conv_frame, text="UTF-32:")
+        self.utf32_label.pack(anchor="w", padx=4, pady=2)
+
+        # Hex display and copy
+        self.hex_label = ttk.Label(conv_frame, text="Hex:")
+        self.hex_label.pack(anchor="w", padx=4, pady=2)
+        ttk.Button(conv_frame, text="Copy Hex", command=self.copy_hex_to_clipboard).pack(anchor="w", padx=4, pady=2)
+
+        # Live string extraction display
+        self.strings_label = ttk.Label(conv_frame, text="Extractable Strings:")
+        self.strings_label.pack(anchor="w", padx=4, pady=(10, 2))
+        self.strings_text = tk.Text(conv_frame, height=4, width=40, wrap="none",
+                                   bg=COLORS['log_bg'], fg=COLORS['log_fg'],
+                                   font=('Consolas', 8), state="disabled",
+                                   tabs=('8c', 'left'))  # Set tab stops for columns
+        strings_scrollbar = ttk.Scrollbar(conv_frame, orient=tk.VERTICAL, command=self.strings_text.yview)
+        self.strings_text.configure(yscrollcommand=strings_scrollbar.set)
+        self.strings_text.pack(anchor="w", padx=4, pady=(0, 4), fill=tk.X)
+        strings_scrollbar.pack(anchor="w", padx=(0, 4), pady=(0, 4), fill=tk.Y, side=tk.RIGHT)
+
+        # Analysis frame (entropy + strings)
+        analysis_frame = ttk.LabelFrame(right_scrollable_frame, text="Quick Analysis")
+        analysis_frame.pack(fill=tk.X, padx=6, pady=(3, 6))
+        ttk.Button(analysis_frame, text="Compute Entropy (selection/file)", command=self.entropy_analysis).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(analysis_frame, text="Extract Printable Strings", command=self.show_strings).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(analysis_frame, text="Byte Histogram", command=self.byte_histogram).pack(fill=tk.X, padx=4, pady=2)
+
+        # Status bar
+        self.status = ttk.Label(self, text="Ready", relief=tk.SUNKEN, anchor="w")
+        self.status.pack(side=tk.BOTTOM, fill=tk.X)
+
+    # Shortcuts bindings
+    def _bind_shortcuts(self):
+        self.bind("<Control-o>", lambda e: self.open_file())
+        self.bind("<Control-s>", lambda e: self.save_file())
+        self.bind("<Control-f>", lambda e: self.find_dialog())
+        self.bind("<Control-h>", lambda e: self.replace_dialog())
+        self.bind("<Control-g>", lambda e: self.goto_dialog())
+        self.bind("<Control-z>", lambda e: self.undo())
+        self.bind("<Control-y>", lambda e: self.redo())
+
+    # File operations
+    def open_file(self, mmap_ok=False):
+        path = filedialog.askopenfilename(title="Open file", filetypes=[("All files", "*.*")])
+        if not path:
+            return
+        self.close_file()
+        try:
+            if mmap_ok:
+                res, fhandle = self.read_file_bytes(path)
+                if isinstance(res, mmap.mmap):
+                    self.mmap_file = res
+                    self.file_handle = fhandle
+                    self.data = None
+                else:
+                    self.data = bytearray(res)
+            else:
+                self.data, _ = self.read_file_bytes(path, use_mmap=False)
+            self.file_path = path
+            self.modified = False
+            self.offset_top = 0
+            data_len = len(self.data) if self.data else (self.mmap_file.size() if self.mmap_file else 0)
+            self.windowed = data_len > 1024 * 256
+            self.refresh_view()
+            data_len = len(self.data) if self.data else (self.mmap_file.size() if self.mmap_file else 0)
+            self.set_status(f"Opened {path} ({data_len} bytes)")
+            self.log_callback(f"Hex Editor: Opened {path}", 'success')
+            # Focus the hex text widget so Ctrl+A works immediately after opening
+            # Use after() to ensure the widget is fully rendered before focusing
+            self.after(100, lambda: (self.focus(), self.hex_text.focus_set()))
+        except Exception as e:
+            messagebox.showerror("Open Error", str(e))
+            self.log_callback(f"Hex Editor: Failed to open {path}: {e}", 'error')
+
+    def close_file(self):
+        if self.mmap_file:
+            try:
+                self.mmap_file.close()
+                if self.file_handle:
+                    self.file_handle.close()
+            except Exception:
+                pass
+        self.mmap_file = None
+        self.file_handle = None
+        self.data = bytearray()
+        self.file_path = None
+        self.modified = False
+
+    def save_file(self):
+        if not self.file_path:
+            self.save_as()
+            return
+        try:
+            if self.mmap_file:
+                # write back from memory to mmap then flush
+                self.mmap_file.seek(0)
+                self.mmap_file.write(self._get_bytes_all())
+                self.mmap_file.flush()
+            else:
+                with open(self.file_path, "wb") as f:
+                    f.write(self._get_bytes_all())
+            self.modified = False
+            self.set_status("Saved")
+            self.log_callback(f"Hex Editor: Saved {self.file_path}", 'success')
+        except Exception as e:
+            messagebox.showerror("Save Error", str(e))
+            self.log_callback(f"Hex Editor: Failed to save {self.file_path}: {e}", 'error')
+
+    def save_as(self):
+        path = filedialog.asksaveasfilename(title="Save As")
+        if not path:
+            return
+        self.file_path = path
+        self.save_file()
+
+    # Helpers to get/set bytes across mmap/data
+    def _get_len(self):
+        if self.mmap_file:
+            return self.mmap_file.size()
+        return len(self.data) if self.data else 0
+
+    def _get_slice(self, start, length):
+        if self.mmap_file:
+            return self.mmap_file[start:start + length]
+        return bytes(self.data[start:start + length]) if self.data else b""
+
+    def _write_slice(self, start, bts: bytes):
+        # record for undo
+        old = self._get_slice(start, len(bts))
+        self.undo_stack.append(("write", start, old))
+        self.redo_stack.clear()
+        if self.mmap_file:
+            self.mmap_file[start:start + len(bts)] = bts
+        else:
+            if self.data:
+                self.data[start:start + len(bts)] = bts
+        self.modified = True
+
+    def _get_bytes_all(self):
+        if self.mmap_file:
+            return self.mmap_file[:]
+        return bytes(self.data) if self.data else b""
+
+    # Rendering hex view
+    def refresh_view(self):
+        self.hex_text.configure(state=tk.NORMAL)
+        self.hex_text.delete("1.0", tk.END)
+        total_len = self._get_len()
+        # windowed display if large file
+        if self.windowed:
+            length = min(1024 * 256, total_len - self.offset_top)
+            data = self._get_slice(self.offset_top, length)
+            base = self.offset_top
+        else:
+            data = self._get_slice(0, total_len)
+            base = 0
+        for i in range(0, len(data), self.bytes_per_line):
+            chunk = data[i:i + self.bytes_per_line]
+            hex_chunk = " ".join(f"{b:02X}" for b in chunk)
+            # pad hex chunk to fixed width
+            hex_padded = f"{hex_chunk:<{self.bytes_per_line * 3 - 1}}"
+            ascii_chunk = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+            line = f"{(base + i):08X}  {hex_padded}  {ascii_chunk}\n"
+            self.hex_text.insert(tk.END, line)
+        # Keep the widget editable - do not disable it
+        self.update_selection_info(None, None)
+
+    # Selection / mapping: map mouse click in Text to byte offset
+    def on_click(self, event):
+        try:
+            index = self.hex_text.index("@%d,%d" % (event.x, event.y))
+            line, col = map(int, index.split("."))
+            text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
+            # parse offset at line start
+            offset_hex = text_line[:8]
+            base = int(offset_hex, 16)
+            # hex starts at column 10 (0-based)
+            # compute position in hex area; each byte is "XX " except last may be shorter
+            # find nearest hex token by splitting.
+            tokens = text_line[10:10 + self.bytes_per_line * 3].split()
+            # find which token mouse clicked over by computing char index
+            col_in_line = col - 10
+            if col_in_line < 0:
+                return
+            # compute approximate token index
+            token_idx = max(0, min(len(tokens) - 1, col_in_line // 3))
+            # select byte
+            byte_offset = base + token_idx
+            self.update_selection_info(byte_offset, 1)
+        except Exception:
+            pass
+
+    def on_hex_key_release(self, event):
+        """Handle key presses in the hex text widget for editing"""
+        if not self.file_path or event.char == '':
+            return
+
+        try:
+            # Get current cursor position
+            cursor_pos = self.hex_text.index(tk.INSERT)
+            line, col = map(int, cursor_pos.split("."))
+
+            # Only allow editing in the hex area (after column 10)
+            if col < 10:
+                return
+
+            text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
+            offset_hex = text_line[:8]
+            base = int(offset_hex, 16)
+
+            # Calculate which byte we're editing
+            col_in_line = col - 10
+            token_idx = col_in_line // 3
+            if token_idx >= self.bytes_per_line:
+                return
+
+            byte_offset = base + token_idx
+
+            # Check if it's a valid hex character
+            if event.char.upper() in '0123456789ABCDEF':
+                # Get current byte value
+                current_byte = self._get_slice(byte_offset, 1)
+                if current_byte:
+                    current_hex = current_byte.hex().upper()
+                    # Determine if we're editing the first or second nibble
+                    nibble_pos = (col_in_line % 3)
+                    if nibble_pos == 0:  # First character of byte
+                        new_hex = event.char + current_hex[1]
+                    elif nibble_pos == 1:  # Second character of byte
+                        new_hex = current_hex[0] + event.char
+                    else:
+                        return  # Space or invalid position
+
+                    # Convert to byte and write
+                    new_byte = bytes.fromhex(new_hex)
+                    self._write_slice(byte_offset, new_byte)
+                    self.refresh_view()
+                    self.update_selection_info(byte_offset, 1)
+
+                    # Move cursor to next nibble or byte
+                    if nibble_pos == 0:
+                        self.hex_text.mark_set(tk.INSERT, f"{line}.{col + 1}")
+                    else:
+                        next_byte_col = col + 2  # Skip space
+                        if next_byte_col < len(text_line):
+                            self.hex_text.mark_set(tk.INSERT, f"{line}.{next_byte_col}")
+                        else:
+                            # Move to next line
+                            next_line = line + 1
+                            if next_line < int(self.hex_text.index(tk.END).split(".")[0]):
+                                self.hex_text.mark_set(tk.INSERT, f"{next_line}.10")
+
+        except Exception as e:
+            # Silently ignore invalid edits
+            pass
+
+    def on_selection(self, event=None):
+        try:
+            sel = self.hex_text.tag_ranges("sel")
+            if not sel:
+                self.update_selection_info(None, None)
+                return
+            start = sel[0]
+            s_line = int(str(start).split(".")[0])
+            s_col = int(str(start).split(".")[1])
+            end = sel[1]
+            e_line = int(str(end).split(".")[0])
+            e_col = int(str(end).split(".")[1])
+            # map start and end to offsets similarly as click
+            start_off = self._text_pos_to_offset(s_line, s_col)
+            end_off = self._text_pos_to_offset(e_line, e_col)
+            if start_off is None or end_off is None:
+                self.update_selection_info(None, None)
+                return
+            if end_off < start_off:
+                start_off, end_off = end_off, start_off
+            self.update_selection_info(start_off, end_off - start_off + 1)
+        except Exception:
+            self.update_selection_info(None, None)
+
+    def select_all(self):
+        """Handle Ctrl+A to select the entire file"""
+        total_len = self._get_len()
+        if total_len > 0:
+            self.update_selection_info(0, total_len)
+            # Always highlight the entire text - this is what Ctrl+A should do
+            # Use after() to defer the highlighting to avoid blocking the UI
+            self.after(10, lambda: self._highlight_all_text())
+            self.hex_text.see("1.0")
+
+    def _highlight_all_text(self):
+        """Highlight all text in the widget (deferred to avoid UI blocking)"""
+        try:
+            self.hex_text.tag_add("sel", "1.0", tk.END)
+        except Exception:
+            # If highlighting fails for any reason, at least the selection info is updated
+            pass
+
+    def _text_pos_to_offset(self, line, col):
+        try:
+            text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
+            offset_hex = text_line[:8].strip()
+            if not offset_hex:
+                return None
+            base = int(offset_hex, 16)
+            # find token column
+            col_in_line = col - 10
+            if col_in_line < 0:
+                return None
+            token_idx = max(0, min(self.bytes_per_line - 1, col_in_line // 3))
+            return base + token_idx
+        except Exception:
+            return None
+
+    def update_selection_info(self, start, length):
+        if start is None:
+            self.offset_label.config(text="Offset: -")
+            self.length_label.config(text="Length: -")
+            self.current_selection = (None, None)
+            self._clear_converters()
+            return
+        self.current_selection = (start, length)
+        self.offset_label.config(text=f"Offset: 0x{start:08X} ({start})")
+        self.length_label.config(text=f"Length: {length}")
+        self.refresh_converters()
+        self.refresh_live_strings()
+
+    def _clear_converters(self):
+        self.int_label.config(text="Integer:")
+        self.float32_label.config(text="Float32:")
+        self.float64_label.config(text="Float64:")
+        self.utf8_label.config(text="UTF-8:")
+        self.utf16_label.config(text="UTF-16:")
+        self.utf32_label.config(text="UTF-32:")
+        self.hex_label.config(text="Hex:")
+        self._clear_live_strings()
+
+    # Converters
+    def refresh_converters(self):
+        sel = self.current_selection
+        if sel[0] is None:
+            self._clear_converters()
+            return
+        start, length = sel
+        try:
+            raw = self._get_slice(start, length)
+        except Exception:
+            raw = b""
+        # Endian
+        endian = self.endian_var.get()
+        self.endian_display.config(text=f"Endian: {endian}")
+        # Integer - limit display for large selections to prevent conversion errors
+        if len(raw) > 8:  # Only show integer conversion for reasonable sizes
+            self.int_label.config(text="Integer: (selection too large)")
+        else:
+            try:
+                endian_fixed = endian if isinstance(endian, str) and endian in ["little", "big"] else "big"
+                val_unsigned = int.from_bytes(raw, byteorder=endian_fixed, signed=False) if raw else 0  # type: ignore
+                val_signed = int.from_bytes(raw, byteorder=endian_fixed, signed=True) if raw else 0  # type: ignore
+                if self.int_signed_var.get():
+                    self.int_label.config(text=f"Integer: {val_signed} (signed)")
+                else:
+                    self.int_label.config(text=f"Integer: {val_unsigned} (unsigned)")
+            except Exception:
+                self.int_label.config(text="Integer: -")
+        # Floats: attempt if length matches 4 or 8 or can be trimmed/padded
+        if len(raw) >= 4:
+            try:
+                b4 = raw[:4] if endian == "big" else raw[:4][::-1]
+                f32 = struct.unpack(">f" if endian == "big" else "<f", raw[:4])[0]
+                self.float32_label.config(text=f"Float32: {f32}")
+            except Exception:
+                self.float32_label.config(text="Float32: -")
+        else:
+            self.float32_label.config(text="Float32: -")
+        if len(raw) >= 8:
+            try:
+                f64 = struct.unpack(">d" if endian == "big" else "<d", raw[:8])[0]
+                self.float64_label.config(text=f"Float64: {f64}")
+            except Exception:
+                self.float64_label.config(text="Float64: -")
+        else:
+            self.float64_label.config(text="Float64: -")
+        # Strings
+        try:
+            s_utf8 = raw.decode("utf-8", errors="replace")
+            self.utf8_label.config(text=f"UTF-8: {s_utf8}")
+        except Exception:
+            self.utf8_label.config(text="UTF-8: -")
+        try:
+            s_utf16 = raw.decode("utf-16le" if endian == "little" else "utf-16be", errors="replace")
+            self.utf16_label.config(text=f"UTF-16: {s_utf16}")
+        except Exception:
+            self.utf16_label.config(text="UTF-16: -")
+        try:
+            s_utf32 = raw.decode("utf-32le" if endian == "little" else "utf-32be", errors="replace")
+            self.utf32_label.config(text=f"UTF-32: {s_utf32}")
+        except Exception:
+            self.utf32_label.config(text="UTF-32: -")
+        # Hex
+        self.hex_label.config(text=f"Hex: {self.to_hex(raw)}")
+
+    def extract_strings(self, data: bytes, min_len: int = 4) -> List[Tuple[int, str]]:
+        """Extract printable strings with their offsets from binary data"""
+        strings = []
+        current = ""
+        start_offset = 0
+        for i, byte in enumerate(data):
+            if 32 <= byte <= 126:  # printable ASCII
+                if not current:
+                    start_offset = i
+                current += chr(byte)
+            else:
+                if len(current) >= min_len:
+                    strings.append((start_offset, current))
+                current = ""
+        if len(current) >= min_len:
+            strings.append((start_offset, current))
+        return strings
+
+    def refresh_live_strings(self):
+        """Update the live string extraction display"""
+        sel = self.current_selection
+        if sel[0] is None:
+            self._clear_live_strings()
+            return
+
+        start, length = sel
+        try:
+            # Get a larger context around the selection for string extraction
+            context_start = max(0, start - 256)  # Look 256 bytes before
+            context_end = min(self._get_len(), start + length + 256)  # Look 256 bytes after
+            context_data = self._get_slice(context_start, context_end - context_start)
+
+            # Extract strings from the context
+            strings = self.extract_strings(context_data, min_len=4)
+
+            # Filter strings that are near the selection
+            relevant_strings = []
+            for offset, s in strings[:10]:  # Limit to first 10 strings
+                actual_pos = context_start + offset
+                # Include strings that overlap with or are close to selection
+                if (actual_pos <= start + length and actual_pos + len(s) >= start) or \
+                    (abs(actual_pos - start) < 50) or \
+                    (abs((actual_pos + len(s)) - (start + length)) < 50):
+                    relevant_strings.append(f"0x{actual_pos:08X}: {s}")
+
+            # Update the text widget with formatted columns
+            self.strings_text.config(state="normal")
+            self.strings_text.delete("1.0", tk.END)
+            if relevant_strings:
+                for string_info in relevant_strings:
+                    if ": " in string_info:
+                        offset, string_text = string_info.split(": ", 1)
+                        # Format as tab-separated columns
+                        formatted_line = f"{offset}\t{string_text}"
+                        self.strings_text.insert(tk.END, formatted_line + "\n")
+            else:
+                self.strings_text.insert("1.0", "No extractable strings found in selection context")
+            self.strings_text.config(state="disabled")
+
+        except Exception as e:
+            self._clear_live_strings()
+
+    def _clear_live_strings(self):
+        """Clear the live strings display"""
+        self.strings_text.config(state="normal")
+        self.strings_text.delete("1.0", tk.END)
+        self.strings_text.insert("1.0", "Select bytes to see extractable strings")
+        self.strings_text.config(state="disabled")
+
+    def set_endian(self, e):
+        self.endian = e
+        self.endian_var.set(e)
+        self.refresh_converters()
+
+    def copy_hex_to_clipboard(self):
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        self.clipboard_clear()
+        self.clipboard_append(self.to_hex(raw))
+        self.set_status("Hex copied to clipboard")
+
+    # Byte editing UI
+    def write_bytes_from_entry(self):
+        txt = self.byte_entry.get().strip()
+        if not txt:
+            return
+        # parse space/comma/hex string
+        tokens = [t for t in txt.replace(",", " ").split() if t]
+        try:
+            bts = bytes(int(t, 16) for t in tokens)
+        except Exception as e:
+            messagebox.showerror("Parse error", f"Could not parse bytes: {e}")
+            return
+        sel = self.current_selection
+        if sel[0] is None:
+            messagebox.showwarning("No selection", "Select an offset first by clicking a byte or using Go To")
+            return
+        start, length = sel
+        # write
+        self._write_slice(start, bts)
+        self.refresh_view()
+        self.set_status(f"Wrote {len(bts)} bytes at 0x{start:08X}")
+
+    # Undo / Redo
+    def undo(self):
+        if not self.undo_stack:
+            return
+        op = self.undo_stack.pop()
+        typ = op[0]
+        if typ == "write":
+            start, old_bytes = op[1], op[2]
+            # store redo
+            cur = self._get_slice(start, len(old_bytes))
+            self.redo_stack.append(("write", start, cur))
+            # restore old
+            if self.mmap_file:
+                self.mmap_file[start:start + len(old_bytes)] = old_bytes
+            else:
+                if self.data:
+                    self.data[start:start + len(old_bytes)] = old_bytes
+            self.refresh_view()
+            self.set_status("Undo")
+        else:
+            self.set_status("Unknown undo operation")
+
+    def redo(self):
+        if not self.redo_stack:
+            return
+        op = self.redo_stack.pop()
+        typ = op[0]
+        if typ == "write":
+            start, bts = op[1], op[2]
+            old = self._get_slice(start, len(bts))
+            self.undo_stack.append(("write", start, old))
+            if self.mmap_file:
+                self.mmap_file[start:start + len(bts)] = bts
+            else:
+                if self.data:
+                    self.data[start:start + len(bts)] = bts
+            self.refresh_view()
+            self.set_status("Redo")
+
+    # Find / Replace / Goto
+    def find_dialog(self):
+        # Create a simple find dialog
+        find_window = tk.Toplevel(self)
+        find_window.title("Find (hex or text)")
+        find_window.geometry("400x150")
+
+        ttk.Label(find_window, text="Pattern (hex bytes space-separated or text):").pack(pady=5)
+        find_entry = ttk.Entry(find_window, width=50)
+        find_entry.pack(pady=5)
+
+        is_hex_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(find_window, text="Hex input", variable=is_hex_var).pack(pady=5)
+
+        def do_find():
+            pattern = find_entry.get().strip()
+            if not pattern:
+                find_window.destroy()
+                return
+            result = (pattern, is_hex_var.get())
+            find_window.destroy()
+            # Process the find result
+            self._process_find_result(result)
+
+        ttk.Button(find_window, text="Find", command=do_find).pack(pady=10)
+        find_entry.focus_set()
+        find_window.transient(self.winfo_toplevel())
+        find_window.grab_set()
+
+    def _process_find_result(self, result):
+        pattern, is_hex = result
+        start = 0
+        data = self._get_slice(0, self._get_len())
+        if is_hex:
+            pat = bytes(int(x, 16) for x in pattern.split())
+        else:
+            pat = pattern.encode("utf-8")
+        idx = data.find(pat, start)
+        if idx >= 0:
+            self.offset_top = max(0, idx - 256)
+            self.refresh_view()
+            self.update_selection_info(idx, len(pat))
+            self.set_status(f"Found at 0x{idx:08X}")
+        else:
+            messagebox.showinfo("Find", "Pattern not found")
+
+    def replace_dialog(self):
+        # Create a simple replace dialog
+        replace_window = tk.Toplevel(self)
+        replace_window.title("Replace (hex or text)")
+        replace_window.geometry("400x200")
+
+        ttk.Label(replace_window, text="Find (hex bytes space-separated or text):").pack(pady=2)
+        find_entry = ttk.Entry(replace_window, width=50)
+        find_entry.pack(pady=2)
+
+        ttk.Label(replace_window, text="Replace with (hex bytes space-separated or text):").pack(pady=2)
+        replace_entry = ttk.Entry(replace_window, width=50)
+        replace_entry.pack(pady=2)
+
+        is_hex_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(replace_window, text="Hex input", variable=is_hex_var).pack(pady=5)
+
+        def do_replace():
+            find_pat = find_entry.get().strip()
+            replace_pat = replace_entry.get().strip()
+            result = (find_pat, replace_pat, is_hex_var.get())
+            replace_window.destroy()
+            # Process the replace result
+            self._process_replace_result(result)
+
+        ttk.Button(replace_window, text="Replace All", command=do_replace).pack(pady=10)
+        find_entry.focus_set()
+        replace_window.transient(self.winfo_toplevel())
+        replace_window.grab_set()
+        self.wait_window(replace_window)
+
+    def _process_replace_result(self, result):
+        find_pat, replace_pat, is_hex = result
+        data = bytearray(self._get_slice(0, self._get_len()))
+        if is_hex:
+            src = bytes(int(x, 16) for x in find_pat.split())
+            dst = bytes(int(x, 16) for x in replace_pat.split())
+        else:
+            src = find_pat.encode("utf-8")
+            dst = replace_pat.encode("utf-8")
+        count = 0
+        i = data.find(src)
+        while i != -1:
+            # do replace
+            data[i:i + len(src)] = dst
+            count += 1
+            i = data.find(src, i + len(dst))
+        # write back
+        if count > 0:
+            self.undo_stack.append(("write", 0, bytes(self._get_slice(0, self._get_len()))))
+            if self.mmap_file:
+                self.mmap_file[:] = data
+            else:
+                if self.data:
+                    self.data[:] = data
+            self.refresh_view()
+            self.set_status(f"Replaced {count} occurrences")
+        else:
+            messagebox.showinfo("Replace", "No occurrences found")
+
+    def goto_dialog(self):
+        s = simpledialog.askstring("Go To", "Enter offset (hex or dec):")
+        if not s:
+            return
+        try:
+            off = int(s, 0)
+            if off < 0 or off >= self._get_len():
+                raise ValueError("Out of range")
+            self.offset_top = max(0, off - 32)
+            self.refresh_view()
+            self.update_selection_info(off, 1)
+        except Exception as e:
+            messagebox.showerror("Go To", f"Invalid offset: {e}")
+
+    # Analysis tools
+    def entropy_analysis(self):
+        sel = self.current_selection
+        if sel[0] is None:
+            data = self._get_slice(0, self._get_len())
+        else:
+            data = self._get_slice(sel[0], sel[1])
+        ent = self.calc_entropy(data)
+        if MATPLOTLIB:
+            # plot sliding window entropy
+            window = 4096
+            ent_vals = []
+            xs = []
+            for i in range(0, max(1, len(data) - window), window):
+                ent_vals.append(self.calc_entropy(data[i:i + window]))
+                xs.append(i)
+            import matplotlib.pyplot as plt
+            plt.figure(figsize=(8, 3))
+            plt.plot(xs, ent_vals)
+            plt.title(f"Entropy (selection/file) — {ent:.4f}")
+            plt.xlabel("Offset")
+            plt.ylabel("Entropy")
+            plt.show()
+        else:
+            # fallback: text summary
+            messagebox.showinfo("Entropy", f"Entropy: {ent:.6f}")
+
+    def show_strings(self):
+        """Show enhanced strings dialog with search capabilities"""
+        sel = self.current_selection
+        if sel[0] is None:
+            data = self._get_slice(0, self._get_len())
+            data_offset = 0
+        else:
+            data = self._get_slice(sel[0], sel[1])
+            data_offset = sel[0]
+
+        strings_with_offsets = []
+        strings = self.extract_strings(data, min_len=4)
+        for s_offset, s_string in strings: # Corrected to unpack tuple
+            # Find all occurrences of this string in the data
+            try:
+                string_bytes = s_string.encode('utf-8', errors='ignore')
+                pos = 0
+                while True:
+                    pos = data.find(string_bytes, pos)
+                    if pos == -1:
+                        break
+                    strings_with_offsets.append((data_offset + pos, s_string))
+                    pos += len(string_bytes)
+            except:
+                continue
+
+        # Sort by offset
+        strings_with_offsets.sort(key=lambda x: x[0])
+
+        # Create enhanced dialog (non-modal so selection updates work)
+        dlg = EnhancedStringsDialog(self, strings_with_offsets, self._get_len(), hex_editor=self)
+
+    def byte_histogram(self):
+        sel = self.current_selection
+        if sel[0] is None:
+            data = self._get_slice(0, self._get_len())
+        else:
+            data = self._get_slice(sel[0], sel[1])
+        freq = [0] * 256
+        for b in data:
+            freq[b] += 1
+        if MATPLOTLIB:
+            import matplotlib.pyplot as plt
+            plt.bar(range(256), freq, width=1.0)
+            plt.title("Byte histogram")
+            plt.show()
+        else:
+            # textual top 16
+            items = sorted(((i, freq[i]) for i in range(256)), key=lambda x: -x[1])[:20]
+            text = "\n".join(f"{i:02X}: {c}" for i, c in items)
+            dlg = TextOutputDialog(self, "Byte histogram (top 20)", text)
+            self.wait_window(dlg)
+
+    # Utility
+    def set_status(self, text):
+        self.status.config(text=text)
+        self.status_callback.config(text=text)
+
+    def on_exit(self):
+        if self.modified and messagebox.askyesno("Exit", "File modified. Save before exit?"):
+            self.save_file()
+
+    # Utility functions (moved from global scope)
+    def to_hex(self, byte_arr, sep=" "):
+        return sep.join(f"{b:02X}" for b in byte_arr)
+
+    def ascii_repr(self, byte_arr):
+        return "".join(chr(b) if 32 <= b < 127 else "." for b in byte_arr)
+
+    def read_file_bytes(self, path, use_mmap=True):
+        size = os.path.getsize(path)
+        if use_mmap and size > 0:
+            f = open(path, "r+b")
+            mm = mmap.mmap(f.fileno(), 0)
+            return mm, f  # caller must close both
+        else:
+            with open(path, "rb") as f:
+                return bytearray(f.read()), None
+
+    def calc_entropy(self, data: bytes):
+        if not data:
+            return 0.0
+        freq = {}
+        for b in data:
+            freq[b] = freq.get(b, 0) + 1
+        ent = 0.0
+        length = len(data)
+        for v in freq.values():
+            p = v / length
+            ent -= p * math.log2(p)
+        return ent
+
+    def to_int(self, data_bytes: bytes, signed=False, byteorder="big"):
+        if not data_bytes:
+            return 0
+        byteorder_fixed = byteorder if isinstance(byteorder, str) and byteorder in ["little", "big"] else "big"
+        return int.from_bytes(data_bytes, byteorder=byteorder_fixed, signed=signed)  # type: ignore
+
+    def to_float(self, data_bytes: bytes, fmt=">f"):
+        try:
+            return struct.unpack(fmt, data_bytes)[0]
+        except Exception:
+            return None
+
+# -------------------------
+# GUI: Enhanced Strings Dialog
+# -----------------------------
+class EnhancedStringsDialog(tk.Toplevel):
+    """Enhanced strings dialog with search, navigation, and regex support"""
+
+    def __init__(self, parent, strings_with_offsets: List[Tuple[int, str]], file_size: int, hex_editor=None):
+        super().__init__(parent)
+        self.title("Enhanced Strings Analysis")
+        self.geometry("1000x700")
+        self.resizable(True, True)
+
+        self.strings_with_offsets = strings_with_offsets
+        self.file_size = file_size
+        self.hex_editor = hex_editor
+        self.filtered_strings = strings_with_offsets.copy()
+        self.current_index = -1
+        self.search_history = []
+        self.search_index = -1
+        self.predictive_suggestions = []
+
+        self._build_ui()
+        self._populate_strings()
+        self._bind_shortcuts()
+        self._setup_predictive_search()
+
+    def _build_ui(self):
+        # Main frame
+        main_frame = ttk.Frame(self)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Search frame
+        search_frame = ttk.LabelFrame(main_frame, text="Search & Navigation")
+        search_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Search controls
+        controls_frame = ttk.Frame(search_frame)
+        controls_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(controls_frame, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(controls_frame, textvariable=self.search_var, width=40)
+        self.search_entry.pack(side=tk.LEFT, padx=(0, 5))
+        self.search_entry.bind('<KeyRelease>', self._on_search_key_release)
+
+        # Search options
+        options_frame = ttk.Frame(controls_frame)
+        options_frame.pack(side=tk.LEFT, padx=(10, 0))
+
+        self.regex_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Regex", variable=self.regex_var,
+                       command=self._perform_search).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.case_sensitive_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Case Sensitive", variable=self.case_sensitive_var,
+                       command=self._perform_search).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.whole_word_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Whole Word", variable=self.whole_word_var,
+                       command=self._perform_search).pack(side=tk.LEFT, padx=(0, 10))
+
+        # Predictive search checkbox
+        self.predictive_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(options_frame, text="Predictive", variable=self.predictive_var,
+                       command=self._toggle_predictive_search).pack(side=tk.LEFT)
+
+        # Navigation buttons
+        nav_frame = ttk.Frame(controls_frame)
+        nav_frame.pack(side=tk.RIGHT)
+
+        self.prev_btn = ttk.Button(nav_frame, text="◀ Previous", command=self._goto_previous,
+                                  state=tk.DISABLED)
+        self.prev_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.next_btn = ttk.Button(nav_frame, text="Next ▶", command=self._goto_next,
+                                  state=tk.DISABLED)
+        self.next_btn.pack(side=tk.LEFT)
+
+        # Status label
+        self.status_label = ttk.Label(search_frame, text=f"Total strings: {len(self.strings_with_offsets)}")
+        self.status_label.pack(anchor=tk.W, padx=5, pady=(0, 5))
+
+        # Strings list frame
+        list_frame = ttk.LabelFrame(main_frame, text="Strings")
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create treeview for strings
+        columns = ('offset', 'hex_offset', 'length', 'string')
+        self.strings_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=20)
+
+        # Configure columns
+        self.strings_tree.heading('offset', text='Offset (Dec)')
+        self.strings_tree.heading('hex_offset', text='Offset (Hex)')
+        self.strings_tree.heading('length', text='Length')
+        self.strings_tree.heading('string', text='String')
+
+        self.strings_tree.column('offset', width=100, anchor=tk.E)
+        self.strings_tree.column('hex_offset', width=100, anchor=tk.E)
+        self.strings_tree.column('length', width=80, anchor=tk.E)
+        self.strings_tree.column('string', width=600)
+
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.strings_tree.yview)
+        self.strings_tree.configure(yscrollcommand=v_scrollbar.set)
+
+        # Pack treeview and scrollbars
+        self.strings_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind events
+        self.strings_tree.bind('<Double-1>', self._on_string_double_click)
+        self.strings_tree.bind('<Return>', self._on_string_select)
+
+        # Bottom buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(btn_frame, text="Copy Selected", command=self._copy_selected).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(btn_frame, text="Export to File", command=self._export_to_file).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side=tk.RIGHT)
+
+    def _bind_shortcuts(self):
+        self.bind('<Control-f>', lambda e: self.search_entry.focus_set())
+        self.bind('<F3>', self._goto_next)
+        self.bind('<Shift-F3>', self._goto_previous)
+        self.bind('<Escape>', lambda e: self.destroy())
+
+    def _populate_strings(self):
+        """Populate the strings treeview"""
+        # Clear existing items
+        for item in self.strings_tree.get_children():
+            self.strings_tree.delete(item)
+
+        # Add strings
+        for offset, string in self.filtered_strings:
+            hex_offset = f"0x{offset:08X}"
+            length = len(string)
+            self.strings_tree.insert('', tk.END, values=(offset, hex_offset, length, string))
+
+        # Update status
+        self.status_label.config(text=f"Showing {len(self.filtered_strings)} of {len(self.strings_with_offsets)} strings")
+
+    def _on_search_key_release(self, event):
+        """Handle search input changes"""
+        if event.keysym in ('Up', 'Down'):
+            return  # Handle arrow keys separately for history
+
+        # Update predictive suggestions
+        self._update_predictive_suggestions()
+
+        # Debounce search to avoid too many updates
+        if hasattr(self, '_search_timer'):
+            self.after_cancel(self._search_timer)
+
+        self._search_timer = self.after(300, self._perform_search)
+
+    def _perform_search(self):
+        """Perform the actual search with recursive binary search optimization"""
+        search_text = self.search_var.get().strip()
+        is_regex = self.regex_var.get()
+        case_sensitive = self.case_sensitive_var.get()
+        whole_word = self.whole_word_var.get()
+
+        if not search_text:
+            self.filtered_strings = self.strings_with_offsets.copy()
+        else:
+            self.filtered_strings = []
+            flags = 0 if case_sensitive else re.IGNORECASE
+
+            try:
+                if is_regex:
+                    # Use full JavaScript-compatible regex syntax
+                    if whole_word:
+                        pattern = re.compile(r'\b' + search_text + r'\b', flags)
+                    else:
+                        pattern = re.compile(search_text, flags)
+                else:
+                    # For non-regex searches, escape special characters and optionally add word boundaries
+                    escaped_text = re.escape(search_text)
+                    if whole_word:
+                        pattern = re.compile(r'\b' + escaped_text + r'\b', flags)
+                    else:
+                        pattern = re.compile(escaped_text, flags)
+
+                # Use recursive binary search for large datasets
+                if len(self.strings_with_offsets) > 1000:
+                    self.filtered_strings = self._recursive_binary_search(
+                        self.strings_with_offsets, pattern, 0, len(self.strings_with_offsets) - 1
+                    )
+                else:
+                    # Linear search for smaller datasets
+                    for offset, string in self.strings_with_offsets:
+                        if pattern.search(string):
+                            self.filtered_strings.append((offset, string))
+
+            except re.error as e:
+                self.status_label.config(text=f"Regex error: {e}")
+                return
+
+        self._populate_strings()
+        self._update_navigation_buttons()
+
+        # Select first match if any
+        if self.filtered_strings:
+            first_item = self.strings_tree.get_children()[0]
+            self.strings_tree.selection_set(first_item)
+            self.strings_tree.focus(first_item)
+            self.current_index = 0
+
+    def _recursive_binary_search(self, strings_list, pattern, left, right):
+        """Recursive binary search for string matching"""
+        if left > right:
+            return []
+
+        mid = (left + right) // 2
+        offset, string = strings_list[mid]
+
+        # Check if current string matches
+        matches = []
+        if pattern.search(string):
+            matches.append((offset, string))
+
+        # Search left half
+        left_matches = self._recursive_binary_search(strings_list, pattern, left, mid - 1)
+
+        # Search right half
+        right_matches = self._recursive_binary_search(strings_list, pattern, mid + 1, right)
+
+        # Combine results: left matches + current match + right matches
+        return left_matches + matches + right_matches
+
+    def _update_navigation_buttons(self):
+        """Update navigation button states"""
+        has_matches = len(self.filtered_strings) > 0
+        self.prev_btn.config(state=tk.NORMAL if has_matches else tk.DISABLED)
+        self.next_btn.config(state=tk.NORMAL if has_matches else tk.DISABLED)
+
+    def _goto_next(self, event=None):
+        """Go to next match"""
+        if not self.filtered_strings:
+            return
+
+        children = self.strings_tree.get_children()
+        if not children:
+            return
+
+        # Get current selection
+        selection = self.strings_tree.selection()
+        if selection:
+            current_item = selection[0]
+            current_idx = children.index(current_item)
+            next_idx = (current_idx + 1) % len(children)
+        else:
+            next_idx = 0
+
+        next_item = children[next_idx]
+        self.strings_tree.selection_set(next_item)
+        self.strings_tree.focus(next_item)
+        self.strings_tree.see(next_item)
+        self.current_index = next_idx
+
+    def _goto_previous(self, event=None):
+        """Go to previous match"""
+        if not self.filtered_strings:
+            return
+
+        children = self.strings_tree.get_children()
+        if not children:
+            return
+
+        # Get current selection
+        selection = self.strings_tree.selection()
+        if selection:
+            current_item = selection[0]
+            current_idx = children.index(current_item)
+            prev_idx = (current_idx - 1) % len(children)
+        else:
+            prev_idx = len(children) - 1
+
+        prev_item = children[prev_idx]
+        self.strings_tree.selection_set(prev_item)
+        self.strings_tree.focus(prev_item)
+        self.strings_tree.see(prev_item)
+        self.current_index = prev_idx
+
+    def _on_string_double_click(self, event):
+        """Handle double-click on string"""
+        selection = self.strings_tree.selection()
+        if selection:
+            item = selection[0]
+            values = self.strings_tree.item(item, 'values')
+            offset = int(values[0])
+            length = int(values[2])
+            # Jump to offset in hex editor and highlight it
+            if self.hex_editor and self.hex_editor.file_path:  # Use the passed hex_editor reference
+                self.hex_editor.offset_top = max(0, offset - 32)  # Show some context before
+                self.hex_editor.refresh_view()
+                self.hex_editor.update_selection_info(offset, length)  # Select the full string length
+
+    def _on_string_select(self, event):
+        """Handle Enter key on selected string"""
+        self._on_string_double_click(event)
+
+    def _copy_selected(self):
+        """Copy selected strings to clipboard"""
+        selection = self.strings_tree.selection()
+        if not selection:
+            return
+
+        selected_strings = []
+        for item in selection:
+            values = self.strings_tree.item(item, 'values')
+            offset, hex_offset, length, string = values
+            selected_strings.append(f"0x{int(offset):08X}: {string}")
+
+        if selected_strings:
+            self.clipboard_clear()
+            self.clipboard_append('\n'.join(selected_strings))
+
+    def _setup_predictive_search(self):
+        """Setup predictive search functionality"""
+        # Create a toplevel window for suggestions
+        self.predictive_toplevel = tk.Toplevel(self)
+        self.predictive_toplevel.withdraw()  # Initially hidden
+        self.predictive_toplevel.overrideredirect(True)  # Remove window decorations
+        self.predictive_toplevel.attributes('-topmost', True)  # Keep on top
+
+        # Frame for listbox and scrollbar
+        frame = ttk.Frame(self.predictive_toplevel)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.predictive_listbox = tk.Listbox(frame, height=10, font=('Consolas', 9), activestyle='none')
+        self.predictive_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.predictive_listbox.yview)
+        self.predictive_listbox.configure(yscrollcommand=self.predictive_scrollbar.set)
+
+        self.predictive_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.predictive_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind predictive listbox events
+        self.predictive_listbox.bind('<<ListboxSelect>>', self._on_predictive_select)
+        self.predictive_listbox.bind('<Double-1>', self._on_predictive_select)
+        self.predictive_listbox.bind('<Return>', self._on_predictive_select)
+        self.predictive_listbox.bind('<Escape>', self._hide_predictive)
+        self.predictive_listbox.bind('<FocusOut>', self._hide_predictive)
+
+        # Position predictive toplevel below search entry
+        self.search_entry.bind('<FocusOut>', self._hide_predictive)
+
+    def _toggle_predictive_search(self):
+        """Toggle predictive search on/off"""
+        if self.predictive_var.get():
+            self._setup_predictive_search()
+        else:
+            if hasattr(self, 'predictive_toplevel'):
+                self.predictive_toplevel.withdraw()
+
+    def _update_predictive_suggestions(self):
+        """Update predictive search suggestions"""
+        if not self.predictive_var.get():
+            return
+
+        search_text = self.search_var.get().strip().lower()
+        if len(search_text) < 2:
+            self._hide_predictive()
+            return
+
+        # Find suggestions from current strings
+        suggestions = set()
+        for _, string in self.strings_with_offsets:
+            if string.lower().startswith(search_text):
+                suggestions.add(string)
+            elif search_text in string.lower():
+                # Also include partial matches
+                start_idx = string.lower().find(search_text)
+                # Extract word containing the match
+                word_start = string.rfind(' ', 0, start_idx) + 1
+                word_end = string.find(' ', start_idx + len(search_text))
+                if word_end == -1:
+                    word_end = len(string)
+                word = string[word_start:word_end]
+                if word:
+                    suggestions.add(word)
+
+        self.predictive_suggestions = sorted(list(suggestions))[:10]  # Limit to 10 suggestions
+
+        if self.predictive_suggestions:
+            self._show_predictive()
+        else:
+            self._hide_predictive()
+
+    def _show_predictive(self):
+        """Show predictive suggestions"""
+        if not self.predictive_suggestions:
+            return
+
+        # Position below search entry
+        x = self.search_entry.winfo_rootx()
+        y = self.search_entry.winfo_rooty() + self.search_entry.winfo_height()
+
+        self.predictive_listbox.delete(0, tk.END)
+        for suggestion in self.predictive_suggestions:
+            self.predictive_listbox.insert(tk.END, suggestion)
+
+        # Set width to match search entry, height based on number of items (max 200px)
+        width = self.search_entry.winfo_width()
+        height = min(len(self.predictive_suggestions) * 20 + 10, 200)  # 20px per item + padding
+
+        self.predictive_toplevel.geometry(f"{width}x{height}+{x}+{y}")
+        self.predictive_toplevel.deiconify()
+        self.predictive_toplevel.lift()
+        self.predictive_listbox.focus_set()
+
+    def _hide_predictive(self, event=None):
+        """Hide predictive suggestions"""
+        if hasattr(self, 'predictive_toplevel'):
+            self.predictive_toplevel.withdraw()
+
+    def _on_predictive_select(self, event):
+        """Handle predictive suggestion selection"""
+        selection = self.predictive_listbox.curselection()
+        if selection:
+            selected_text = self.predictive_listbox.get(selection[0])
+            self.search_var.set(selected_text)
+            self._hide_predictive()
+            self._perform_search()
+            self.search_entry.focus_set()
+            self.search_entry.icursor(tk.END)  # Move cursor to end
+
+    def _export_to_file(self):
+        """Export strings to file"""
+        from tkinter import filedialog
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("Offset (Dec),Offset (Hex),Length,String\n")
+                for offset, string in self.filtered_strings:
+                    hex_offset = f"0x{offset:08X}"
+                    length = len(string)
+                    # Escape commas and quotes in CSV
+                    escaped_string = string.replace('"', '""')
+                    if ',' in escaped_string or '"' in escaped_string:
+                        escaped_string = f'"{escaped_string}"'
+                    f.write(f"{offset},{hex_offset},{length},{escaped_string}\n")
+
+            messagebox.showinfo("Export Complete", f"Exported {len(self.filtered_strings)} strings to {filename}")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
 # GUI: Advanced Text Editor
 # -------------------------
 class AdvancedTextEditor(tk.Toplevel):
@@ -1119,7 +2552,7 @@ class AdvancedTextEditor(tk.Toplevel):
     def _build_ui(self, initial_text):
         # Menu
         menubar = tk.Menu(self)
-        self.config(menu=menubar)
+        self.configure(menu=menubar)
         
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
@@ -1204,14 +2637,14 @@ class AdvancedTextEditor(tk.Toplevel):
         if self.whole_word_var.get():
             search_text = r'\b' + re.escape(search_text) + r'\b'
 
-        if self.regex_var.get():
-            try:
+        try:
+            if self.regex_var.get():
                 pattern = re.compile(search_text, flags)
-            except re.error:
-                messagebox.showerror("Regex Error", "Invalid regular expression")
-                return []
-        else:
-            pattern = re.compile(re.escape(search_text), flags)
+            else:
+                pattern = re.compile(re.escape(search_text), flags)
+        except re.error:
+            messagebox.showerror("Regex Error", "Invalid regular expression")
+            return []
 
         matches = []
         for match in pattern.finditer(content):
@@ -1371,10 +2804,10 @@ class UltimateFirmwareKitchen(tk.Tk):
         self._build_menu()
         startup_logger.info("UltimateFirmwareKitchen: Calling _build_toolbar.")
         self._build_toolbar()
-        startup_logger.info("UltimateFirmwareKitchen: Calling _build_workspace.")
-        self._build_workspace()
         startup_logger.info("UltimateFirmwareKitchen: Calling _build_statusbar.")
         self._build_statusbar()
+        startup_logger.info("UltimateFirmwareKitchen: Calling _build_workspace.")
+        self._build_workspace()
         
         self.bind('<Control-o>', lambda e: self.open_firmware())
         self.bind('<Control-s>', lambda e: self.save_project())
@@ -1386,26 +2819,35 @@ class UltimateFirmwareKitchen(tk.Tk):
         startup_logger.debug("UltimateFirmwareKitchen: _setup_style started.")
         style = ttk.Style(self)
         style.theme_use('clam')
-        
+
         style.configure('TFrame', background=COLORS['bg_card'])
         style.configure('TLabel', background=COLORS['bg_card'], foreground=COLORS['text_primary'])
         style.configure('TButton', background=COLORS['accent_blue'], foreground='white')
         style.map('TButton', background=[('active', COLORS['accent_orange'])])
-        
+
         style.configure('Accent.TButton', background=COLORS['accent_orange'])
         style.configure('Success.TButton', background=COLORS['accent_green'])
         style.configure('Danger.TButton', background=COLORS['accent_red'])
-        
+
         style.configure('Treeview', background=COLORS['bg_tertiary'],
                        foreground=COLORS['text_primary'],
                        fieldbackground=COLORS['bg_tertiary'])
+
+        # Professional progress bar styling
+        style.configure('TProgressbar',
+                       background=COLORS['accent_blue'],
+                       troughcolor=COLORS['bg_secondary'],
+                       borderwidth=1,
+                       lightcolor=COLORS['accent_blue'],
+                       darkcolor=COLORS['accent_blue'])
         startup_logger.debug("UltimateFirmwareKitchen: _setup_style finished.")
     
     def _build_menu(self):
         startup_logger.debug("UltimateFirmwareKitchen: _build_menu started.")
-        menubar = tk.Menu(self, bg=COLORS['bg_secondary'], fg=COLORS['text_primary'])
+        menubar = tk.Menu(self, bg=COLORS['bg_secondary'], fg=COLORS['text_primary'], font=('Segoe UI', 12))
         self.config(menu=menubar)
-        
+        # Note: Frame doesn't have config(menu=), this is handled by the parent window
+
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="New Project", command=self.new_project)
@@ -1446,6 +2888,20 @@ class UltimateFirmwareKitchen(tk.Tk):
         menubar.add_cascade(label="Flash", menu=flash_menu)
         flash_menu.add_command(label="Detect Device", command=self.detect_device)
         flash_menu.add_command(label="Flash via Heimdall", command=self.flash_heimdall)
+
+        hex_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Hex Editor", menu=hex_menu)
+        hex_menu.add_command(label="Open File", command=self.hex_editor_open_file, accelerator="Ctrl+O")
+        hex_menu.add_command(label="Save", command=self.hex_editor_save, accelerator="Ctrl+S")
+        hex_menu.add_command(label="Save As", command=self.hex_editor_save_as)
+        hex_menu.add_separator()
+        hex_menu.add_command(label="Find", command=self.hex_editor_find, accelerator="Ctrl+F")
+        hex_menu.add_command(label="Replace", command=self.hex_editor_replace, accelerator="Ctrl+H")
+        hex_menu.add_command(label="Go To", command=self.hex_editor_goto, accelerator="Ctrl+G")
+        hex_menu.add_separator()
+        hex_menu.add_command(label="Entropy Analysis", command=self.hex_editor_entropy)
+        hex_menu.add_command(label="Extract Strings", command=self.hex_editor_strings)
+        hex_menu.add_command(label="Byte Histogram", command=self.hex_editor_histogram)
         
         tools_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Tools", menu=tools_menu)
@@ -1493,15 +2949,19 @@ class UltimateFirmwareKitchen(tk.Tk):
         startup_logger.debug("UltimateFirmwareKitchen: _build_workspace started.")
         self.workspace = ttk.PanedWindow(self, orient='vertical')
         self.workspace.pack(fill='both', expand=True, padx=5, pady=5)
-        
+
         # Initial split: workspace and log
         self.main_pane = ttk.PanedWindow(self.workspace, orient='horizontal')
         self.workspace.add(self.main_pane, weight=3)
-        
+
         # Log at bottom
         log_frame = ttk.LabelFrame(self.workspace, text="Activity Log", padding=5)
         self.workspace.add(log_frame, weight=1)
-        
+
+        # Set minimum height for log frame to prevent squishing
+        log_frame.configure(height=300)  # Minimum height of 300 pixels
+        log_frame.pack_propagate(False)  # Prevent the frame from shrinking below its configured size
+
         self.log_console = LogConsole(log_frame)
         self.log_console.pack(fill='both', expand=True)
         startup_logger.debug("UltimateFirmwareKitchen: _build_workspace finished.")
@@ -1528,6 +2988,11 @@ class UltimateFirmwareKitchen(tk.Tk):
         file_editor_frame = ttk.Frame(notebook)
         notebook.add(file_editor_frame, text="File Editor")
         self._build_file_editor_ui(file_editor_frame)
+
+        # Hex Editor tab
+        hex_editor_frame = ttk.Frame(notebook)
+        notebook.add(hex_editor_frame, text="Hex Editor")
+        self._build_hex_editor_ui(hex_editor_frame)
 
         # Tools tab
         tools_frame = ttk.Frame(notebook)
@@ -1649,6 +3114,7 @@ class UltimateFirmwareKitchen(tk.Tk):
         self.file_editor_tree.config(yscrollcommand=vsb_tree.set)
 
         self.file_editor_tree.bind("<Double-1>", self._on_file_editor_file_double_click)
+        self.file_editor_tree.bind("<Button-1>", self._on_file_editor_file_single_click)
         self.file_editor_tree.bind("<Button-3>", self._file_editor_context_menu)
 
         self.file_editor_frame = ttk.Frame(parent)
@@ -1674,8 +3140,9 @@ class UltimateFirmwareKitchen(tk.Tk):
         font_combo.bind("<<ComboboxSelected>>", self._change_font_size)
 
         self.file_editor = scrolledtext.ScrolledText(self.file_editor_frame, wrap='word', undo=True,
-                                                     font=('Consolas', 10),
-                                                     bg=COLORS['log_bg'], fg=COLORS['log_fg'])
+                                                      font=('Consolas', 10),
+                                                      bg=COLORS['log_bg'], fg=COLORS['log_fg'],
+                                                      state=tk.NORMAL, insertbackground=COLORS['text_primary'])
         self.file_editor.pack(fill='both', expand=True)
 
         # Comprehensive syntax highlighting tags for multiple languages
@@ -1749,12 +3216,15 @@ class UltimateFirmwareKitchen(tk.Tk):
         self._apply_syntax_highlighting()
 
     def _apply_syntax_highlighting(self):
+        # Skip syntax highlighting for large files to prevent UI freezing
+        content = self.file_editor.get('1.0', tk.END)
+        if len(content) > 1000000:  # 1MB limit for syntax highlighting
+            return
+
         # Clear all existing tags
         for tag in self.file_editor.tag_names():
             if tag != 'sel':  # Don't remove selection tag
                 self.file_editor.tag_remove(tag, '1.0', tk.END)
-
-        content = self.file_editor.get('1.0', tk.END)
 
         # Determine file type from content for better highlighting
         file_ext = self._detect_file_type(content)
@@ -2023,13 +3493,21 @@ class UltimateFirmwareKitchen(tk.Tk):
     def _open_file_editor_file_thread(self, file_path: str):
         """Thread to open and display file content."""
         try:
+            file_size = os.path.getsize(file_path)
             self.after(0, lambda: self.status_label.config(text=f"Loading {os.path.basename(file_path)}..."))
             self.after(0, lambda: self.progress.start())
 
+            # Check file size and handle large files differently
+            if file_size > 50 * 1024 * 1024:  # 50MB limit
+                self.after(0, lambda: messagebox.showwarning("Large File Warning",
+                    f"File is {file_size / (1024*1024):.1f} MB. Loading may be slow.\n\n"
+                    "Consider using an external editor for files larger than 50MB."))
+                return
+
             # Read file in chunks to avoid UI freezing on large files
             content = ""
-            chunk_size = 8192  # 8KB chunks
-            file_size = os.path.getsize(file_path)
+            chunk_size = 16384  # 16KB chunks for better performance
+            max_content_size = 10 * 1024 * 1024  # 10MB max content to display
 
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 bytes_read = 0
@@ -2040,13 +3518,22 @@ class UltimateFirmwareKitchen(tk.Tk):
                     content += chunk
                     bytes_read += len(chunk)
 
+                    # Limit content size to prevent memory issues
+                    if len(content) > max_content_size:
+                        content = content[:max_content_size] + "\n\n[FILE TRUNCATED - Content too large to display fully]"
+                        self.after(0, lambda: self.log(f"File truncated at {max_content_size} characters", 'warning'))
+                        break
+
                     # Update progress for large files (>1MB)
                     if file_size > 1024 * 1024:
-                        progress = int((bytes_read / file_size) * 100)
+                        progress = min(100, int((bytes_read / file_size) * 100))
                         self.after(0, lambda p=progress: self.progress.config(value=p))
 
-                    # Allow UI to remain responsive by yielding control
-                    time.sleep(0.001)
+                    # Yield control more frequently for very large files
+                    if file_size > 10 * 1024 * 1024:  # >10MB
+                        time.sleep(0.01)  # Longer sleep for responsiveness
+                    else:
+                        time.sleep(0.001)
 
             self.after(0, lambda: self._display_file_content(file_path, content))
             self.after(0, lambda: self.log(f"Opened file: {os.path.basename(file_path)} ({len(content)} chars)", 'info'))
@@ -2058,10 +3545,18 @@ class UltimateFirmwareKitchen(tk.Tk):
 
     def _display_file_content(self, file_path: str, content: str):
         """Display file content in the editor."""
+        # Disable updates during content insertion for better performance
+        self.file_editor.config(state=tk.NORMAL)
         self.file_editor.delete('1.0', tk.END)
         self.file_editor.insert('1.0', content)
         self.current_file = file_path
-        self._apply_syntax_highlighting()
+        # Only apply syntax highlighting for smaller files
+        if len(content) <= 1000000:  # 1MB limit
+            self._apply_syntax_highlighting()
+        # Ensure the editor remains editable and focused
+        self.file_editor.config(state=tk.NORMAL)
+        self.file_editor.focus_set()
+        self.file_editor.mark_set(tk.INSERT, '1.0')
         self.log(f"File loaded: {os.path.basename(file_path)}", 'success')
 
     def _open_file_editor_entry(self, item_id):
@@ -2079,11 +3574,27 @@ class UltimateFirmwareKitchen(tk.Tk):
         else:
             self.log(f"Cannot open directory: {file_path}", 'warning')
 
+    def _open_file_editor_entry_with_lock(self, item):
+        """Wrapper to handle loading lock"""
+        try:
+            self._open_file_editor_entry(item)
+        finally:
+            self._loading_file = False
+
     def _on_file_editor_file_double_click(self, event):
         item = self.file_editor_tree.selection()[0]
         if item:
+            # Check if file is already being loaded to prevent multiple loads
+            if hasattr(self, '_loading_file') and self._loading_file:
+                return
+            self._loading_file = True
             # Use threading to prevent UI freezing
-            threading.Thread(target=self._open_file_editor_entry, args=(item,), daemon=True).start()
+            threading.Thread(target=self._open_file_editor_entry_with_lock, args=(item,), daemon=True).start()
+
+    def _on_file_editor_file_single_click(self, event):
+        """Handle single click to prevent accidental multiple loads"""
+        # Optional: could add logic here if needed
+        pass
 
     def _set_file_editor_base_folder(self):
         """Set the base folder for file editing"""
@@ -2128,9 +3639,14 @@ class UltimateFirmwareKitchen(tk.Tk):
             self.status_label.config(text=f"Saving {os.path.basename(self.current_file)}...")
             self.progress.start()
 
+            # Get content and handle large files efficiently
             content = self.file_editor.get('1.0', tk.END).rstrip() + '\n'
+
+            # Write in chunks for large files to prevent memory issues
+            chunk_size = 65536  # 64KB chunks
             with open(self.current_file, 'w', encoding='utf-8') as f:
-                f.write(content)
+                for i in range(0, len(content), chunk_size):
+                    f.write(content[i:i + chunk_size])
 
             self.log(f"Saved: {os.path.basename(self.current_file)}", 'success')
             self.status_label.config(text="Ready")
@@ -2196,12 +3712,26 @@ class UltimateFirmwareKitchen(tk.Tk):
             self.status_label.config(text=f"Reloading {os.path.basename(self.current_file)}...")
             self.progress.start()
 
-            with open(self.current_file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            # Check file size before reloading
+            file_size = os.path.getsize(self.current_file)
+            if file_size > 50 * 1024 * 1024:  # 50MB limit
+                messagebox.showwarning("Large File Warning",
+                    f"File is {file_size / (1024*1024):.1f} MB. Reload may be slow.")
+                return
 
+            with open(self.current_file, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(10 * 1024 * 1024)  # Limit to 10MB for display
+                if len(content) == 10 * 1024 * 1024 and f.read(1):  # Check if more content exists
+                    content += "\n\n[FILE TRUNCATED - Content too large to display fully]"
+
+            self.file_editor.config(state=tk.NORMAL)
             self.file_editor.delete('1.0', tk.END)
             self.file_editor.insert('1.0', content)
-            self._apply_syntax_highlighting()
+            # Only apply syntax highlighting for smaller files
+            if len(content) <= 1000000:
+                self._apply_syntax_highlighting()
+            self.file_editor.focus_set()
+            self.file_editor.mark_set(tk.INSERT, '1.0')
             self.log(f"Reloaded: {os.path.basename(self.current_file)}", 'info')
         except Exception as e:
             messagebox.showerror("Error", f"Failed to reload file: {e}")
@@ -2377,27 +3907,39 @@ class UltimateFirmwareKitchen(tk.Tk):
         # Specific UI for tools
         tree_frame = ttk.Frame(parent)
         tree_frame.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        self.tools_tree = ttk.Treeview(tree_frame, columns=('path',), 
+
+        self.tools_tree = ttk.Treeview(tree_frame, columns=('path',),
                                        show='tree headings')
         self.tools_tree.heading('#0', text='Tool')
         self.tools_tree.heading('path', text='Location')
         self.tools_tree.column('path', width=400)
-        
+
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tools_tree.yview)
         vsb.pack(side='right', fill='y')
         self.tools_tree.config(yscrollcommand=vsb.set)
         self.tools_tree.pack(side='left', fill='both', expand=True)
+
+    def _build_hex_editor_ui(self, parent):
+        # Specific UI for hex editor
+        # Pass the main app's status_label method instead of the label itself
+        self.hex_editor_widget = HexEditorWidget(parent, self.log, lambda text: self.status_label.config(text=text))
+        self.hex_editor_widget.pack(fill='both', expand=True)
+        # Store reference for menu commands
+        self.hex_editor_widget_ref = self.hex_editor_widget
     
     def _build_statusbar(self):
-        statusbar = ttk.Frame(self, relief='sunken')
-        statusbar.pack(side='bottom', fill='x')
-        
-        self.status_label = ttk.Label(statusbar, text="Ready", anchor='w')
-        self.status_label.pack(side='left', fill='x', expand=True, padx=5)
-        
-        self.progress = ttk.Progressbar(statusbar, length=200, mode='indeterminate')
-        self.progress.pack(side='right', padx=5)
+        # Create a frame to hold status bar and progress bar
+        status_frame = tk.Frame(self)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Status bar (left side)
+        self.status_label = tk.Label(status_frame, text="Ready", bd=1, relief=tk.SUNKEN, anchor=tk.W,
+                                    font=('Segoe UI', 9), height=1)
+        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Progress bar (right side, always visible)
+        self.progress = ttk.Progressbar(status_frame, length=200, mode='indeterminate')
+        self.progress.pack(side=tk.RIGHT, padx=(5, 0))
     
     # Logging
     def log(self, msg: str, level: str = 'info'):
@@ -3639,6 +5181,43 @@ Place all tools in tools/ folder for full functionality.
                 return f"{size_float:.1f} {unit}"
             size_float /= 1024
         return f"{size_float:.1f} PB"
+
+    # Hex Editor menu commands
+    def hex_editor_open_file(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.open_file()
+
+    def hex_editor_save(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.save_file()
+
+    def hex_editor_save_as(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.save_as()
+
+    def hex_editor_find(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.find_dialog()
+
+    def hex_editor_replace(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.replace_dialog()
+
+    def hex_editor_goto(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.goto_dialog()
+
+    def hex_editor_entropy(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.entropy_analysis()
+
+    def hex_editor_strings(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.show_strings()
+
+    def hex_editor_histogram(self):
+        if hasattr(self, 'hex_editor_widget_ref'):
+            self.hex_editor_widget_ref.byte_histogram()
 
 # -------------------------
 # Entry Point

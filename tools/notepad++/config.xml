@@ -3,6 +3,8 @@
     <FindHistory nbMaxFindHistoryPath="10" nbMaxFindHistoryFilter="10" nbMaxFindHistoryFind="10" nbMaxFindHistoryReplace="10" matchWord="no" matchCase="no" wrap="yes" directionDown="yes" fifRecuisive="yes" fifInHiddenFolder="no" fifProjectPanel1="no" fifProjectPanel2="no" fifProjectPanel3="no" fifFilterFollowsDoc="no" fifFolderFollowsDoc="no" searchMode="0" transparencyMode="1" transparency="150" dotMatchesNewline="no" isSearch2ButtonsMode="no" regexBackward4PowerUser="no" bookmarkLine="no" purge="no" />
     <History nbMaxFile="10" inSubMenu="no" customLength="-1">
         <File filename="E:\_phone_hack\crb_340\crb_340\Projects\A32\Logs\Log.txt" />
+        <File filename="E:\_phone_hack\_Samsung A325F Firmware and Tools\A325FXXSCDYB2_A325FOJMCDYB2_XFE\AP_A325FXXSCDYB2_A325FXXSCDYB2_MQB93026337_REV00_user_low_ship_MULTI_CERT_meta_OS13.tar\ramdisk\system\bin\snapuserd" />
+        <File filename="E:\_phone_hack\_Samsung A325F Firmware and Tools\A325FXXSCDYB2_A325FOJMCDYB2_XFE\AP_A325FXXSCDYB2_A325FXXSCDYB2_MQB93026337_REV00_user_low_ship_MULTI_CERT_meta_OS13.tar\ramdisk.cpio" />
     </History>
     <ProjectPanels>
         <ProjectPanel id="0" workSpaceFile="" />
