@@ -1838,7 +1838,7 @@ class HexEditorWidget(ttk.Frame):
         find_entry = ttk.Entry(find_window, width=50)
         find_entry.pack(pady=5)
 
-        is_hex_var = tk.BooleanVar(value=True)
+        is_hex_var = tk.BooleanVar(value=False)  # Default to text search
         ttk.Checkbutton(find_window, text="Hex input", variable=is_hex_var).pack(pady=5)
 
         def do_find():
@@ -1861,7 +1861,11 @@ class HexEditorWidget(ttk.Frame):
         start = 0
         data = self._get_slice(0, self._get_len())
         if is_hex:
-            pat = bytes(int(x, 16) for x in pattern.split())
+            try:
+                pat = bytes(int(x, 16) for x in pattern.split())
+            except ValueError:
+                messagebox.showerror("Invalid Hex", "Invalid hex pattern. Each byte should be 2 hex digits (00-FF) separated by spaces.")
+                return
         else:
             pat = pattern.encode("utf-8")
         idx = data.find(pat, start)
