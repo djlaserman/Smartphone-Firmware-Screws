@@ -1,4 +1,4 @@
-# Commercial License — Request & Terms (Template / Informational)
+# Commercial License — Request & Terms
 
 **IMPORTANT:** This document is an informational summary of the commercial licensing process for this repository. The formal, legally binding commercial license will be a separate written agreement signed by both parties.
 
