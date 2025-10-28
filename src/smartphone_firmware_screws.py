@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ultimate Firmware Kitchen - Complete Android ROM & Firmware Toolkit
+Smartphone Firmware Screws - Complete Android ROM & Firmware Toolkit
 Professional-grade ROM building, firmware modification, and device flashing
 
 Complete feature set:
@@ -17,7 +17,7 @@ Complete feature set:
 - Project-based workflow
 - Utilizes 30+ tools from tools/ folder
 
-Author: Isaki Dube | License: Dual 
+Author: Isaki Dube | License: Dual
 """
 
 import os
@@ -2885,7 +2885,7 @@ class AdvancedTextEditor(tk.Toplevel):
 # -------------------------
 # Main Application
 # -------------------------
-class UltimateFirmwareKitchen(tk.Tk):
+class SmartphoneFirmwareScrews(tk.Tk):
     """Main application window"""
     def __init__(self):
         super().__init__()
@@ -5251,23 +5251,23 @@ class UltimateFirmwareKitchen(tk.Tk):
     def show_about(self):
         about_text = f"""{APP_TITLE} v{VERSION}
 
-Complete Android ROM & Firmware Toolkit
+Professional-grade ROM building, firmware modification, and device flashing
 
-Features:
-• AOSP/Custom ROM Building
-• Odin .tar.md5 Firmware (Byte-exact)
-• Boot Image Modification
-• System Customization
-• APK Decompile/Recompile/Sign
-• LZ4 Compression
-• Sparse Image Conversion
-• Device Flashing (Heimdall)
-• Project Management
-• 30+ Tool Integration
+Complete feature set:
+- AOSP/Custom ROM building from source or existing images
+- Odin .tar.md5 firmware building (byte-exact)
+- Boot image modification (kernel, ramdisk, cmdline)
+- System/vendor/product customization
+- APK decompile/recompile with signing
+- OTA package creation
+- Sparse image handling
+- Super partition manipulation
+- Binary modding tools (7z, zip, etc.)
+- Heimdall/Odin flashing
+- Project-based workflow
+- Utilizes 30+ tools from tools/ folder
 
-Utilizes tools from: {TOOLS_DIR}
-
-Place all tools in tools/ folder for full functionality.
+Author: Isaki Dube | License: Dual
 """
         messagebox.showinfo("About", about_text)
     
@@ -5334,8 +5334,8 @@ def main():
         messagebox.showerror("Tkinter Error", f"Failed to initialize Tkinter. Error: {e}")
         sys.exit(1)
 
-    startup_logger.info("Initializing UltimateFirmwareKitchen application.")
-    app = UltimateFirmwareKitchen()
+    startup_logger.info("Initializing SmartphoneFirmwareScrews application.")
+    app = SmartphoneFirmwareScrews()
     app.refresh_tools()
     app.log(f"{APP_TITLE} v{VERSION} started", 'success')
     app.log(f"Tools directory: {TOOLS_DIR}", 'info')
