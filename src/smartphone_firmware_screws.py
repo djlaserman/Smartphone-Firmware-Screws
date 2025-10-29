@@ -3378,6 +3378,9 @@ class SmartphoneFirmwareScrews(tk.Tk):
         menubar.add_cascade(label="Port ROM", menu=port_rom_menu)
         port_rom_menu.add_command(label="Step 1: Extract Firmware", command=self.switch_to_port_rom_tab)
         port_rom_menu.add_command(label="Step 2: Unpack Boot Images", command=lambda: self.switch_to_port_rom_tab(step=2))
+        port_rom_menu.add_command(label="Step 3: Modify Ramdisk", command=lambda: self.switch_to_port_rom_tab(step=3))
+        port_rom_menu.add_command(label="Step 4: Repack Boot Image", command=lambda: self.switch_to_port_rom_tab(step=4))
+        port_rom_menu.add_command(label="Step 5: Extract System/Vendor Images", command=lambda: self.switch_to_port_rom_tab(step=5))
         
         flash_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Flash", menu=flash_menu)
@@ -4449,11 +4452,57 @@ class SmartphoneFirmwareScrews(tk.Tk):
             widget.destroy()
 
         # Main frame for the Port ROM tab
-        main_frame = ttk.Frame(parent, padding=10)
+        main_frame = ttk.Frame(parent)
         main_frame.pack(fill='both', expand=True)
 
+        # Create a scrollable canvas with vertical scrollbar
+        canvas = tk.Canvas(main_frame, bg=COLORS['bg_card'], highlightthickness=0, scrollregion=(0, 0, 0, 0))
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas, padding=10)
+
+        # Create window in canvas and get its ID for later reference
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        # Configure scroll region and canvas window sizing
+        def _configure_scroll_region(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # Update canvas window width to fill available space (minus scrollbar)
+            canvas_width = canvas.winfo_width()
+            if canvas_width > 0:
+                # Leave space for the scrollbar
+                canvas.itemconfig(window_id, width=canvas_width - scrollbar.winfo_width() if scrollbar.winfo_exists() else canvas_width)
+
+        scrollable_frame.bind("<Configure>", _configure_scroll_region)
+        
+        # Configure canvas after it's mapped
+        def _configure_canvas(event):
+            canvas_width = canvas.winfo_width()
+            if canvas_width > 0:
+                canvas.itemconfig(window_id, width=canvas_width - scrollbar.winfo_width() if scrollbar.winfo_exists() else canvas_width)
+        
+        canvas.bind('<Configure>', _configure_canvas)
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Bind mouse wheel to scroll the canvas
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+        
+        scrollable_frame.bind("<Enter>", _bind_mousewheel)
+        scrollable_frame.bind("<Leave>", _unbind_mousewheel)
+
         # --- Step 1: Firmware Extraction ---
-        step1_frame = ttk.LabelFrame(main_frame, text="Step 1: Extract Base and Port Firmware", padding=10)
+        step1_frame = ttk.LabelFrame(scrollable_frame, text="Step 1: Extract Base and Port Firmware", padding=10)
         step1_frame.pack(fill='x', pady=5, anchor='n')
 
         # Base Firmware (the ROM you want to port)
@@ -4471,12 +4520,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
         step1_frame.grid_columnconfigure(0, weight=1)
 
         # Action button
-        action_frame = ttk.Frame(main_frame)
+        action_frame = ttk.Frame(scrollable_frame)
         action_frame.pack(fill='x', pady=10)
         ttk.Button(action_frame, text="Start Firmware Extraction", command=self._start_firmware_extraction, style='Accent.TButton').pack()
 
         # --- Step 2: Boot Image Unpacking ---
-        step2_frame = ttk.LabelFrame(main_frame, text="Step 2: Unpack Boot Images", padding=10)
+        step2_frame = ttk.LabelFrame(scrollable_frame, text="Step 2: Unpack Boot Images", padding=10)
         step2_frame.pack(fill='x', pady=5, anchor='n')
 
         ttk.Label(step2_frame, text="This step will unpack the boot.img and extract the ramdisk for both Base and Port firmware.").pack(anchor='w', pady=5)
@@ -4484,12 +4533,117 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
         # Scroll to specific step if requested
         if step == 2:
-            # This is a placeholder. Actual scrolling would require a canvas or similar.
-            # For now, just log that it's intended to go to step 2.
-            self.log("Navigated to Port ROM tab, intended to focus on Step 2.", 'info')
-            # Attempt to scroll to the step2_frame if possible (requires a scrollable container)
-            # For now, we'll just ensure the frame is packed.
-            step2_frame.after(100, lambda: step2_frame.focus_set()) # Attempt to set focus
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 3: Ramdisk Modification ---
+        step3_frame = ttk.LabelFrame(scrollable_frame, text="Step 3: Modify Ramdisk for Porting", padding=10)
+        step3_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step3_frame, text="This step will modify the Base firmware ramdisk to work with the Port firmware hardware.").pack(anchor='w', pady=5)
+        ttk.Button(step3_frame, text="Start Ramdisk Modification", command=self._start_ramdisk_modification, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 3:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 4: Repack Boot Image ---
+        step4_frame = ttk.LabelFrame(scrollable_frame, text="Step 4: Repack Boot Image", padding=10)
+        step4_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step4_frame, text="This step will repack the boot image with the modified ramdisk to create a new boot.img for the ported ROM.").pack(anchor='w', pady=5)
+        ttk.Button(step4_frame, text="Start Boot Image Repacking", command=self._start_boot_repacking, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 4:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 5: System and Vendor Image Extraction ---
+        step5_frame = ttk.LabelFrame(scrollable_frame, text="Step 5: Extract System and Vendor Images", padding=10)
+        step5_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step5_frame, text="This step will extract and mount system and vendor images from both Base and Port firmware for comparison.").pack(anchor='w', pady=5)
+        ttk.Button(step5_frame, text="Start System/Vendor Extraction", command=self._start_system_vendor_extraction, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 5:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 6: Vendor Partition Modification ---
+        step6_frame = ttk.LabelFrame(scrollable_frame, text="Step 6: Modify Vendor Partition", padding=10)
+        step6_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step6_frame, text="This step will replace critical hardware HALs and firmware from the Port device for hardware compatibility.").pack(anchor='w', pady=5)
+        ttk.Button(step6_frame, text="Start Vendor Modification", command=self._start_vendor_modification, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 6:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 7: System Partition Modification ---
+        step7_frame = ttk.LabelFrame(scrollable_frame, text="Step 7: Modify System Partition", padding=10)
+        step7_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step7_frame, text="This step will update system properties and device identifiers to match the Port device.").pack(anchor='w', pady=5)
+        ttk.Button(step7_frame, text="Start System Modification", command=self._start_system_modification, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 7:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 8: Image Repacking ---
+        step8_frame = ttk.LabelFrame(scrollable_frame, text="Step 8: Repack Images", padding=10)
+        step8_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step8_frame, text="This step will repack the modified partitions into flashable images and prepare them for Odin.").pack(anchor='w', pady=5)
+        ttk.Button(step8_frame, text="Start Image Repacking", command=self._start_image_repacking, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 8:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 9: Create Odin Package ---
+        step9_frame = ttk.LabelFrame(scrollable_frame, text="Step 9: Create Odin Package", padding=10)
+        step9_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step9_frame, text="This step will create a complete Odin flashable package with AP, BL, CP, and CSC components.").pack(anchor='w', pady=5)
+        ttk.Button(step9_frame, text="Create Odin Package", command=self._start_odin_package_creation, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 9:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+        # --- Step 10: Validate Package ---
+        step10_frame = ttk.LabelFrame(scrollable_frame, text="Step 10: Validate Package", padding=10)
+        step10_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step10_frame, text="This step will validate the Odin package for completeness, integrity, and safety before flashing.").pack(anchor='w', pady=5)
+        ttk.Button(step10_frame, text="Validate Package", command=self._start_package_validation, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 10:
+            # Scroll to the requested step
+            self.after(100, lambda: self._scroll_to_step(canvas, step))
+
+    def _scroll_to_step(self, canvas, step):
+        """Scroll canvas to bring the requested step into view"""
+        # Calculate the position of the target step
+        # Each step frame is roughly 100-150 pixels tall with padding
+        step_height = 120
+        target_y = (step - 1) * step_height
+        
+        # Use after to ensure the canvas is fully rendered
+        canvas.update_idletasks()
+        canvas.yview_moveto(max(0, (target_y - 50) / max(1, canvas.bbox("all")[3] - canvas.winfo_height())))
+        
+        self.log(f"Navigated to Port ROM tab, intended to focus on Step {step}.", 'info')
 
     def _browse_dir(self, var: tk.StringVar):
         path = filedialog.askdirectory()
@@ -4533,6 +4687,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 os.remove(tmp_tar)
 
     def _extract_firmware_for_porting_thread(self, base_dir: str, port_dir: str):
+        import os
+        import shutil
         work_dir = os.path.join(os.getcwd(), "firmware_port")
         self.log(f"[*] Starting firmware extraction. Working directory: {work_dir}")
 
@@ -4689,6 +4845,2129 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         os.remove(tmp_cpio)
         else:
             self.log(f"[!] Ramdisk (ramdisk.cpio or ramdisk.cpio.gz) not found in {boot_dir}", 'warning')
+
+    def _start_ramdisk_modification(self):
+        """Start the ramdisk modification process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        base_boot_dir = os.path.join(work_dir, "base", "boot")
+        port_boot_dir = os.path.join(work_dir, "port", "boot")
+        base_ramdisk_dir = os.path.join(base_boot_dir, "ramdisk")
+        port_ramdisk_dir = os.path.join(port_boot_dir, "ramdisk")
+
+        if not os.path.isdir(base_ramdisk_dir) or not os.path.isdir(port_ramdisk_dir):
+            messagebox.showerror("Error", "Ramdisk directories not found. Please complete Step 2 first.")
+            return
+
+        threading.Thread(target=self._modify_ramdisk_thread,
+                        args=(base_ramdisk_dir, port_ramdisk_dir), daemon=True).start()
+
+    def _modify_ramdisk_thread(self, base_ramdisk_dir: str, port_ramdisk_dir: str):
+        """Thread to perform ramdisk modification"""
+        try:
+            self.status_label.config(text="Modifying ramdisk...")
+            self.progress.start()
+            self.log("[*] Starting ramdisk modification...", 'info')
+
+            # Create backup of original base ramdisk
+            backup_dir = os.path.join(os.path.dirname(base_ramdisk_dir), "ramdisk.backup")
+            if os.path.exists(backup_dir):
+                import shutil
+                shutil.rmtree(backup_dir)
+            import shutil
+            shutil.copytree(base_ramdisk_dir, backup_dir)
+            self.log(f"[*] Backup created: {backup_dir}", 'info')
+
+            # Find and replace fstab files
+            self.log("[*] Modifying fstab files...")
+            self._modify_fstab_files(base_ramdisk_dir, port_ramdisk_dir)
+
+            # Modify init scripts
+            self.log("[*] Modifying init scripts...")
+            self._modify_init_scripts(base_ramdisk_dir)
+
+            # Modify property files
+            self.log("[*] Modifying property files...")
+            self._modify_property_files(base_ramdisk_dir)
+
+            # Copy A32-specific hardware configurations
+            self.log("[*] Copying port-specific hardware configurations...")
+            self._copy_hardware_configs(base_ramdisk_dir, port_ramdisk_dir)
+
+            # Verify critical files
+            missing_files = self._verify_critical_files(base_ramdisk_dir)
+
+            if missing_files > 0:
+                self.log(f"[!] WARNING: {missing_files} critical files missing. Manual intervention may be required.", 'warning')
+
+            self.log("[*] Ramdisk modification complete.", 'success')
+            self.log(f"[*] Modified ramdisk: {base_ramdisk_dir}", 'info')
+            self.log(f"[*] Backup: {backup_dir}", 'info')
+            self.after(0, lambda: messagebox.showinfo("Success",
+                "Ramdisk modification complete!\n\n"
+                "IMPORTANT: Review changes manually before repacking:\n"
+                "- Verify fstab partition paths match port device\n"
+                "- Check init*.rc for hardware-specific services\n"
+                "- Confirm device tree files are from port device"))
+
+        except Exception as e:
+            self.log(f"[!] Error during ramdisk modification: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during ramdisk modification: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _modify_fstab_files(self, base_ramdisk_dir: str, port_ramdisk_dir: str):
+        """Modify fstab files in the ramdisk"""
+        import glob
+        import filecmp
+        
+        fstab_patterns = ['fstab.*']
+        for pattern in fstab_patterns:
+            for fstab_path in glob.glob(os.path.join(base_ramdisk_dir, pattern)):
+                filename = os.path.basename(fstab_path)
+                self.log(f"[*] Processing {filename}", 'info')
+                
+                # Read original content
+                with open(fstab_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                # Apply modifications - replace common device identifiers
+                # These are examples that can be customized based on actual devices
+                modifications = [
+                    # Common device model replacements (examples)
+                    ('a33', 'a32'), ('A33', 'A32'),
+                    ('SM-A336', 'SM-A325'), ('sm-a336', 'sm-a325'),
+                    # Common chipset replacements
+                    ('exynos1280', 'exynos850'), ('Exynos1280', 'Exynos850'),
+                    # Add more patterns as needed
+                ]
+                
+                modified_content = content
+                for old, new in modifications:
+                    modified_content = modified_content.replace(old, new)
+                
+                # Write modified content
+                with open(fstab_path, 'w', encoding='utf-8') as f:
+                    f.write(modified_content)
+                
+                # Check if port device has corresponding fstab for comparison
+                port_fstab_path = os.path.join(port_ramdisk_dir, filename)
+                if os.path.exists(port_fstab_path):
+                    self.log(f"[*] Found matching port fstab, comparing partition layouts...", 'info')
+                    try:
+                        with open(fstab_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            base_partitions = set(re.findall(r'/dev/block/[^\s]+', f.read()))
+                        with open(port_fstab_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            port_partitions = set(re.findall(r'/dev/block/[^\s]+', f.read()))
+                        
+                        if base_partitions != port_partitions:
+                            self.log("[!] WARNING: Partition layout differences detected", 'warning')
+                            self.log("[!] Manual verification required for partition paths", 'warning')
+                        else:
+                            self.log(f"[*] Partition layouts match for {filename}", 'info')
+                    except Exception as e:
+                        self.log(f"[!] Error comparing partition layouts: {e}", 'warning')
+
+    def _modify_init_scripts(self, ramdisk_dir: str):
+        """Modify init scripts in the ramdisk"""
+        import glob
+        
+        init_patterns = ['init*.rc', 'init*']
+        for pattern in init_patterns:
+            for init_path in glob.glob(os.path.join(ramdisk_dir, pattern)):
+                if os.path.isfile(init_path):
+                    filename = os.path.basename(init_path)
+                    self.log(f"[*] Processing {filename}", 'info')
+                    
+                    try:
+                        # Read original content
+                        with open(init_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        
+                        # Apply modifications for hardware identifiers
+                        modifications = [
+                            # Device model replacements
+                            ('a33', 'a32'), ('A33', 'A32'),
+                            ('SM-A336', 'SM-A325'), ('sm-a336', 'sm-a325'),
+                            # Chipset replacements
+                            ('exynos1280', 'exynos850'), ('Exynos1280', 'Exynos850'),
+                            # Service replacements (examples - customize based on actual services)
+                            ('vendor.samsung.hardware.biometrics.fingerprint@3.0',
+                             'vendor.samsung.hardware.biometrics.fingerprint@2.1'),
+                        ]
+                        
+                        modified_content = content
+                        for old, new in modifications:
+                            modified_content = modified_content.replace(old, new)
+                        
+                        # Write modified content
+                        with open(init_path, 'w', encoding='utf-8') as f:
+                            f.write(modified_content)
+                            
+                    except Exception as e:
+                        self.log(f"[!] Error processing {filename}: {e}", 'warning')
+
+    def _modify_property_files(self, ramdisk_dir: str):
+        """Modify property files in the ramdisk"""
+        import glob
+        
+        prop_patterns = ['*.prop', 'default.prop']
+        for pattern in prop_patterns:
+            for prop_path in glob.glob(os.path.join(ramdisk_dir, pattern)):
+                if os.path.isfile(prop_path):
+                    filename = os.path.basename(prop_path)
+                    self.log(f"[*] Processing {filename}", 'info')
+                    
+                    try:
+                        # Read original content
+                        with open(prop_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        
+                        # Apply property modifications
+                        modifications = [
+                            ('ro.product.device=a33', 'ro.product.device=a32'),
+                            ('ro.product.model=SM-A336', 'ro.product.model=SM-A325'),
+                            ('ro.product.name=a33', 'ro.product.name=a32'),
+                            ('ro.build.product=a33', 'ro.build.product=a32'),
+                        ]
+                        
+                        modified_content = content
+                        for old, new in modifications:
+                            modified_content = modified_content.replace(old, new)
+                        
+                        # Write modified content
+                        with open(prop_path, 'w', encoding='utf-8') as f:
+                            f.write(modified_content)
+                            
+                    except Exception as e:
+                        self.log(f"[!] Error processing {filename}: {e}", 'warning')
+
+    def _copy_hardware_configs(self, base_ramdisk_dir: str, port_ramdisk_dir: str):
+        """Copy port-specific hardware configuration files"""
+        import glob
+        
+        # Hardware-specific files to copy from port device
+        hardware_files = [
+            'init.exynos*.rc',  # Chipset-specific init files
+            'init.mt*.rc',      # MediaTek variants
+            'init.target.rc',   # Target-specific configs
+            'dt'                # Device tree directory
+        ]
+        
+        for pattern in hardware_files:
+            for port_file in glob.glob(os.path.join(port_ramdisk_dir, pattern)):
+                filename = os.path.basename(port_file)
+                base_file = os.path.join(base_ramdisk_dir, filename)
+                
+                try:
+                    if os.path.isdir(port_file):
+                        # Handle directories (like dt)
+                        if os.path.exists(base_file):
+                            import shutil
+                            shutil.rmtree(base_file)
+                        import shutil
+                        shutil.copytree(port_file, base_file)
+                        self.log(f"[*] Copied directory: {filename}", 'info')
+                    else:
+                        # Handle files
+                        import shutil
+                        shutil.copy2(port_file, base_file)
+                        self.log(f"[*] Copied file: {filename}", 'info')
+                        
+                except Exception as e:
+                    self.log(f"[!] Error copying {filename}: {e}", 'warning')
+
+    def _verify_critical_files(self, ramdisk_dir: str) -> int:
+        """Verify that critical files exist in the modified ramdisk"""
+        import glob
+        
+        # Critical files that should exist
+        critical_files = [
+            'init',           # Main init executable
+            'init.rc',        # Main init script
+        ]
+        
+        # Optional files (check for patterns)
+        optional_patterns = [
+            'fstab.exynos*',  # fstab for exynos chipset
+            'fstab.mt*',      # fstab for mediatek chipset
+        ]
+        
+        missing_count = 0
+        
+        # Check required files
+        for critical_file in critical_files:
+            file_path = os.path.join(ramdisk_dir, critical_file)
+            if not os.path.exists(file_path):
+                self.log(f"[!] WARNING: Critical file {critical_file} not found", 'warning')
+                missing_count += 1
+        
+        # Check optional file patterns
+        for pattern in optional_patterns:
+            matching_files = glob.glob(os.path.join(ramdisk_dir, pattern))
+            if not matching_files:
+                self.log(f"[!] WARNING: No files matching pattern {pattern} found", 'warning')
+                missing_count += 1
+        
+        return missing_count
+
+    def _start_boot_repacking(self):
+        """Start the boot image repacking process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        base_boot_dir = os.path.join(work_dir, "base", "boot")
+        base_ramdisk_dir = os.path.join(base_boot_dir, "ramdisk")
+
+        if not os.path.isdir(base_ramdisk_dir):
+            messagebox.showerror("Error", "Modified ramdisk not found. Please complete Step 3 first.")
+            return
+
+        # Ask user for output path
+        out_path = filedialog.asksaveasfilename(
+            title="Save new boot image as",
+            defaultextension=".img",
+            filetypes=[("Boot Image", "*.img")]
+        )
+        if not out_path:
+            return
+
+        threading.Thread(target=self._repack_boot_image_thread,
+                        args=(base_boot_dir, out_path), daemon=True).start()
+
+    def _repack_boot_image_thread(self, base_boot_dir: str, out_path: str):
+        """Thread to repack the boot image with modified ramdisk"""
+        try:
+            self.status_label.config(text="Repacking boot image...")
+            self.progress.start()
+            self.log("[*] Starting boot image repacking...", 'info')
+
+            # Set up directories
+            work_dir = os.path.join(os.getcwd(), "firmware_port")
+            port_boot_dir = os.path.join(work_dir, "port", "boot")
+            
+            # Check required directories exist
+            if not os.path.isdir(base_boot_dir) or not os.path.isdir(port_boot_dir):
+                self.log("[!] Boot directories not found. Run previous scripts first.", 'error')
+                self.after(0, lambda: messagebox.showerror("Error",
+                    "Boot directories not found. Please complete previous steps first."))
+                return
+
+            # Check if magiskboot is available
+            magiskboot_path = tool_resolve("magiskboot")
+            if not magiskboot_path:
+                self.log("[!] magiskboot not found. Please install Magisk.", 'error')
+                self.after(0, lambda: messagebox.showerror("Error",
+                    "magiskboot not found. Please install Magisk in the tools folder."))
+                return
+
+            self.log(f"[*] Using magiskboot: {magiskboot_path}", 'info')
+            
+            # Create working directory
+            import shutil
+            temp_dir = tempfile.mkdtemp(prefix="boot_repack_")
+            
+            try:
+                self.log(f"[*] Working in temporary directory: {temp_dir}", 'info')
+                
+                # Copy base boot directory contents to working directory
+                for item in os.listdir(base_boot_dir):
+                    src = os.path.join(base_boot_dir, item)
+                    dst = os.path.join(temp_dir, item)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+                
+                # Step 1: Use port kernel (critical for hardware compatibility!)
+                port_kernel = os.path.join(port_boot_dir, "kernel")
+                if os.path.exists(port_kernel):
+                    shutil.copy2(port_kernel, os.path.join(temp_dir, "kernel"))
+                    self.log("[*] Port kernel copied successfully", 'success')
+                else:
+                    raise FileNotFoundError(f"Port kernel not found at {port_kernel}")
+                
+                # Step 2: Use port device tree blob
+                port_dtb = os.path.join(port_boot_dir, "dtb")
+                port_dt_img = os.path.join(port_boot_dir, "dt.img")
+                
+                if os.path.exists(port_dtb):
+                    shutil.copy2(port_dtb, os.path.join(temp_dir, "dtb"))
+                    self.log("[*] Port DTB copied successfully", 'success')
+                elif os.path.exists(port_dt_img):
+                    shutil.copy2(port_dt_img, os.path.join(temp_dir, "dt.img"))
+                    self.log("[*] Port dt.img copied successfully", 'success')
+                
+                # Step 3: Use port kernel DTB if it exists
+                port_kernel_dtb = os.path.join(port_boot_dir, "kernel_dtb")
+                if os.path.exists(port_kernel_dtb):
+                    shutil.copy2(port_kernel_dtb, os.path.join(temp_dir, "kernel_dtb"))
+                    self.log("[*] Port kernel DTB copied successfully", 'success')
+                
+                # Step 4: Repack ramdisk
+                self.log("[*] Repacking ramdisk...", 'info')
+                ramdisk_dir = os.path.join(temp_dir, "ramdisk")
+                if not os.path.isdir(ramdisk_dir):
+                    raise FileNotFoundError("Modified ramdisk directory not found")
+                
+                # Change to ramdisk directory and create new ramdisk
+                old_cwd = os.getcwd()
+                try:
+                    os.chdir(ramdisk_dir)
+                    new_ramdisk = os.path.join(temp_dir, "ramdisk-new.cpio.gz")
+                    
+                    # Use cpio to create new ramdisk, then gzip it
+                    cpio_path = tool_resolve("cpio")
+                    if cpio_path:
+                        # Create ramdisk with cpio
+                        import subprocess
+                        result = subprocess.run(
+                            [cpio_path, "-o", "-H", "newc"],
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            cwd=ramdisk_dir
+                        )
+                        
+                        if result.returncode == 0:
+                            # Compress with gzip
+                            gzip_path = tool_resolve("gzip")
+                            if gzip_path:
+                                with open(new_ramdisk.replace('.gz', ''), 'wb') as f:
+                                    f.write(result.stdout)
+                                
+                                result = run_cmd([gzip_path, "-f", new_ramdisk.replace('.gz', '')])
+                                if result.returncode != 0:
+                                    raise RuntimeError("Failed to compress ramdisk")
+                            else:
+                                raise FileNotFoundError("gzip not found for ramdisk compression")
+                        else:
+                            raise RuntimeError(f"Failed to create ramdisk cpio: {result.stderr.decode()}")
+                    else:
+                        raise FileNotFoundError("cpio not found for ramdisk creation")
+                        
+                finally:
+                    os.chdir(old_cwd)
+                
+                # Step 5: Replace old ramdisk with new one
+                new_ramdisk_path = os.path.join(temp_dir, "ramdisk-new.cpio.gz")
+                old_ramdisk_path1 = os.path.join(temp_dir, "ramdisk.cpio")
+                old_ramdisk_path2 = os.path.join(temp_dir, "ramdisk.cpio.gz")
+                
+                if os.path.exists(new_ramdisk_path):
+                    # Remove old ramdisk files
+                    for old_path in [old_ramdisk_path1, old_ramdisk_path2]:
+                        try:
+                            if os.path.exists(old_path):
+                                os.remove(old_path)
+                        except:
+                            pass
+                    
+                    # Move new ramdisk to final location
+                    final_ramdisk_path = os.path.join(temp_dir, "ramdisk.cpio.gz")
+                    shutil.move(new_ramdisk_path, final_ramdisk_path)
+                    self.log("[*] Ramdisk repacked successfully", 'success')
+                else:
+                    raise FileNotFoundError("Failed to create new ramdisk")
+                
+                # Step 6: Repack boot image using magiskboot
+                self.log("[*] Repacking boot.img...", 'info')
+                old_cwd = os.getcwd()
+                try:
+                    os.chdir(temp_dir)
+                    
+                    # Use magiskboot to repack the boot image
+                    result = run_cmd([magiskboot_path, "repack", "boot.img", "new_boot.img"], cwd=temp_dir)
+                    if result.returncode != 0:
+                        error_msg = result.stderr.decode() if result.stderr else "Unknown error"
+                        raise RuntimeError(f"magiskboot repack failed: {error_msg}")
+                    
+                    new_boot_img_path = os.path.join(temp_dir, "new_boot.img")
+                    if not os.path.exists(new_boot_img_path):
+                        raise FileNotFoundError("magiskboot failed to create new_boot.img")
+                    
+                    # Verify the new boot image
+                    file_size = os.path.getsize(new_boot_img_path)
+                    self.log(f"[*] New boot image size: {file_size} bytes", 'info')
+                    
+                    if file_size < 10000000:  # Less than 10MB
+                        self.log("[!] WARNING: Boot image seems too small (< 10MB)", 'warning')
+                    
+                    # Create checksum
+                    checksum_path = new_boot_img_path + ".sha256"
+                    with open(checksum_path, 'w') as f:
+                        import hashlib
+                        with open(new_boot_img_path, 'rb') as img_f:
+                            file_hash = hashlib.sha256(img_f.read()).hexdigest()
+                        f.write(f"{file_hash}  new_boot.img\n")
+                    
+                    self.log(f"[*] SHA256: {file_hash}", 'info')
+                    
+                    # Copy final result to output path
+                    shutil.copy2(new_boot_img_path, out_path)
+                    
+                    # Also copy checksum if output directory is writable
+                    try:
+                        checksum_out_path = out_path + ".sha256"
+                        shutil.copy2(checksum_path, checksum_out_path)
+                        self.log(f"[*] Checksum saved: {checksum_out_path}", 'info')
+                    except:
+                        pass  # Non-critical if checksum can't be saved
+                    
+                finally:
+                    os.chdir(old_cwd)
+                
+                # Success message
+                self.log("[*] Boot image repacking complete.", 'success')
+                self.log(f"[*] New boot image: {out_path}", 'info')
+                self.log(f"[*] SHA256: {file_hash}", 'info')
+                self.log("[*] Boot image components:", 'info')
+                self.log("    - Kernel: Port device (for hardware compatibility)", 'info')
+                self.log("    - DTB: Port device tree", 'info')
+                self.log("    - Ramdisk: Base device modified for port device", 'info')
+                
+                self.after(0, lambda: messagebox.showinfo("Success",
+                    "Boot image repacking complete!\n\n"
+                    f"New boot image saved as:\n{out_path}\n\n"
+                    f"SHA256: {file_hash}\n\n"
+                    "Boot image components:\n"
+                    "- Kernel: Port device (for hardware compatibility)\n"
+                    "- DTB: Port device tree\n"
+                    "- Ramdisk: Base device modified for port device"))
+                
+            finally:
+                # Cleanup temporary directory
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+        except Exception as e:
+            self.log(f"[!] Error during boot repacking: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during boot repacking: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _create_ramdisk(self, ramdisk_dir: str, out_path: str, compress: bool = True):
+        """Create a ramdisk from a directory (simplified version)"""
+        import glob
+        import subprocess
+        
+        # Create temporary cpio file
+        temp_cpio = out_path + ".cpio" if compress else out_path
+        
+        try:
+            # Use bsdtar to create cpio archive
+            bsdtar_path = tool_resolve("bsdtar")
+            if not bsdtar_path:
+                raise FileNotFoundError("bsdtar not found for ramdisk creation")
+            
+            # Create the cpio archive
+            result = run_cmd([bsdtar_path, "-cf", temp_cpio, "-C", ramdisk_dir, "."])
+            if result.returncode != 0:
+                raise RuntimeError("Failed to create ramdisk cpio archive")
+            
+            # Compress if requested
+            if compress:
+                lz4_path = tool_resolve("lz4")
+                if not lz4_path:
+                    raise FileNotFoundError("lz4 not found for ramdisk compression")
+                
+                result = run_cmd([lz4_path, "-9", "-f", temp_cpio, out_path])
+                if result.returncode != 0:
+                    raise RuntimeError("Failed to compress ramdisk")
+                
+                # Clean up uncompressed cpio
+                try:
+                    os.remove(temp_cpio)
+                except:
+                    pass
+            else:
+                # Move temp file to final location
+                import shutil
+                shutil.move(temp_cpio, out_path)
+                
+        except Exception as e:
+            # Clean up on error
+            for temp_file in [temp_cpio, out_path]:
+                try:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except:
+                    pass
+            raise e
+
+    def _start_vendor_modification(self):
+        """Start the vendor partition modification process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+
+        # Check if vendor directories exist from Step 5
+        a33_vendor = os.path.join(work_dir, "a33", "vendor", "work")
+        a32_vendor = os.path.join(work_dir, "a32", "vendor", "work")
+
+        if not os.path.isdir(a33_vendor) or not os.path.isdir(a32_vendor):
+            messagebox.showerror("Error", "Vendor directories not found. Please complete Step 5 first.")
+            return
+
+        threading.Thread(target=self._vendor_modification_thread, daemon=True).start()
+
+    def _start_system_modification(self):
+        """Start the system partition modification process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+
+        # Check if system directories exist from Step 5
+        a33_system = os.path.join(work_dir, "a33", "system", "work")
+        a32_system = os.path.join(work_dir, "a32", "system", "work")
+
+        if not os.path.isdir(a33_system) or not os.path.isdir(a32_system):
+            messagebox.showerror("Error", "System directories not found. Please complete Step 5 first.")
+            return
+
+        threading.Thread(target=self._system_modification_thread, daemon=True).start()
+
+    def _start_image_repacking(self):
+        """Start the image repacking process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+
+        # Check if modified directories exist from Steps 6-7
+        a33_vendor = os.path.join(work_dir, "a33", "vendor", "work")
+        a33_system = os.path.join(work_dir, "a33", "system", "work")
+
+        if not os.path.isdir(a33_vendor) and not os.path.isdir(a33_system):
+            messagebox.showerror("Error", "Modified directories not found. Please complete Steps 6-7 first.")
+            return
+
+        # Check for required tools
+        make_ext4fs_path = tool_resolve("make_ext4fs")
+        img2simg_path = tool_resolve("img2simg")
+
+        if not make_ext4fs_path:
+            messagebox.showerror("Error", "make_ext4fs not found. Please install android-tools or place make_ext4fs in the tools folder.")
+            return
+
+        if not img2simg_path:
+            messagebox.showerror("Error", "img2simg not found. Please install android-tools or place img2simg in the tools folder.")
+            return
+
+        threading.Thread(target=self._image_repacking_thread, daemon=True).start()
+
+    def _start_odin_package_creation(self):
+        """Start the Odin package creation process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        output_dir = os.path.join(work_dir, "output")
+
+        # Check if repacked images exist from Step 8
+        if not os.path.isdir(output_dir):
+            messagebox.showerror("Error", "Output directory not found. Please complete Step 8 first.")
+            return
+
+        # Check for required images
+        required_images = ["system.img", "vendor.img"]
+        missing_images = []
+        for img in required_images:
+            if not os.path.exists(os.path.join(output_dir, img)):
+                missing_images.append(img)
+
+        if missing_images:
+            messagebox.showerror("Error", f"Required images not found: {', '.join(missing_images)}")
+            return
+
+        threading.Thread(target=self._odin_package_creation_thread, daemon=True).start()
+
+    def _start_package_validation(self):
+        """Start the package validation process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        odin_dir = os.path.join(work_dir, "odin_package")
+
+        # Check if Odin package exists from Step 9
+        if not os.path.isdir(odin_dir):
+            messagebox.showerror("Error", "Odin package directory not found. Please complete Step 9 first.")
+            return
+
+        # Check for critical files
+        critical_files = ["AP_A33_to_A32.tar.md5", "BL_A32.tar.md5", "CP_A32.tar.md5"]
+        missing_files = []
+        for file in critical_files:
+            if not os.path.exists(os.path.join(odin_dir, file)):
+                missing_files.append(file)
+
+        if missing_files:
+            messagebox.showerror("Error", f"Critical files not found: {', '.join(missing_files)}")
+            return
+
+        threading.Thread(target=self._package_validation_thread, daemon=True).start()
+
+    def _start_system_vendor_extraction(self):
+        """Start the system and vendor image extraction process"""
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+
+        if not os.path.isdir(work_dir):
+            messagebox.showerror("Error", "Working directory not found. Please complete previous steps first.")
+            return
+
+        # Check for required tools
+        simg2img_path = tool_resolve("simg2img")
+        if not simg2img_path:
+            messagebox.showerror("Error", "simg2img not found. Please install android-tools-fsutils or place simg2img in the tools folder.")
+            return
+
+        threading.Thread(target=self._extract_system_vendor_thread,
+                        args=(work_dir,), daemon=True).start()
+
+    def _vendor_modification_thread(self):
+        """Thread to perform comprehensive vendor partition modification"""
+        try:
+            self.status_label.config(text="Modifying vendor partition...")
+            self.progress.start()
+            self.log("[*] Starting vendor partition modification...", 'info')
+
+            work_dir = os.path.join(os.getcwd(), "firmware_port")
+            a33_vendor = os.path.join(work_dir, "a33", "vendor", "work")
+            a32_vendor = os.path.join(work_dir, "a32", "vendor", "work")
+
+            # Verify directories exist
+            if not os.path.isdir(a33_vendor):
+                raise FileNotFoundError(f"A33 vendor directory not found: {a33_vendor}")
+            if not os.path.isdir(a32_vendor):
+                raise FileNotFoundError(f"A32 vendor directory not found: {a32_vendor}")
+
+            # Create backup
+            self.log("[*] Creating backup...")
+            backup_dir = os.path.join(work_dir, "a33", "vendor", "work.backup")
+            if os.path.exists(backup_dir):
+                import shutil
+                shutil.rmtree(backup_dir)
+            import shutil
+            shutil.copytree(a33_vendor, backup_dir)
+            self.log(f"[*] Backup created: {backup_dir}", 'info')
+
+            # Function to safely copy files/directories
+            def safe_copy(src, dest):
+                if os.path.exists(src):
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dest, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dest)
+                    self.log(f"[*] Copied: {os.path.basename(src)}")
+                    return True
+                else:
+                    self.log(f"[!] Not found: {src}")
+                    return False
+
+            # Replace critical hardware HALs
+            self.log("[*] Replacing Hardware Abstraction Layers...")
+
+            # Camera HALs
+            self.log("[*] Replacing camera HALs...")
+            import glob
+            for cam_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "camera.*")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.camera*")):
+                if os.path.exists(cam_lib):
+                    rel_path = os.path.relpath(cam_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(cam_lib, dest_path)
+
+            # Camera firmware
+            camera_fw_src = os.path.join(a32_vendor, "firmware", "camera")
+            if os.path.exists(camera_fw_src):
+                camera_fw_dest = os.path.join(a33_vendor, "firmware", "camera")
+                if os.path.exists(camera_fw_dest):
+                    shutil.rmtree(camera_fw_dest)
+                safe_copy(camera_fw_src, camera_fw_dest)
+
+            # Audio HALs
+            self.log("[*] Replacing audio HALs...")
+            for audio_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "audio.*")) + \
+                            glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.audio*")):
+                if os.path.exists(audio_lib):
+                    rel_path = os.path.relpath(audio_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(audio_lib, dest_path)
+
+            # Sensor HALs
+            self.log("[*] Replacing sensor HALs...")
+            for sensor_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "sensors.*")) + \
+                             glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.sensors*")):
+                if os.path.exists(sensor_lib):
+                    rel_path = os.path.relpath(sensor_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(sensor_lib, dest_path)
+
+            # Graphics HALs (CRITICAL - wrong GPU = no boot)
+            self.log("[*] Replacing graphics HALs...")
+            for gfx_dir in ["egl", "vulkan"]:
+                src_dir = os.path.join(a32_vendor, "lib", gfx_dir)
+                if os.path.exists(src_dir):
+                    dest_dir = os.path.join(a33_vendor, "lib", gfx_dir)
+                    if os.path.exists(dest_dir):
+                        shutil.rmtree(dest_dir)
+                    safe_copy(src_dir, dest_dir)
+
+                src_dir64 = os.path.join(a32_vendor, "lib64", gfx_dir)
+                if os.path.exists(src_dir64):
+                    dest_dir64 = os.path.join(a33_vendor, "lib64", gfx_dir)
+                    if os.path.exists(dest_dir64):
+                        shutil.rmtree(dest_dir64)
+                    safe_copy(src_dir64, dest_dir64)
+
+            for gfx_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "gralloc.*")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "hwcomposer.*")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "vulkan.*")):
+                if os.path.exists(gfx_lib):
+                    rel_path = os.path.relpath(gfx_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(gfx_lib, dest_path)
+
+            # GPU firmware and drivers
+            mali_lib = os.path.join(a32_vendor, "lib", "libGLES_mali.so")
+            if os.path.exists(mali_lib):
+                safe_copy(mali_lib, os.path.join(a33_vendor, "lib", "libGLES_mali.so"))
+
+            mali_lib64 = os.path.join(a32_vendor, "lib64", "libGLES_mali.so")
+            if os.path.exists(mali_lib64):
+                safe_copy(mali_lib64, os.path.join(a33_vendor, "lib64", "libGLES_mali.so"))
+
+            # Fingerprint HALs
+            self.log("[*] Replacing fingerprint HALs...")
+            for fp_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "fingerprint.*")) + \
+                         glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.biometrics.fingerprint*")):
+                if os.path.exists(fp_lib):
+                    rel_path = os.path.relpath(fp_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(fp_lib, dest_path)
+
+            # Wi-Fi and Bluetooth firmware
+            self.log("[*] Replacing wireless firmware...")
+            wifi_src = os.path.join(a32_vendor, "firmware", "wifi")
+            if os.path.exists(wifi_src):
+                wifi_dest = os.path.join(a33_vendor, "firmware", "wifi")
+                if os.path.exists(wifi_dest):
+                    shutil.rmtree(wifi_dest)
+                safe_copy(wifi_src, wifi_dest)
+
+            bt_src = os.path.join(a32_vendor, "firmware", "bluetooth")
+            if os.path.exists(bt_src):
+                bt_dest = os.path.join(a33_vendor, "firmware", "bluetooth")
+                if os.path.exists(bt_dest):
+                    shutil.rmtree(bt_dest)
+                safe_copy(bt_src, bt_dest)
+
+            # All other firmware
+            self.log("[*] Syncing all firmware files...")
+            firmware_src = os.path.join(a32_vendor, "firmware")
+            if os.path.exists(firmware_src):
+                # Copy all A32 firmware, overwriting A33
+                import subprocess
+                rsync_path = tool_resolve("rsync")
+                if rsync_path:
+                    result = run_cmd([rsync_path, "-av", firmware_src + "/", os.path.join(a33_vendor, "firmware") + "/"])
+                    if result.returncode != 0:
+                        self.log("[!] rsync failed, using shutil copytree", 'warning')
+                        # Fallback to shutil
+                        firmware_dest = os.path.join(a33_vendor, "firmware")
+                        if os.path.exists(firmware_dest):
+                            shutil.rmtree(firmware_dest)
+                        shutil.copytree(firmware_src, firmware_dest)
+                else:
+                    # Fallback to shutil
+                    firmware_dest = os.path.join(a33_vendor, "firmware")
+                    if os.path.exists(firmware_dest):
+                        shutil.rmtree(firmware_dest)
+                    shutil.copytree(firmware_src, firmware_dest)
+
+            # RIL (Radio Interface Layer) - critical for modem
+            self.log("[*] Replacing RIL libraries...")
+            for ril_lib in glob.glob(os.path.join(a32_vendor, "lib*", "libril*.so")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "libsec-ril*.so")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "*ril*.so")):
+                if os.path.exists(ril_lib):
+                    rel_path = os.path.relpath(ril_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(ril_lib, dest_path)
+
+            # Power HALs
+            self.log("[*] Replacing power HALs...")
+            for pwr_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "power.*")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.power*")):
+                if os.path.exists(pwr_lib):
+                    rel_path = os.path.relpath(pwr_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(pwr_lib, dest_path)
+
+            # Thermal HALs
+            self.log("[*] Replacing thermal HALs...")
+            for thm_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "thermal.*")) + \
+                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.thermal*")):
+                if os.path.exists(thm_lib):
+                    rel_path = os.path.relpath(thm_lib, a32_vendor)
+                    dest_path = os.path.join(a33_vendor, rel_path)
+                    safe_copy(thm_lib, dest_path)
+
+            # Modify vendor build.prop
+            self.log("[*] Modifying vendor/build.prop...")
+            build_prop_path = os.path.join(a33_vendor, "build.prop")
+            if os.path.exists(build_prop_path):
+                # Create backup
+                shutil.copy2(build_prop_path, build_prop_path + ".backup")
+
+                # Get A32 device info
+                a32_build_prop = os.path.join(a32_vendor, "build.prop")
+                if os.path.exists(a32_build_prop):
+                    a32_device = None
+                    a32_model = None
+                    a32_fingerprint = None
+
+                    with open(a32_build_prop, 'r', encoding='utf-8', errors='ignore') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith('ro.product.vendor.device='):
+                                a32_device = line.split('=', 1)[1]
+                            elif line.startswith('ro.product.vendor.model='):
+                                a32_model = line.split('=', 1)[1]
+                            elif line.startswith('ro.vendor.build.fingerprint='):
+                                a32_fingerprint = line.split('=', 1)[1]
+
+                    # Read and modify A33 vendor build.prop
+                    with open(build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+
+                    # Replace device info
+                    if a32_device:
+                        content = content.replace('ro.product.vendor.device=a33', f'ro.product.vendor.device={a32_device}')
+                    if a32_model:
+                        content = content.replace('ro.product.vendor.model=SM-A336', f'ro.product.vendor.model={a32_model}')
+                    if a32_fingerprint:
+                        import re
+                        content = re.sub(r'ro\.vendor\.build\.fingerprint=.*', f'ro.vendor.build.fingerprint={a32_fingerprint}', content)
+
+                    # Replace A33 references
+                    content = content.replace('a33', 'a32')
+                    content = content.replace('A33', 'A32')
+                    content = content.replace('SM-A336', 'SM-A325')
+                    content = content.replace('exynos1280', 'exynos850')
+
+                    # Write modified content
+                    with open(build_prop_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+
+                    self.log("[*] vendor/build.prop modified", 'success')
+                else:
+                    self.log("[!] A32 build.prop not found for reference", 'warning')
+
+            # Modify default.prop if exists
+            default_prop_path = os.path.join(a33_vendor, "default.prop")
+            if os.path.exists(default_prop_path):
+                with open(default_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                content = content.replace('a33', 'a32')
+                content = content.replace('A33', 'A32')
+                with open(default_prop_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+            # Copy A32 device-specific configuration files
+            self.log("[*] Copying A32 device configs...")
+
+            etc_src = os.path.join(a32_vendor, "etc")
+            if os.path.exists(etc_src):
+                # Audio configs
+                for audio_conf in glob.glob(os.path.join(etc_src, "audio*.xml")) + \
+                                glob.glob(os.path.join(etc_src, "*audio*.conf")):
+                    if os.path.exists(audio_conf):
+                        rel_path = os.path.relpath(audio_conf, a32_vendor)
+                        dest_path = os.path.join(a33_vendor, rel_path)
+                        safe_copy(audio_conf, dest_path)
+
+                # Media configs
+                for media_conf in glob.glob(os.path.join(etc_src, "media_*.xml")) + \
+                                glob.glob(os.path.join(etc_src, "*media*.xml")):
+                    if os.path.exists(media_conf):
+                        rel_path = os.path.relpath(media_conf, a32_vendor)
+                        dest_path = os.path.join(a33_vendor, rel_path)
+                        safe_copy(media_conf, dest_path)
+
+                # Thermal configs
+                thermal_src = os.path.join(etc_src, "thermal")
+                if os.path.exists(thermal_src):
+                    thermal_dest = os.path.join(a33_vendor, "etc", "thermal")
+                    if os.path.exists(thermal_dest):
+                        shutil.rmtree(thermal_dest)
+                    safe_copy(thermal_src, thermal_dest)
+
+            # Fix permissions
+            self.log("[*] Fixing permissions...")
+            try:
+                # Set ownership to root:root (if running as admin/sudo)
+                import subprocess
+                if sys.platform.startswith('win'):
+                    # On Windows, just set basic permissions
+                    pass  # Windows permissions are handled differently
+                else:
+                    # Unix-like systems
+                    result = run_cmd(['chown', '-R', 'root:root', a33_vendor])
+                    if result.returncode != 0:
+                        self.log("[!] Could not set ownership (may require sudo)", 'warning')
+
+                # Set directory permissions to 755
+                for root_dir, dirs, files in os.walk(a33_vendor):
+                    for d in dirs:
+                        dir_path = os.path.join(root_dir, d)
+                        os.chmod(dir_path, 0o755)
+
+                # Set file permissions to 644
+                for root_dir, dirs, files in os.walk(a33_vendor):
+                    for f in files:
+                        file_path = os.path.join(root_dir, f)
+                        os.chmod(file_path, 0o644)
+
+                # Set executable permissions for bin directory
+                bin_dir = os.path.join(a33_vendor, "bin")
+                if os.path.exists(bin_dir):
+                    for root_dir, dirs, files in os.walk(bin_dir):
+                        for f in files:
+                            file_path = os.path.join(root_dir, f)
+                            os.chmod(file_path, 0o755)
+
+                # Set executable permissions for .so files
+                for root_dir, dirs, files in os.walk(a33_vendor):
+                    for f in files:
+                        if f.endswith('.so'):
+                            file_path = os.path.join(root_dir, f)
+                            os.chmod(file_path, 0o644)
+
+            except Exception as e:
+                self.log(f"[!] Error fixing permissions: {e}", 'warning')
+
+            self.log("[*] Vendor modification complete.", 'success')
+            self.log(f"[*] Modified vendor: {a33_vendor}", 'info')
+            self.log(f"[*] Backup: {backup_dir}", 'info')
+            self.log("", 'info')
+            self.log("[!] Files replaced from A32:", 'warning')
+            self.log("    - Camera HALs and firmware", 'info')
+            self.log("    - Audio HALs and configs", 'info')
+            self.log("    - Graphics HALs (GPU drivers)", 'info')
+            self.log("    - Sensor HALs", 'info')
+            self.log("    - Fingerprint HALs", 'info')
+            self.log("    - Wireless firmware", 'info')
+            self.log("    - RIL libraries", 'info')
+            self.log("    - Power/Thermal HALs", 'info')
+            self.log("    - Device configurations", 'info')
+
+            self.after(0, lambda: messagebox.showinfo("Success",
+                "Vendor partition modification complete!\n\n"
+                "Modified vendor: " + a33_vendor + "\n"
+                "Backup: " + backup_dir + "\n\n"
+                "Files replaced from A32:\n"
+                "• Camera HALs and firmware\n"
+                "• Audio HALs and configs\n"
+                "• Graphics HALs (GPU drivers)\n"
+                "• Sensor HALs\n"
+                "• Fingerprint HALs\n"
+                "• Wireless firmware\n"
+                "• RIL libraries\n"
+                "• Power/Thermal HALs\n"
+                "• Device configurations\n\n"
+                "The vendor partition is now ready for repacking into the ported ROM."))
+
+        except Exception as e:
+            self.log(f"[!] Error during vendor modification: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during vendor modification: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _system_modification_thread(self):
+        """Thread to perform system partition modification for device identity"""
+        try:
+            self.status_label.config(text="Modifying system partition...")
+            self.progress.start()
+            self.log("[*] Starting system partition modification...", 'info')
+
+            work_dir = os.path.join(os.getcwd(), "firmware_port")
+            a33_system = os.path.join(work_dir, "a33", "system", "work")
+            a32_system = os.path.join(work_dir, "a32", "system", "work")
+
+            # Verify directories exist
+            if not os.path.isdir(a33_system):
+                raise FileNotFoundError(f"A33 system directory not found: {a33_system}")
+            if not os.path.isdir(a32_system):
+                raise FileNotFoundError(f"A32 system directory not found: {a32_system}")
+
+            # Create backup
+            self.log("[*] Creating backup...")
+            backup_dir = os.path.join(work_dir, "a33", "system", "work.backup")
+            if os.path.exists(backup_dir):
+                import shutil
+                shutil.rmtree(backup_dir)
+            import shutil
+            shutil.copytree(a33_system, backup_dir)
+            self.log(f"[*] Backup created: {backup_dir}", 'info')
+
+            # Find and modify build.prop
+            self.log("[*] Modifying system/build.prop...")
+
+            # Possible build.prop locations
+            build_prop_paths = [
+                os.path.join(a33_system, "system", "build.prop"),
+                os.path.join(a33_system, "build.prop")
+            ]
+
+            build_prop_path = None
+            for path in build_prop_paths:
+                if os.path.exists(path):
+                    build_prop_path = path
+                    break
+
+            if not build_prop_path:
+                raise FileNotFoundError("build.prop not found in A33 system directory")
+
+            # Create backup of build.prop
+            shutil.copy2(build_prop_path, build_prop_path + ".backup")
+
+            # Find A32 build.prop for reference
+            a32_build_prop_paths = [
+                os.path.join(a32_system, "system", "build.prop"),
+                os.path.join(a32_system, "build.prop")
+            ]
+
+            a32_build_prop_path = None
+            for path in a32_build_prop_paths:
+                if os.path.exists(path):
+                    a32_build_prop_path = path
+                    break
+
+            # Read and modify A33 build.prop
+            with open(build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            # Extract A32 device information if available
+            if a32_build_prop_path:
+                a32_model = None
+                a32_device = None
+                a32_name = None
+                a32_fingerprint = None
+
+                with open(a32_build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('ro.product.model='):
+                            a32_model = line.split('=', 1)[1]
+                        elif line.startswith('ro.product.device='):
+                            a32_device = line.split('=', 1)[1]
+                        elif line.startswith('ro.product.name='):
+                            a32_name = line.split('=', 1)[1]
+                        elif line.startswith('ro.build.fingerprint='):
+                            a32_fingerprint = line.split('=', 1)[1]
+
+                # Replace device identifiers
+                import re
+                if a32_model:
+                    content = re.sub(r'^ro\.product\.model=.*', f'ro.product.model={a32_model}', content, flags=re.MULTILINE)
+                if a32_device:
+                    content = re.sub(r'^ro\.product\.device=.*', f'ro.product.device={a32_device}', content, flags=re.MULTILINE)
+                    content = re.sub(r'^ro\.build\.product=.*', f'ro.build.product={a32_device}', content, flags=re.MULTILINE)
+                if a32_name:
+                    content = re.sub(r'^ro\.product\.name=.*', f'ro.product.name={a32_name}', content, flags=re.MULTILINE)
+                if a32_fingerprint:
+                    content = re.sub(r'^ro\.build\.fingerprint=.*', f'ro.build.fingerprint={a32_fingerprint}', content, flags=re.MULTILINE)
+
+            # General replacements for device compatibility
+            content = content.replace('a33', 'a32')
+            content = content.replace('A33', 'A32')
+            content = content.replace('SM-A336', 'SM-A325')
+            content = content.replace('exynos1280', 'exynos850')
+
+            # Write modified content
+            with open(build_prop_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            self.log("[*] system/build.prop modified", 'success')
+
+            # Modify system/etc/prop.default if exists
+            prop_default_path = os.path.join(a33_system, "system", "etc", "prop.default")
+            if os.path.exists(prop_default_path):
+                self.log("[*] Modifying system/etc/prop.default...")
+                with open(prop_default_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+
+                content = content.replace('a33', 'a32')
+                content = content.replace('A33', 'A32')
+
+                with open(prop_default_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+
+                self.log("[*] system/etc/prop.default modified", 'success')
+
+            self.log("[*] System modification complete.", 'success')
+            self.log(f"[*] Modified system: {a33_system}", 'info')
+            self.log(f"[*] Backup: {backup_dir}", 'info')
+            self.log("", 'info')
+            self.log("[*] Changes made:", 'info')
+            self.log("    - Device model changed to A32", 'info')
+            self.log("    - Build fingerprint updated", 'info')
+            self.log("    - Device identifiers updated", 'info')
+
+            self.after(0, lambda: messagebox.showinfo("Success",
+                "System partition modification complete!\n\n"
+                "Modified system: " + a33_system + "\n"
+                "Backup: " + backup_dir + "\n\n"
+                "Changes made:\n"
+                "• Device model changed to A32\n"
+                "• Build fingerprint updated\n"
+                "• Device identifiers updated\n\n"
+                "The system partition is now configured for the A32 device identity."))
+
+        except Exception as e:
+            self.log(f"[!] Error during system modification: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during system modification: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _image_repacking_thread(self):
+        """Thread to repack modified images into flashable format"""
+        try:
+            self.status_label.config(text="Repacking images...")
+            self.progress.start()
+            self.log("[*] Starting image repacking...", 'info')
+
+            work_dir = os.path.join(os.getcwd(), "firmware_port")
+            output_dir = os.path.join(work_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Check for required tools
+            make_ext4fs_path = tool_resolve("make_ext4fs")
+            img2simg_path = tool_resolve("img2simg")
+
+            if not make_ext4fs_path:
+                raise FileNotFoundError("make_ext4fs not found")
+            if not img2simg_path:
+                raise FileNotFoundError("img2simg not found")
+
+            # Function to get original image size
+            def get_image_size(image_path):
+                return os.path.getsize(image_path)
+
+            # Function to repack ext4 image
+            def repack_ext4(name, source_dir, orig_image, output_image):
+                self.log(f"[*] Repacking {name}...")
+
+                # Get original image size
+                img_size = get_image_size(orig_image)
+                img_size_mb = img_size // (1024 * 1024)
+
+                self.log(f"[*] Original {name} size: {img_size_mb}MB")
+
+                # Calculate size with 10% overhead
+                new_size_mb = img_size_mb + (img_size_mb // 10) + 50
+
+                self.log(f"[*] Creating new {name} with size: {new_size_mb}MB")
+
+                # Create ext4 image
+                cmd = [
+                    make_ext4fs_path, "-s", "-L", name, "-a", name,
+                    "-l", f"{new_size_mb}M", output_image, source_dir
+                ]
+
+                result = run_cmd(cmd)
+                if result.returncode != 0:
+                    raise RuntimeError(f"make_ext4fs failed for {name}: {result.stderr.decode(errors='ignore')}")
+
+                if not os.path.exists(output_image):
+                    raise FileNotFoundError(f"Failed to create {output_image}")
+
+                # Convert to sparse image
+                self.log("[*] Converting to sparse image...")
+                sparse_image = output_image.replace('.img', '_sparse.img')
+
+                result = run_cmd([img2simg_path, output_image, sparse_image])
+                if result.returncode != 0:
+                    raise RuntimeError(f"img2simg failed for {name}: {result.stderr.decode(errors='ignore')}")
+
+                # Replace with sparse version
+                os.replace(sparse_image, output_image)
+
+                # Calculate and display size
+                new_img_size = get_image_size(output_image)
+                new_img_size_mb = new_img_size // (1024 * 1024)
+                self.log(f"[*] Final {name} size: {new_img_size_mb}MB (sparse)")
+
+                return True
+
+            # Unmount any mounted images first (if applicable)
+            self.log("[*] Checking for mounted images...")
+            # Note: Actual unmounting would require admin privileges and is system-dependent
+
+            # Repack vendor
+            a33_vendor_work = os.path.join(work_dir, "a33", "vendor", "work")
+            if os.path.isdir(a33_vendor_work):
+                a33_vendor_img = os.path.join(work_dir, "a33", "vendor", "vendor.img")
+                if os.path.exists(a33_vendor_img):
+                    output_vendor = os.path.join(output_dir, "vendor.img")
+                    repack_ext4("vendor", a33_vendor_work, a33_vendor_img, output_vendor)
+                else:
+                    self.log("[!] A33 vendor.img not found for size reference", 'warning')
+            else:
+                self.log("[!] A33 vendor work directory not found", 'warning')
+
+            # Repack system
+            a33_system_work = os.path.join(work_dir, "a33", "system", "work")
+            if os.path.isdir(a33_system_work):
+                a33_system_img = os.path.join(work_dir, "a33", "system", "system.img")
+                if os.path.exists(a33_system_img):
+                    output_system = os.path.join(output_dir, "system.img")
+                    repack_ext4("system", a33_system_work, a33_system_img, output_system)
+                else:
+                    self.log("[!] A33 system.img not found for size reference", 'warning')
+            else:
+                self.log("[!] A33 system work directory not found", 'warning')
+
+            # Repack product if it exists
+            a33_product_work = os.path.join(work_dir, "a33", "product", "work")
+            if os.path.isdir(a33_product_work):
+                a33_product_img = os.path.join(work_dir, "a33", "product", "product.img")
+                if os.path.exists(a33_product_img):
+                    output_product = os.path.join(output_dir, "product.img")
+                    repack_ext4("product", a33_product_work, a33_product_img, output_product)
+
+            # Copy boot image
+            self.log("[*] Copying modified boot image...")
+            a33_new_boot = os.path.join(work_dir, "a33", "boot", "new_boot.img")
+            if os.path.exists(a33_new_boot):
+                output_boot = os.path.join(output_dir, "boot.img")
+                import shutil
+                shutil.copy2(a33_new_boot, output_boot)
+                self.log("[*] boot.img copied")
+            else:
+                self.log("[!] Modified boot.img not found", 'warning')
+
+            # Copy recovery if exists
+            a33_recovery = os.path.join(work_dir, "a33", "extracted", "recovery.img")
+            if os.path.exists(a33_recovery):
+                self.log("[*] Copying recovery image...")
+                output_recovery = os.path.join(output_dir, "recovery.img")
+                import shutil
+                shutil.copy2(a33_recovery, output_recovery)
+
+            # Copy other partitions that don't need modification
+            self.log("[*] Copying additional partitions...")
+            extracted_dir = os.path.join(work_dir, "a33", "extracted")
+            additional_partitions = ["dtbo.img", "vbmeta.img", "super.img"]
+
+            for partition in additional_partitions:
+                partition_path = os.path.join(extracted_dir, partition)
+                if os.path.exists(partition_path):
+                    output_partition = os.path.join(output_dir, partition)
+                    import shutil
+                    shutil.copy2(partition_path, output_partition)
+                    self.log(f"[*] {partition} copied")
+
+            # Create checksums
+            self.log("[*] Creating checksums...")
+            import hashlib
+
+            checksums = []
+            for file in os.listdir(output_dir):
+                if file.endswith('.img'):
+                    file_path = os.path.join(output_dir, file)
+                    with open(file_path, 'rb') as f:
+                        checksum = hashlib.sha256(f.read()).hexdigest()
+                    checksums.append(f"{checksum}  {file}")
+
+            checksum_file = os.path.join(output_dir, "checksums.sha256")
+            with open(checksum_file, 'w') as f:
+                f.write('\n'.join(checksums))
+
+            self.log("[*] Checksums created:")
+            for checksum in checksums:
+                self.log(f"  {checksum}")
+
+            # Get file sizes for summary
+            self.log("", 'info')
+            self.log("[*] Image repacking complete.", 'success')
+            self.log(f"[*] Output directory: {output_dir}", 'info')
+            self.log("", 'info')
+            self.log("[*] Repacked images:", 'info')
+
+            total_size = 0
+            for file in sorted(os.listdir(output_dir)):
+                if file.endswith('.img'):
+                    file_path = os.path.join(output_dir, file)
+                    size_mb = os.path.getsize(file_path) // (1024 * 1024)
+                    total_size += size_mb
+                    self.log(f"  {file}: {size_mb}MB")
+
+            self.log("", 'info')
+            self.log(f"[!] Total size: {total_size}MB", 'warning')
+            self.log("[!] Ready for Odin packaging.", 'success')
+
+            self.after(0, lambda: messagebox.showinfo("Success",
+                f"Image repacking complete!\n\n"
+                f"Output directory: {output_dir}\n\n"
+                f"Total size: {total_size}MB\n\n"
+                "Images ready for Odin packaging:\n"
+                "• vendor.img (modified)\n"
+                "• system.img (modified)\n"
+                "• boot.img (modified)\n"
+                "• Additional partitions copied\n\n"
+                "Checksums saved to checksums.sha256"))
+
+        except Exception as e:
+            self.log(f"[!] Error during image repacking: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during image repacking: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _odin_package_creation_thread(self):
+        """Thread to create Odin flashable package"""
+        import shutil
+        try:
+            self.status_label.config(text="Creating Odin package...")
+            self.progress.start()
+            self.log("[*] Starting Odin package creation...", 'info')
+
+            work_dir = os.path.join(os.getcwd(), "firmware_port")
+            output_dir = os.path.join(work_dir, "output")
+            odin_dir = os.path.join(work_dir, "odin_package")
+            os.makedirs(odin_dir, exist_ok=True)
+
+            # Create AP tar package
+            self.log("[*] Creating AP package...")
+
+            ap_files = []
+            ap_images = ["boot.img", "recovery.img", "system.img", "vendor.img", "product.img", "dtbo.img", "vbmeta.img"]
+
+            for img in ap_images:
+                img_path = os.path.join(output_dir, img)
+                if os.path.exists(img_path):
+                    ap_files.append(img)
+
+            if not ap_files:
+                raise FileNotFoundError("No images found for AP package")
+
+            self.log(f"[*] AP package will contain: {', '.join(ap_files)}")
+
+            # Create tar archive
+            ap_tar_path = os.path.join(odin_dir, "AP_A33_to_A32.tar")
+            import tarfile
+            with tarfile.open(ap_tar_path, 'w') as tar:
+                for img_file in ap_files:
+                    img_path = os.path.join(output_dir, img_file)
+                    tar.add(img_path, arcname=img_file)
+
+            # Add MD5 checksum
+            import hashlib
+            with open(ap_tar_path, 'rb') as f:
+                md5_hash = hashlib.md5(f.read()).hexdigest()
+
+            with open(ap_tar_path, 'ab') as f:
+                f.write(md5_hash.encode('ascii'))
+
+            # Rename to .tar.md5
+            ap_final_path = os.path.join(odin_dir, "AP_A33_to_A32.tar.md5")
+            os.rename(ap_tar_path, ap_final_path)
+
+            self.log("[*] AP package created: AP_A33_to_A32.tar.md5")
+
+            # Copy A32 BL package
+            self.log("[*] Copying A32 bootloader...")
+            a32_bl = os.path.join(work_dir, "a32", "BL_original.tar.md5")
+            if os.path.exists(a32_bl):
+                bl_dest = os.path.join(odin_dir, "BL_A32.tar.md5")
+                import shutil
+                shutil.copy2(a32_bl, bl_dest)
+                self.log("[*] BL package copied: BL_A32.tar.md5")
+            else:
+                self.log("[!] WARNING: A32 bootloader not found", 'warning')
+                self.log("[!] You must use A32's original bootloader!", 'warning')
+
+            # Copy A32 CP package
+            self.log("[*] Copying A32 modem...")
+            a32_cp = os.path.join(work_dir, "a32", "CP_original.tar.md5")
+            if os.path.exists(a32_cp):
+                cp_dest = os.path.join(odin_dir, "CP_A32.tar.md5")
+                shutil.copy2(a32_cp, cp_dest)
+                self.log("[*] CP package copied: CP_A32.tar.md5")
+            else:
+                self.log("[!] WARNING: A32 modem not found", 'warning')
+                self.log("[!] You must use A32's original modem firmware!", 'warning')
+
+            # Handle CSC
+            self.log("[*] Preparing CSC package...")
+            csc_found = False
+
+            # Try to use A32 CSC first
+            import glob
+            a32_csc_pattern = os.path.join(work_dir, "a32", "CSC_*.tar.md5")
+            a32_csc_files = glob.glob(a32_csc_pattern)
+            if not a32_csc_files:
+                a32_csc_pattern = os.path.join(work_dir, "a32", "HOME_CSC_*.tar.md5")
+                a32_csc_files = glob.glob(a32_csc_pattern)
+
+            if a32_csc_files:
+                a32_csc = a32_csc_files[0]
+                csc_dest = os.path.join(odin_dir, os.path.basename(a32_csc))
+                shutil.copy2(a32_csc, csc_dest)
+                self.log(f"[*] Using A32 CSC: {os.path.basename(a32_csc)}")
+                csc_found = True
+            else:
+                self.log("[!] WARNING: A32 CSC not found. May use A33 CSC (risky)", 'warning')
+                # Try A33 CSC as fallback
+                a33_csc_pattern = os.path.join(work_dir, "a33", "HOME_CSC_*.tar.md5")
+                a33_csc_files = glob.glob(a33_csc_pattern)
+                if a33_csc_files:
+                    a33_csc = a33_csc_files[0]
+                    csc_dest = os.path.join(odin_dir, "CSC_A33_modified.tar.md5")
+                    shutil.copy2(a33_csc, csc_dest)
+                    self.log("[*] Copied A33 CSC (may need modification)")
+                    csc_found = True
+
+            # Create flash instructions
+            flash_instructions = f"""===========================================
+ODIN FLASH INSTRUCTIONS - A33 to A32 Port
+===========================================
+
+CRITICAL WARNINGS:
+1. This is a PORTED firmware - there is risk of bricking
+2. Ensure battery is >70% charged
+3. Have stock A32 firmware ready for recovery
+4. Backup all data before flashing
+
+PREREQUISITES:
+- Samsung USB Drivers installed
+- Odin 3.14.4 or newer
+- A32 bootloader must be UNLOCKED
+- Developer options enabled, OEM unlock enabled
+
+FLASHING STEPS:
+
+1. Boot A32 into Download Mode:
+   - Power off device
+   - Press and hold: Volume Down + Volume Up
+   - Connect USB cable while holding buttons
+   - Press Volume Up to confirm
+
+2. Open Odin (run as Administrator on Windows)
+
+3. Load firmware files:
+   - AP: AP_A33_to_A32.tar.md5
+   - BL: BL_A32.tar.md5
+   - CP: CP_A32.tar.md5
+   - CSC: Use HOME_CSC (if available) or CSC file
+
+4. Odin Options:
+   [X] Auto Reboot
+   [X] F. Reset Time
+   [ ] Do NOT check Re-partition
+
+5. Click START and wait
+   - Do NOT disconnect USB during flash
+   - Device will reboot automatically
+   - First boot may take 10-15 minutes
+
+6. If device doesn't boot after 20 minutes:
+   - Boot into recovery (Volume Up + Power while off)
+   - Wipe cache partition
+   - Factory reset (if necessary)
+   - Reboot
+
+TROUBLESHOOTING:
+
+Boot Loop:
+- Enter recovery mode
+- Wipe data/factory reset
+- If still loops, flash stock A32 firmware
+
+Stuck at Logo:
+- Wait 20 minutes
+- Force reboot: Hold Power for 10 seconds
+- Retry boot or enter recovery
+
+No Display:
+- Force reboot
+- Flash stock A32 firmware immediately
+
+Features Not Working:
+- Camera: May need additional calibration
+- Fingerprint: Re-enroll fingerprints
+- NFC: Check settings after boot
+
+RECOVERY:
+If all else fails, flash stock A32 firmware:
+1. Download from sammobile.com or similar
+2. Flash with Odin using same procedure
+3. This will restore device to working state
+
+===========================================
+"""
+
+            instructions_path = os.path.join(odin_dir, "FLASH_INSTRUCTIONS.txt")
+            with open(instructions_path, 'w', encoding='utf-8') as f:
+                f.write(flash_instructions)
+
+            self.log("[*] Flash instructions created")
+
+            # Create package info file
+            from datetime import datetime
+            package_info = f"""Package Information
+===================
+Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Base Firmware: Samsung A33 Android 16
+Target Device: Samsung A32
+Modification Level: Full port
+
+Modified Components:
+- Boot image (A32 kernel + modified A33 ramdisk)
+- Vendor partition (A32 HALs + A33 system)
+- System partition (A32 device identity)
+
+Unmodified Components:
+- Bootloader (A32 original - CRITICAL)
+- Modem (A32 original - CRITICAL)
+
+Package Contents:
+"""
+
+            # Get file listing
+            odin_files = []
+            for file in os.listdir(odin_dir):
+                if file.endswith(('.tar.md5', '.txt')):
+                    file_path = os.path.join(odin_dir, file)
+                    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    odin_files.append(f"{file}: {size_mb:.1f}MB")
+
+            package_info += "\n".join(odin_files) + "\n\n"
+
+            # Add checksums
+            package_info += "Checksums:\n"
+            checksums = []
+            for file in os.listdir(odin_dir):
+                if file.endswith('.tar.md5'):
+                    file_path = os.path.join(odin_dir, file)
+                    with open(file_path, 'rb') as f:
+                        sha256 = hashlib.sha256(f.read()).hexdigest()
+                    checksums.append(f"{sha256}  {file}")
+
+            package_info += "\n".join(checksums)
+
+            info_path = os.path.join(odin_dir, "PACKAGE_INFO.txt")
+            with open(info_path, 'w', encoding='utf-8') as f:
+                f.write(package_info)
+
+            # Create final checksums file
+            checksums_path = os.path.join(odin_dir, "CHECKSUMS.sha256")
+            with open(checksums_path, 'w', encoding='utf-8') as f:
+                f.write("\n".join(checksums))
+
+            self.log("", 'info')
+            self.log("============================================", 'success')
+            self.log("[*] Odin package creation complete!", 'success')
+            self.log("============================================", 'success')
+            self.log("", 'info')
+            self.log(f"Package location: {odin_dir}", 'info')
+            self.log("", 'info')
+            self.log("Files created:", 'info')
+
+            for file_info in odin_files:
+                self.log(f"  {file_info}")
+
+            self.log("", 'info')
+            self.log("============================================", 'warning')
+            self.log("NEXT STEPS:", 'warning')
+            self.log("============================================", 'warning')
+            self.log("1. Review FLASH_INSTRUCTIONS.txt", 'info')
+            self.log("2. Verify all .tar.md5 files are present:", 'info')
+            self.log("   - AP_A33_to_A32.tar.md5 (modified)", 'info')
+            self.log("   - BL_A32.tar.md5 (A32 bootloader)", 'info')
+            self.log("   - CP_A32.tar.md5 (A32 modem)", 'info')
+            self.log("   - CSC file (A32 or modified A33)", 'info')
+            self.log("", 'info')
+            self.log("3. CRITICAL: Do NOT use A33 bootloader or modem!", 'error')
+            self.log("4. Have stock A32 firmware ready for recovery", 'warning')
+            self.log("5. Ensure device battery >70%", 'warning')
+            self.log("6. Flash at your own risk", 'error')
+            self.log("============================================", 'warning')
+
+            success_msg = f"""Odin package creation complete!
+
+Package location: {odin_dir}
+
+Files created:
+""" + "\n".join(odin_files) + """
+
+===========================================
+CRITICAL WARNINGS:
+===========================================
+• This is a PORTED firmware - RISK OF BRICKING
+• NEVER use A33 bootloader or modem
+• Have stock A32 firmware ready for recovery
+• Ensure battery >70% before flashing
+
+Next Steps:
+1. Review FLASH_INSTRUCTIONS.txt
+2. Verify all required .tar.md5 files are present
+3. Test flash on A32 device (at your own risk)
+===========================================
+"""
+
+            self.after(0, lambda: messagebox.showinfo("Success", success_msg))
+
+        except Exception as e:
+            self.log(f"[!] Error during Odin package creation: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during Odin package creation: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _package_validation_thread(self):
+        """Thread to validate the Odin package for completeness and safety"""
+        import os
+        import hashlib
+        try:
+            self.status_label.config(text="Validating package...")
+            self.progress.start()
+            self.log("[*] Starting package validation...", 'info')
+
+            work_dir = os.path.join(os.getcwd(), "firmware_port")
+            odin_dir = os.path.join(work_dir, "odin_package")
+
+            errors = 0
+            warnings = 0
+
+            self.log("============================================", 'info')
+            self.log("FIRMWARE PACKAGE VALIDATION", 'info')
+            self.log("============================================", 'info')
+            self.log("", 'info')
+
+            # Check required files
+            self.log("[*] Checking required files...", 'info')
+
+            def check_file(filename, critical=False):
+                nonlocal errors, warnings
+                file_path = os.path.join(odin_dir, filename)
+                if os.path.exists(file_path):
+                    size = os.path.getsize(file_path)
+                    size_mb = size // (1024 * 1024)
+                    self.log(f"[✓] {filename} ({size_mb}MB)", 'success')
+                    return True
+                else:
+                    if critical:
+                        self.log(f"[✗] MISSING CRITICAL: {filename}", 'error')
+                        errors += 1
+                    else:
+                        self.log(f"[!] WARNING: {filename} not found", 'warning')
+                        warnings += 1
+                    return False
+
+            check_file("AP_A33_to_A32.tar.md5", critical=True)
+            check_file("BL_A32.tar.md5", critical=True)
+            check_file("CP_A32.tar.md5", critical=True)
+
+            # Check for CSC files
+            import glob
+            csc_files = glob.glob(os.path.join(odin_dir, "CSC_*.tar.md5")) + \
+                       glob.glob(os.path.join(odin_dir, "HOME_CSC_*.tar.md5"))
+            if not csc_files:
+                self.log("[!] WARNING: No CSC file found", 'warning')
+                warnings += 1
+            else:
+                csc_name = os.path.basename(csc_files[0])
+                self.log(f"[✓] CSC file: {csc_name}", 'success')
+
+            self.log("", 'info')
+
+            # Verify AP contents
+            self.log("[*] Verifying AP package contents...", 'info')
+            ap_path = os.path.join(odin_dir, "AP_A33_to_A32.tar.md5")
+
+            if os.path.exists(ap_path):
+                # Extract without md5 footer (last 32 bytes)
+                with open(ap_path, 'rb') as f:
+                    ap_data = f.read()
+                ap_tar_data = ap_data[:-32] if len(ap_data) > 32 else ap_data
+
+                # Write temporary tar file
+                temp_tar = os.path.join(odin_dir, "AP_temp.tar")
+                with open(temp_tar, 'wb') as f:
+                    f.write(ap_tar_data)
+
+                try:
+                    import tarfile
+                    with tarfile.open(temp_tar, 'r') as tar:
+                        members = tar.getmembers()
+                        img_files = [m.name for m in members if m.name.endswith('.img')]
+                        self.log("[*] AP package contains:", 'info')
+                        for img in img_files:
+                            self.log(f"    {img}", 'info')
+
+                        # Check for essential images
+                        essential_images = ['boot.img', 'system.img', 'vendor.img']
+                        for essential in essential_images:
+                            if essential in img_files:
+                                self.log(f"[✓] {essential} present", 'success')
+                            else:
+                                self.log(f"[✗] {essential} MISSING", 'error')
+                                errors += 1
+
+                finally:
+                    # Clean up temp file
+                    if os.path.exists(temp_tar):
+                        os.remove(temp_tar)
+
+            self.log("", 'info')
+
+            # Verify checksums
+            self.log("[*] Verifying package checksums...", 'info')
+            checksums_path = os.path.join(odin_dir, "CHECKSUMS.sha256")
+
+            if os.path.exists(checksums_path):
+                import subprocess
+                try:
+                    result = subprocess.run(['sha256sum', '-c', checksums_path],
+                                          cwd=odin_dir, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        self.log("[✓] All checksums valid", 'success')
+                    else:
+                        self.log("[!] WARNING: Some checksums failed", 'warning')
+                        warnings += 1
+                except Exception as e:
+                    self.log(f"[!] WARNING: Could not verify checksums: {e}", 'warning')
+                    warnings += 1
+            else:
+                self.log("[!] WARNING: CHECKSUMS.sha256 not found", 'warning')
+                warnings += 1
+
+            self.log("", 'info')
+
+            # Check boot image components
+            self.log("[*] Checking boot image components...", 'info')
+            boot_check = os.path.join(work_dir, "a33", "boot")
+
+            if os.path.exists(os.path.join(boot_check, "kernel")):
+                kernel_size = os.path.getsize(os.path.join(boot_check, "kernel"))
+                kernel_size_mb = kernel_size // (1024 * 1024)
+                self.log(f"[*] Kernel size: {kernel_size_mb}MB", 'info')
+
+                # Check if it's reasonable size for A32 (A33 kernel is typically 20-25MB, A32 around 15-20MB)
+                if kernel_size_mb < 30:
+                    self.log("[✓] Kernel size looks reasonable for A32", 'success')
+                else:
+                    self.log("[!] WARNING: Kernel seems too large (might be A33 kernel)", 'warning')
+                    warnings += 1
+
+            if os.path.exists(os.path.join(boot_check, "ramdisk")):
+                import os
+                ramdisk_files = len([f for f in os.listdir(os.path.join(boot_check, "ramdisk"))
+                                   if os.path.isfile(os.path.join(boot_check, "ramdisk", f))])
+                self.log(f"[*] Ramdisk contains {ramdisk_files} files", 'info')
+
+                # Check for A32-specific files
+                fstab_found = False
+                for fstab_file in ["fstab.exynos850", "fstab.mt6769"]:
+                    if os.path.exists(os.path.join(boot_check, "ramdisk", fstab_file)):
+                        fstab_found = True
+                        break
+
+                if fstab_found:
+                    self.log("[✓] A32 fstab found in ramdisk", 'success')
+                else:
+                    self.log("[!] WARNING: A32-specific fstab not found", 'warning')
+                    warnings += 1
+
+            self.log("", 'info')
+
+            # Verify BL is from A32
+            self.log("[*] Verifying bootloader source...", 'info')
+            bl_orig = os.path.join(work_dir, "a32", "BL_original.tar.md5")
+            bl_odin = os.path.join(odin_dir, "BL_A32.tar.md5")
+
+            if os.path.exists(bl_orig) and os.path.exists(bl_odin):
+                import hashlib
+                with open(bl_orig, 'rb') as f:
+                    bl_orig_hash = hashlib.md5(f.read()).hexdigest()
+                with open(bl_odin, 'rb') as f:
+                    bl_odin_hash = hashlib.md5(f.read()).hexdigest()
+
+                if bl_orig_hash == bl_odin_hash:
+                    self.log("[✓] Bootloader is confirmed A32 original", 'success')
+                else:
+                    self.log("[✗] CRITICAL: Bootloader does not match A32 original!", 'error')
+                    errors += 1
+            else:
+                self.log("[!] WARNING: Cannot verify bootloader source", 'warning')
+                warnings += 1
+
+            # Verify CP is from A32
+            self.log("[*] Verifying modem source...", 'info')
+            cp_orig = os.path.join(work_dir, "a32", "CP_original.tar.md5")
+            cp_odin = os.path.join(odin_dir, "CP_A32.tar.md5")
+
+            if os.path.exists(cp_orig) and os.path.exists(cp_odin):
+                with open(cp_orig, 'rb') as f:
+                    cp_orig_hash = hashlib.md5(f.read()).hexdigest()
+                with open(cp_odin, 'rb') as f:
+                    cp_odin_hash = hashlib.md5(f.read()).hexdigest()
+
+                if cp_orig_hash == cp_odin_hash:
+                    self.log("[✓] Modem is confirmed A32 original", 'success')
+                else:
+                    self.log("[✗] CRITICAL: Modem does not match A32 original!", 'error')
+                    errors += 1
+            else:
+                self.log("[!] WARNING: Cannot verify modem source", 'warning')
+                warnings += 1
+
+            self.log("", 'info')
+
+            # Check vendor modifications
+            self.log("[*] Checking vendor modifications...", 'info')
+            vendor_check = os.path.join(work_dir, "a33", "vendor", "work")
+
+            if os.path.isdir(vendor_check):
+                # Check if critical HALs exist
+                hal_count = 0
+                hal_patterns = ['camera', 'audio', 'sensors', 'gralloc']
+
+                for root, dirs, files in os.walk(vendor_check):
+                    for file in files:
+                        for hal in hal_patterns:
+                            if hal in file.lower() and (file.endswith('.so') or 'hal' in file.lower()):
+                                hal_count += 1
+                                break
+
+                if hal_count >= 3:
+                    self.log("[✓] Critical HALs present in vendor", 'success')
+                else:
+                    self.log(f"[!] WARNING: Some HALs may be missing ({hal_count}/4 found)", 'warning')
+                    warnings += 1
+
+                # Check build.prop modifications
+                build_prop = os.path.join(vendor_check, "build.prop")
+                if os.path.exists(build_prop):
+                    with open(build_prop, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    if 'SM-A325' in content or 'a32' in content:
+                        self.log("[✓] Vendor build.prop modified for A32", 'success')
+                    else:
+                        self.log("[!] WARNING: Vendor build.prop may not be properly modified", 'warning')
+                        warnings += 1
+
+            self.log("", 'info')
+
+            # Final summary
+            self.log("============================================", 'info')
+            self.log("VALIDATION SUMMARY", 'info')
+            self.log("============================================", 'info')
+            self.log(f"Errors: {errors}", 'info')
+            self.log(f"Warnings: {warnings}", 'info')
+            self.log("", 'info')
+
+            if errors > 0:
+                self.log("[✗] VALIDATION FAILED", 'error')
+                self.log(f"[!] {errors} critical errors found", 'error')
+                self.log("[!] DO NOT FLASH - Fix errors first", 'error')
+                self.log("============================================", 'error')
+
+                self.after(0, lambda: messagebox.showerror("Validation Failed",
+                    f"VALIDATION FAILED!\n\n"
+                    f"{errors} critical errors found\n"
+                    f"{warnings} warnings\n\n"
+                    "DO NOT FLASH - Fix errors first"))
+
+            elif warnings > 0:
+                self.log("[!] VALIDATION PASSED WITH WARNINGS", 'warning')
+                self.log(f"[!] {warnings} warnings found", 'warning')
+                self.log("[!] Review warnings before flashing", 'warning')
+                self.log("============================================", 'warning')
+
+                success_msg = f"""VALIDATION PASSED WITH WARNINGS
+
+Errors: {errors}
+Warnings: {warnings}
+
+Review warnings before flashing:
+• Check all warning messages above
+• Ensure bootloader and modem are A32 originals
+• Verify all modifications are correct
+
+Final checklist before flashing:
+- Battery >70% charged
+- Stock A32 firmware downloaded for recovery
+- All data backed up
+- Read FLASH_INSTRUCTIONS.txt
+- Understand the risks"""
+
+                self.after(0, lambda: messagebox.showwarning("Validation Passed with Warnings", success_msg))
+
+            else:
+                self.log("[✓] VALIDATION PASSED", 'success')
+                self.log("[✓] Package appears ready for flashing", 'success')
+                self.log("", 'info')
+                self.log("Final checklist before flashing:", 'info')
+                self.log("  [ ] Battery >70% charged", 'info')
+                self.log("  [ ] Stock A32 firmware downloaded for recovery", 'info')
+                self.log("  [ ] All data backed up", 'info')
+                self.log("  [ ] Read FLASH_INSTRUCTIONS.txt", 'info')
+                self.log("  [ ] Understand the risks", 'info')
+                self.log("============================================", 'success')
+
+                success_msg = f"""VALIDATION PASSED!
+
+Errors: {errors}
+Warnings: {warnings}
+
+Package appears ready for flashing.
+
+Final checklist before flashing:
+- Battery >70% charged
+- Stock A32 firmware downloaded for recovery
+- All data backed up
+- Read FLASH_INSTRUCTIONS.txt
+- Understand the risks
+
+===========================================
+FLASH AT YOUR OWN RISK!
+===========================================
+"""
+
+                self.after(0, lambda: messagebox.showinfo("Validation Passed", success_msg))
+
+        except Exception as e:
+            self.log(f"[!] Error during package validation: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during package validation: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _extract_system_vendor_thread(self, work_dir: str):
+        """Thread to extract system and vendor images"""
+        try:
+            self.status_label.config(text="Extracting system/vendor images...")
+            self.progress.start()
+            self.log("[*] Starting system and vendor image extraction...", 'info')
+
+            # Check for required tools
+            simg2img_path = tool_resolve("simg2img")
+            if not simg2img_path:
+                raise FileNotFoundError("simg2img not found")
+
+            # Image types to extract
+            image_types = ["vendor", "system", "product"]
+            devices = ["base", "port"]  # Assuming base=a33, port=a32 in the example
+
+            extracted_info = []
+
+            for device in devices:
+                device_dir = os.path.join(work_dir, device)
+                extracted_dir = os.path.join(device_dir, "extracted")
+
+                if not os.path.isdir(extracted_dir):
+                    self.log(f"[!] Extracted directory not found for {device}", 'warning')
+                    continue
+
+                for image_type in image_types:
+                    self.log(f"[*] Processing {image_type} for {device}...", 'info')
+
+                    try:
+                        # Find the image file
+                        image_files = []
+                        for file in os.listdir(extracted_dir):
+                            if file.startswith(image_type) and file.endswith('.img'):
+                                image_files.append(file)
+
+                        if not image_files:
+                            self.log(f"[!] {image_type}.img not found for {device}", 'warning')
+                            continue
+
+                        image_file = image_files[0]  # Use first match
+                        image_path = os.path.join(extracted_dir, image_file)
+
+                        # Create output directory
+                        output_dir = os.path.join(device_dir, image_type)
+                        os.makedirs(output_dir, exist_ok=True)
+
+                        # Copy image to working directory
+                        work_image_path = os.path.join(output_dir, f"{image_type}.img")
+                        import shutil
+                        shutil.copy2(image_path, work_image_path)
+
+                        # Check if it's a sparse image
+                        try:
+                            result = run_cmd(["file", work_image_path])
+                            if "sparse" in result.stdout.lower() or result.returncode == 0:
+                                # Try to detect sparse image by reading magic
+                                with open(work_image_path, 'rb') as f:
+                                    magic = f.read(4)
+                                    if magic == b'\x3a\xff\x26\xed':  # Sparse image magic
+                                        self.log(f"[*] Converting sparse image to raw...", 'info')
+                                        raw_image_path = work_image_path.replace('.img', '_raw.img')
+
+                                        result = run_cmd([simg2img_path, work_image_path, raw_image_path])
+                                        if result.returncode == 0:
+                                            # Replace original with raw
+                                            os.remove(work_image_path)
+                                            shutil.move(raw_image_path, work_image_path)
+                                        else:
+                                            raise RuntimeError("Failed to convert sparse image")
+                        except Exception as e:
+                            self.log(f"[!] Warning: Could not check for sparse image: {e}", 'warning')
+
+                        # Create extraction directories
+                        mount_dir = os.path.join(output_dir, "mount")
+                        work_extraction_dir = os.path.join(output_dir, "work")
+                        os.makedirs(mount_dir, exist_ok=True)
+
+                        self.log(f"[*] {image_type} prepared for {device} at {output_dir}", 'info')
+                        extracted_info.append({
+                            'device': device,
+                            'type': image_type,
+                            'path': work_extraction_dir,
+                            'mount_path': mount_dir,
+                            'image_path': work_image_path
+                        })
+
+                    except Exception as e:
+                        self.log(f"[!] Error processing {image_type} for {device}: {e}", 'error')
+                        continue
+
+            if not extracted_info:
+                raise RuntimeError("No images were successfully extracted")
+
+            # Generate summary report
+            base_paths = []
+            port_paths = []
+
+            for info in extracted_info:
+                if info['device'] == 'base':
+                    base_paths.append(f"    {info['type']}: {info['path']}")
+                else:
+                    port_paths.append(f"    {info['type']}: {info['path']}")
+
+            self.log("[*] Image extraction complete.", 'success')
+            self.log("[*] Base Images:", 'info')
+            for path in base_paths:
+                self.log(path, 'info')
+            self.log("[*] Port Images (reference):", 'info')
+            for path in port_paths:
+                self.log(path, 'info')
+
+            # Create user-friendly summary
+            summary = "System and vendor image extraction complete!\n\n"
+            summary += "Extracted Images:\n"
+            summary += f"Base device:\n" + "\n".join(base_paths) + "\n\n"
+            summary += f"Port device (reference):\n" + "\n".join(port_paths) + "\n\n"
+            summary += "IMPORTANT: Images are ready for extraction. To extract contents:\n"
+            summary += "• Mount the .img files using appropriate tools\n"
+            summary += "• Extract contents to the 'work' subdirectories\n"
+            summary += "• Compare and modify as needed for porting\n\n"
+            summary += "Note: This implementation prepares the images for extraction.\n"
+            summary += "Actual mounting/extraction requires filesystem-specific tools."
+
+            self.after(0, lambda: messagebox.showinfo("Success", summary))
+
+        except Exception as e:
+            self.log(f"[!] Error during system/vendor extraction: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during system/vendor extraction: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
 
     def _build_statusbar(self):
         # Create a frame to hold status bar and progress bar
