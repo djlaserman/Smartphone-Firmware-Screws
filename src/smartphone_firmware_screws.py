@@ -3454,7 +3454,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.workspace.add(log_frame, weight=1)
 
         # Set minimum height for log frame to prevent squishing
-        log_frame.configure(height=300)  # Minimum height of 300 pixels
+        log_frame.configure(height=200)  # Minimum height of 300 pixels
         log_frame.pack_propagate(False)  # Prevent the frame from shrinking below its configured size
 
         self.log_console = LogConsole(log_frame)
@@ -4516,8 +4516,18 @@ class SmartphoneFirmwareScrews(tk.Tk):
         tmp_tar = tempfile.mktemp(suffix=".tar")
         try:
             strip_md5_footer(tar_md5_path, tmp_tar)
-            with tarfile.open(tmp_tar, "r") as tar:
-                tar.extractall(path=extract_to_dir)
+            bsdtar = tool_resolve("bsdtar")
+            if bsdtar:
+                result = run_cmd([bsdtar, "-xf", tmp_tar, "-C", extract_to_dir])
+                if result.returncode == 0:
+                    return
+            # Fallback to 7z
+            seven_z = tool_resolve("7z")
+            if seven_z:
+                result = run_cmd([seven_z, "x", tmp_tar, f"-o{extract_to_dir}"])
+                if result.returncode == 0:
+                    return
+            raise RuntimeError("Could not extract tar archive")
         finally:
             if os.path.exists(tmp_tar):
                 os.remove(tmp_tar)
