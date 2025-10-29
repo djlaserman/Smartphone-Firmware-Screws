@@ -42,6 +42,9 @@ import logging # Added for detailed startup logging
 import traceback # Added for detailed exception logging
 import math
 import mmap
+import glob
+import tarfile
+import gzip # Added for ramdisk decompression
 
 # Optional plotting for entropy (install matplotlib to enable)
 try:
@@ -87,6 +90,119 @@ COLORS = {
 }
 
 TAR_BLOCK_SIZE = 512
+
+# Samsung firmware file type detection and offset width mapping
+SAMSUNG_FIRMWARE_TYPES = {
+    # Bootloader components
+    'pit': {'patterns': ['pit', 'param'], 'width': 4},
+    'sboot.bin': {'patterns': ['sboot', 'sbl'], 'width': 5},
+    'cm.bin': {'patterns': ['cm', 'cert'], 'width': 5},
+    'up_param.bin': {'patterns': ['up_param', 'uparam'], 'width': 5},
+    'param.bin': {'patterns': ['param'], 'width': 5},
+    'tz.mbn': {'patterns': ['tz', 'trustzone'], 'width': 5},
+    'tz.img': {'patterns': ['tz', 'trustzone'], 'width': 5},
+    'hyp.mbn': {'patterns': ['hyp', 'hypervisor'], 'width': 5},
+    'keymaster.mbn': {'patterns': ['keymaster'], 'width': 5},
+    'cmnlib.mbn': {'patterns': ['cmnlib'], 'width': 5},
+    'cmnlib64.mbn': {'patterns': ['cmnlib64'], 'width': 5},
+    'abl.elf': {'patterns': ['abl'], 'width': 6},
+    'abl.img': {'patterns': ['abl'], 'width': 6},
+    'lk.elf': {'patterns': ['lk', 'little_kernel'], 'width': 5},
+    'xbl.elf': {'patterns': ['xbl'], 'width': 6},
+    'xbl_config.elf': {'patterns': ['xbl_config'], 'width': 6},
+    'rpm.mbn': {'patterns': ['rpm'], 'width': 5},
+    'pmic.mbn': {'patterns': ['pmic'], 'width': 5},
+    'devcfg.mbn': {'patterns': ['devcfg'], 'width': 5},
+    'storsec.mbn': {'patterns': ['storsec'], 'width': 5},
+    'vbmeta.img': {'patterns': ['vbmeta'], 'width': 5},
+    'vbmeta_system.img': {'patterns': ['vbmeta_system'], 'width': 5},
+    'vbmeta_vendor.img': {'patterns': ['vbmeta_vendor'], 'width': 5},
+
+    # Device tree components
+    'dtb.img': {'patterns': ['dtb'], 'width': 6},
+    'dtbo.img': {'patterns': ['dtbo'], 'width': 6},
+
+    # Boot images
+    'boot.img': {'patterns': ['boot'], 'width': 7},
+    'vendor_boot.img': {'patterns': ['vendor_boot'], 'width': 7},
+    'init_boot.img': {'patterns': ['init_boot'], 'width': 6},
+    'recovery.img': {'patterns': ['recovery'], 'width': 7},
+
+    # Kernel components
+    'kernel': {'patterns': ['kernel', 'image', 'zimage'], 'width': 6},
+    'ramdisk': {'patterns': ['ramdisk', 'cpio'], 'width': 6},
+
+    # System partitions
+    'system.img': {'patterns': ['system'], 'width': 8},
+    'system_ext.img': {'patterns': ['system_ext'], 'width': 8},
+    'vendor.img': {'patterns': ['vendor'], 'width': 8},
+    'product.img': {'patterns': ['product'], 'width': 8},
+    'odm.img': {'patterns': ['odm'], 'width': 8},
+    'oem.img': {'patterns': ['oem'], 'width': 8},
+    'super.img': {'patterns': ['super'], 'width': 9},
+    'userdata.img': {'patterns': ['userdata'], 'width': 10},
+    'cache.img': {'patterns': ['cache'], 'width': 8},
+    'hidden.img': {'patterns': ['hidden'], 'width': 8},
+    'optics.img': {'patterns': ['optics'], 'width': 8},
+    'prism.img': {'patterns': ['prism'], 'width': 8},
+    'omc.img': {'patterns': ['omc'], 'width': 8},
+    'metadata.img': {'patterns': ['metadata'], 'width': 7},
+
+    # Modem/baseband
+    'modem.bin': {'patterns': ['modem'], 'width': 7},
+    'non-hlos.bin': {'patterns': ['non-hlos'], 'width': 7},
+    'btfm.bin': {'patterns': ['btfm', 'bluetooth'], 'width': 6},
+    'wcnss.mbn': {'patterns': ['wcnss', 'wifi'], 'width': 6},
+    'efs.img': {'patterns': ['efs'], 'width': 7},
+    'persist.img': {'patterns': ['persist'], 'width': 8},
+
+    # Odin packages
+    'ap_*.tar.md5': {'patterns': ['ap_', 'application'], 'width': 8},
+    'bl_*.tar.md5': {'patterns': ['bl_', 'bootloader'], 'width': 8},
+    'cp_*.tar.md5': {'patterns': ['cp_', 'modem'], 'width': 7},
+    'csc_*.tar.md5': {'patterns': ['csc_', 'region'], 'width': 8},
+    'home_csc_*.tar.md5': {'patterns': ['home_csc'], 'width': 8},
+
+    # Configuration files
+    'cscfeature.xml': {'patterns': ['cscfeature'], 'width': 4},
+    'cscnetwork.xml': {'patterns': ['cscnetwork'], 'width': 4},
+    'customer.xml': {'patterns': ['customer'], 'width': 4},
+    'verity_key': {'patterns': ['verity_key'], 'width': 4},
+    'fstab': {'patterns': ['fstab'], 'width': 4},
+    'init': {'patterns': ['init'], 'width': 5},
+    'sepolicy': {'patterns': ['sepolicy', 'selinux'], 'width': 6},
+    'ueventd.rc': {'patterns': ['ueventd'], 'width': 4},
+}
+
+def detect_firmware_file_type(filename: str) -> Optional[Dict[str, Any]]:
+    """
+    Detect Samsung firmware file type and return optimal offset width.
+    Uses fuzzy matching to handle renamed files (e.g., myboot.img -> boot.img).
+    """
+    if not filename:
+        return None
+
+    filename_lower = filename.lower()
+
+    # Exact matches first
+    for file_type, config in SAMSUNG_FIRMWARE_TYPES.items():
+        if filename_lower == file_type.lower():
+            return {'type': file_type, 'width': config['width']}
+
+    # Pattern matching for renamed files
+    for file_type, config in SAMSUNG_FIRMWARE_TYPES.items():
+        for pattern in config['patterns']:
+            if pattern in filename_lower:
+                return {'type': file_type, 'width': config['width']}
+
+    # Special handling for Odin packages with version numbers
+    if filename_lower.endswith('.tar.md5'):
+        if filename_lower.startswith(('ap_', 'bl_', 'cp_', 'csc_', 'home_csc_')):
+            prefix = filename_lower.split('_')[0] + '_*.tar.md5'
+            if prefix in SAMSUNG_FIRMWARE_TYPES:
+                return {'type': prefix, 'width': SAMSUNG_FIRMWARE_TYPES[prefix]['width']}
+
+    return None
 
 # Common partition mappings for Samsung devices
 SAMSUNG_PARTITION_MAP = {
@@ -232,6 +348,100 @@ def _is_valid_executable(path: str) -> bool:
             return False # If it's not an ELF and not a script, it's likely not executable
     except (OSError, IOError):
         return False
+def format_offset(
+    offset: int,
+    file_size: int,
+    base: int = 16,
+    *,
+    prefix: bool = False,
+    group: int | None = None,
+    min_width: int = 4,
+    max_width: int = 12,
+    clamp_profile: str = "firmware"
+) -> str:
+    """
+    Professionally format an offset for hex-editor display, adapting width to file size.
+    Fine-grained and accurate for Samsung smartphone firmware content:
+    DTB, ramdisk, boot.img, vendor_boot.img, kernel (Image/zImage),
+    sboot.bin, modem.bin, recovery.img, system/vendor/product/super.img,
+    PIT/param.bin, userdata/cache, and raw NAND dumps.
+
+    Parameters:
+        offset (int): Byte offset to format (>= 0).
+        file_size (int): Total file size in bytes (>= 1).
+        base (int): 16 for hex (recommended), 10 for decimal.
+        prefix (bool): Add "0x" for hex or no prefix for decimal.
+        group (int|None): Digit grouping (e.g., 4 for hex nibbles or 3 for decimal).
+        min_width (int): Minimum digits to show (default 4).
+        max_width (int): Maximum digits to show (default 12).
+        clamp_profile (str): Width clamping profile. One of:
+            - "firmware": common firmware widths
+            - "powerof2": round up to power-of-two nibble counts (hex)
+            - "none": no clamping beyond [min_width, max_width]
+
+    Returns:
+        str: Formatted offset string (e.g., "0000ABCD" or "0x0000ABCD").
+    """
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    if file_size <= 0:
+        raise ValueError("file_size must be >= 1")
+    if base not in (10, 16):
+        raise ValueError("Only base 10 or 16 supported")
+
+    # Determine required digits from file size (max representable index is file_size - 1)
+    max_index = max(0, file_size - 1)
+
+    if base == 16:
+        # Hex digits: ceil(bit_length / 4)
+        req_digits = max(1, (max_index.bit_length() + 3) // 4)
+    else:
+        # Decimal digits: length of string for max index
+        req_digits = len(str(max_index))
+
+    # Apply clamping profile for professional widths
+    def clamp_width(d: int) -> int:
+        d = max(min_width, min(d, max_width))
+        if clamp_profile == "none":
+            return d
+        elif clamp_profile == "powerof2" and base == 16:
+            # Round up to nibble-friendly widths
+            for w in (4, 5, 6, 7, 8, 10, 12, 16):
+                if d <= w:
+                    return min(w, max_width)
+            return min(d, max_width)
+        elif clamp_profile == "firmware":
+            # Tuned for Samsung firmware content spectrum
+            # Hex: prefer 4,5,6,7,8,10,12; Dec: prefer 5,6,8,10,12
+            choices_hex = (4, 5, 6, 7, 8, 10, 12)
+            choices_dec = (5, 6, 8, 10, 12)
+            choices = choices_hex if base == 16 else choices_dec
+            for w in choices:
+                if d <= w:
+                    return min(w, max_width)
+            return min(d, max_width)
+        else:
+            return min(d, max_width)
+
+    width = clamp_width(req_digits)
+
+    # Format core number
+    if base == 16:
+        core = f"{offset:0{width}X}"
+    else:
+        core = f"{offset:0{width}d}"
+
+    # Optional digit grouping for readability
+    if group and group > 0:
+        # Group from the right; non-destructive to leading zeros
+        rev = core[::-1]
+        chunks = [rev[i:i + group] for i in range(0, len(rev), group)]
+        core = " ".join(chunk[::-1] for chunk in chunks[::-1])
+
+    # Optional prefix
+    if prefix and base == 16:
+        return f"0x{core}"
+    return core
 
 def tool_resolve_apksigner() -> Optional[str]:
     """Resolve apksigner.jar from multiple possible locations."""
@@ -888,7 +1098,7 @@ def extract_dtb(boot_unpack_dir: str, out_path: str) -> None:
 def extract_ramdisk(cpio_file: str, out_dir: str) -> None:
     """Extract ramdisk"""
     ensure_dir(out_dir)
-    
+
     work_file = cpio_file
     if cpio_file.lower().endswith('.lz4'):
         lz4 = tool_resolve("lz4")
@@ -897,13 +1107,24 @@ def extract_ramdisk(cpio_file: str, out_dir: str) -> None:
             result = run_cmd([lz4, "-d", "-f", cpio_file, work_file])
             if result.returncode != 0:
                 raise RuntimeError("LZ4 decompress failed")
-    
+
     bsdtar = tool_resolve("bsdtar")
     if bsdtar:
         result = run_cmd([bsdtar, "-xf", work_file, "-C", out_dir])
         if result.returncode == 0:
             return
-    
+
+    # Fallback to cpio command if bsdtar fails
+    cpio = tool_resolve("cpio")
+    if cpio:
+        try:
+            with open(work_file, 'rb') as f:
+                result = run_cmd([cpio, "-idm"], cwd=out_dir, input_data=f.read())
+                if result.returncode == 0:
+                    return
+        except Exception:
+            pass
+
     raise RuntimeError("Ramdisk extraction failed")
 
 def create_ramdisk(src_dir: str, out_cpio: str, compress: bool = True) -> None:
@@ -1143,10 +1364,11 @@ class TextOutputDialog(tk.Toplevel):
 class HexEditorWidget(ttk.Frame):
     """Hex Editor widget integrated with the main application"""
 
-    def __init__(self, parent, log_callback, status_callback):
+    def __init__(self, parent, log_callback, status_callback, progress_callback=None):
         super().__init__(parent)
         self.log_callback = log_callback
         self.status_callback = status_callback
+        self.progress_callback = progress_callback  # Callback to update progress bar
         self.set_status = status_callback  # For compatibility with existing code
         self._init_state()
         self._build_ui()
@@ -1166,10 +1388,19 @@ class HexEditorWidget(ttk.Frame):
         self.bookmarks = {}
         self.current_selection = (None, None)  # (start, end)
         self.windowed = False
+        self.firmware_type = None  # Detected firmware file type
+        self.preserved_selection = None  # To preserve selection across focus changes
 
     def _build_ui(self):
         # Apply consistent background colors to match the application theme
         # Note: Frame background is handled by ttk style
+
+        # Configure styles for consistent background in right panel
+        hex_style = ttk.Style()
+        hex_style.configure("HexEditor.TLabelframe", background=COLORS['bg_card'], foreground=COLORS['text_primary'])
+        hex_style.configure("HexEditor.TLabel", background=COLORS['bg_card'], foreground=COLORS['text_primary'])
+        hex_style.configure("HexEditor.TEntry", fieldbackground=COLORS['log_bg'], foreground=COLORS['text_primary'])
+        hex_style.configure("HexEditor.TButton", background=COLORS['bg_card'])
 
         # Menu items are handled by the parent application
 
@@ -1177,15 +1408,15 @@ class HexEditorWidget(ttk.Frame):
         top_frame = ttk.Frame(self, style='Card.TFrame')
         top_frame.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Button(top_frame, text="Open", command=self.open_file).pack(side=tk.LEFT, padx=2)
-        ttk.Button(top_frame, text="Save", command=self.save_file).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top_frame, text="Open", command=self.open_file, takefocus=False).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top_frame, text="Save", command=self.save_file, takefocus=False).pack(side=tk.LEFT, padx=2)
         ttk.Label(top_frame, text=" Endian: ").pack(side=tk.LEFT, padx=2)
         self.endian_var = tk.StringVar(value=self.endian)
-        endian_combo = ttk.Combobox(top_frame, textvariable=self.endian_var, values=("big", "little"), width=6)
+        endian_combo = ttk.Combobox(top_frame, textvariable=self.endian_var, values=("big", "little"), width=6, takefocus=False)
         endian_combo.pack(side=tk.LEFT)
         endian_combo.bind("<<ComboboxSelected>>", lambda e: self.set_endian(self.endian_var.get()))
-        ttk.Button(top_frame, text="Entropy", command=self.entropy_analysis).pack(side=tk.LEFT, padx=4)
-        ttk.Button(top_frame, text="Strings", command=self.show_strings).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top_frame, text="Entropy", command=self.entropy_analysis, takefocus=False).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top_frame, text="Strings", command=self.show_strings, takefocus=False).pack(side=tk.LEFT, padx=4)
 
         # Main panes: left = hex view, right = converters / analysis
         main_pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL, style='Card.TFrame')
@@ -1199,6 +1430,10 @@ class HexEditorWidget(ttk.Frame):
         self.hex_text.bind("<<Selection>>", self.on_selection)
         self.hex_text.bind("<Button-1>", self.on_click)
         self.hex_text.bind("<KeyRelease>", self.on_hex_key_release)
+        self.hex_text.bind("<FocusOut>", self._on_focus_out)
+        self.hex_text.bind("<FocusIn>", self._on_focus_in)
+        # Configure persistent selection tag for visibility when unfocused
+        self.hex_text.tag_config('persistent_sel', background='#4f94cd', foreground='white')
         # Scrollbars
         yscroll = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.hex_text.yview)
         self.hex_text.configure(yscrollcommand=yscroll.set)
@@ -1242,74 +1477,79 @@ class HexEditorWidget(ttk.Frame):
         right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Selection info - make it fill more space
-        info_frame = ttk.LabelFrame(right_scrollable_frame, text="Selection / Offset")
+        info_frame = ttk.LabelFrame(right_scrollable_frame, text="Selection / Offset", style='HexEditor.TLabelframe')
         info_frame.pack(fill=tk.X, padx=6, pady=(6, 3))
-        self.offset_label = ttk.Label(info_frame, text="Offset: -")
+        self.offset_label = ttk.Label(info_frame, text="Offset: -", style='HexEditor.TLabel')
         self.offset_label.pack(anchor="w", padx=4, pady=2)
-        self.length_label = ttk.Label(info_frame, text="Length: -")
+        self.length_label = ttk.Label(info_frame, text="Length: -", style='HexEditor.TLabel')
         self.length_label.pack(anchor="w", padx=4, pady=2)
 
         # Byte edit box
-        edit_frame = ttk.LabelFrame(right_scrollable_frame, text="Edit Bytes")
+        edit_frame = ttk.LabelFrame(right_scrollable_frame, text="Edit Bytes", style='HexEditor.TLabelframe')
         edit_frame.pack(fill=tk.X, padx=6, pady=(3, 6))
-        self.byte_entry = ttk.Entry(edit_frame)
+        self.byte_entry = ttk.Entry(edit_frame, style='HexEditor.TEntry')
         self.byte_entry.pack(fill=tk.X, padx=4, pady=4)
-        ttk.Button(edit_frame, text="Write Bytes (hex space-separated)", command=self.write_bytes_from_entry).pack(padx=4, pady=4)
+        ttk.Button(edit_frame, text="Write Bytes (hex space-separated)", command=self.write_bytes_from_entry, style='HexEditor.TButton', takefocus=False).pack(padx=4, pady=4)
 
         # Converter outputs - make it expand to fill space
-        conv_frame = ttk.LabelFrame(right_scrollable_frame, text="Converters (live)")
+        conv_frame = ttk.LabelFrame(right_scrollable_frame, text="Converters (live)", style='HexEditor.TLabelframe')
         conv_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 3))
         # Endian toggle
-        self.endian_display = ttk.Label(conv_frame, text=f"Endian: {self.endian}")
+        self.endian_display = ttk.Label(conv_frame, text=f"Endian: {self.endian}", style='HexEditor.TLabel')
         self.endian_display.pack(anchor="w", padx=4, pady=2)
 
         # Integer display
         self.int_signed_var = tk.BooleanVar(value=False)
         chk = ttk.Checkbutton(conv_frame, text="Signed", variable=self.int_signed_var, command=self.refresh_converters)
         chk.pack(anchor="w", padx=4)
-        self.int_label = ttk.Label(conv_frame, text="Integer:")
+        self.int_label = ttk.Label(conv_frame, text="Integer:", style='HexEditor.TLabel')
         self.int_label.pack(anchor="w", padx=4, pady=2)
 
         # Float display (32 / 64)
-        self.float32_label = ttk.Label(conv_frame, text="Float32:")
+        self.float32_label = ttk.Label(conv_frame, text="Float32:", style='HexEditor.TLabel')
         self.float32_label.pack(anchor="w", padx=4, pady=2)
-        self.float64_label = ttk.Label(conv_frame, text="Float64:")
+        self.float64_label = ttk.Label(conv_frame, text="Float64:", style='HexEditor.TLabel')
         self.float64_label.pack(anchor="w", padx=4, pady=2)
 
         # String interpretations
-        self.utf8_label = ttk.Label(conv_frame, text="UTF-8:")
+        self.utf8_label = ttk.Label(conv_frame, text="UTF-8:", style='HexEditor.TLabel')
         self.utf8_label.pack(anchor="w", padx=4, pady=2)
-        self.utf16_label = ttk.Label(conv_frame, text="UTF-16:")
+        self.utf16_label = ttk.Label(conv_frame, text="UTF-16:", style='HexEditor.TLabel')
         self.utf16_label.pack(anchor="w", padx=4, pady=2)
-        self.utf32_label = ttk.Label(conv_frame, text="UTF-32:")
+        self.utf32_label = ttk.Label(conv_frame, text="UTF-32:", style='HexEditor.TLabel')
         self.utf32_label.pack(anchor="w", padx=4, pady=2)
 
         # Hex display and copy
-        self.hex_label = ttk.Label(conv_frame, text="Hex:")
+        self.hex_label = ttk.Label(conv_frame, text="Hex:", style='HexEditor.TLabel')
         self.hex_label.pack(anchor="w", padx=4, pady=2)
-        ttk.Button(conv_frame, text="Copy Hex", command=self.copy_hex_to_clipboard).pack(anchor="w", padx=4, pady=2)
+        ttk.Button(conv_frame, text="Copy Hex", command=self.copy_hex_to_clipboard, style='HexEditor.TButton', takefocus=False).pack(anchor="w", padx=4, pady=2)
 
         # Live string extraction display
-        self.strings_label = ttk.Label(conv_frame, text="Extractable Strings:")
+        self.strings_label = ttk.Label(conv_frame, text="Extractable Strings:", style='HexEditor.TLabel')
         self.strings_label.pack(anchor="w", padx=4, pady=(10, 2))
-        self.strings_text = tk.Text(conv_frame, height=4, width=40, wrap="none",
+
+        # Create a frame to contain the text widget and its scrollbar
+        strings_frame = ttk.Frame(conv_frame, style='Card.TFrame')
+        strings_frame.pack(fill=tk.X, padx=4, pady=(0, 4))
+
+        self.strings_text = tk.Text(strings_frame, height=4, width=40, wrap="none",
                                    bg=COLORS['log_bg'], fg=COLORS['log_fg'],
                                    font=('Consolas', 8), state="disabled",
-                                   tabs=('8c', 'left'))  # Set tab stops for columns
-        strings_scrollbar = ttk.Scrollbar(conv_frame, orient=tk.VERTICAL, command=self.strings_text.yview)
+                                   tabs=('1c', '5c', 'left'))  # Set tab stops: offset at 1cm, string at 5cm
+        strings_scrollbar = ttk.Scrollbar(strings_frame, orient=tk.VERTICAL, command=self.strings_text.yview)
         self.strings_text.configure(yscrollcommand=strings_scrollbar.set)
-        self.strings_text.pack(anchor="w", padx=4, pady=(0, 4), fill=tk.X)
-        strings_scrollbar.pack(anchor="w", padx=(0, 4), pady=(0, 4), fill=tk.Y, side=tk.RIGHT)
+        self.strings_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        strings_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Analysis frame (entropy + strings)
-        analysis_frame = ttk.LabelFrame(right_scrollable_frame, text="Quick Analysis")
+        analysis_frame = ttk.LabelFrame(right_scrollable_frame, text="Quick Analysis", style='HexEditor.TLabelframe')
         analysis_frame.pack(fill=tk.X, padx=6, pady=(3, 6))
-        ttk.Button(analysis_frame, text="Compute Entropy (selection/file)", command=self.entropy_analysis).pack(fill=tk.X, padx=4, pady=2)
-        ttk.Button(analysis_frame, text="Extract Printable Strings", command=self.show_strings).pack(fill=tk.X, padx=4, pady=2)
-        ttk.Button(analysis_frame, text="Byte Histogram", command=self.byte_histogram).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(analysis_frame, text="Compute Entropy (selection/file)", command=self.entropy_analysis, style='HexEditor.TButton', takefocus=False).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(analysis_frame, text="Extract Printable Strings", command=self.show_strings, style='HexEditor.TButton', takefocus=False).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(analysis_frame, text="Byte Histogram", command=self.byte_histogram, style='HexEditor.TButton', takefocus=False).pack(fill=tk.X, padx=4, pady=2)
 
         # Status bar
-        self.status = ttk.Label(self, text="Ready", relief=tk.SUNKEN, anchor="w")
+        self.status = ttk.Label(self, text="Ready", relief=tk.SUNKEN, anchor="w", style='HexEditor.TLabel')
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
     # Shortcuts bindings
@@ -1344,6 +1584,11 @@ class HexEditorWidget(ttk.Frame):
             self.offset_top = 0
             data_len = len(self.data) if self.data else (self.mmap_file.size() if self.mmap_file else 0)
             self.windowed = data_len > 1024 * 256
+
+            # Detect firmware file type for optimal offset display
+            filename = os.path.basename(path)
+            self.firmware_type = detect_firmware_file_type(filename)
+
             self.refresh_view()
             data_len = len(self.data) if self.data else (self.mmap_file.size() if self.mmap_file else 0)
             self.set_status(f"Opened {path} ({data_len} bytes)")
@@ -1443,7 +1688,13 @@ class HexEditorWidget(ttk.Frame):
             # pad hex chunk to fixed width
             hex_padded = f"{hex_chunk:<{self.bytes_per_line * 3 - 1}}"
             ascii_chunk = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-            line = f"{(base + i):08X}  {hex_padded}  {ascii_chunk}\n"
+            # Use firmware-specific width if detected, otherwise adapt to file size
+            if self.firmware_type:
+                offset_str = format_offset(base + i, total_len, base=16, min_width=self.firmware_type['width'],
+                                          max_width=self.firmware_type['width'], clamp_profile="none")
+            else:
+                offset_str = format_offset(base + i, total_len, base=16, clamp_profile="firmware")
+            line = f"{offset_str}  {hex_padded}  {ascii_chunk}\n"
             self.hex_text.insert(tk.END, line)
         # Keep the widget editable - do not disable it
         self.update_selection_info(None, None)
@@ -1454,15 +1705,24 @@ class HexEditorWidget(ttk.Frame):
             index = self.hex_text.index("@%d,%d" % (event.x, event.y))
             line, col = map(int, index.split("."))
             text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
-            # parse offset at line start
-            offset_hex = text_line[:8]
-            base = int(offset_hex, 16)
-            # hex starts at column 10 (0-based)
+            # parse offset at line start - now variable length due to format_offset
+            # Find the first space after the offset (which separates offset from hex data)
+            space_pos = text_line.find('  ')
+            if space_pos == -1:
+                return
+            offset_hex = text_line[:space_pos].strip()
+            # Handle empty string (offset 0 case)
+            if not offset_hex:
+                base = 0
+            else:
+                base = int(offset_hex, 16)
+            # hex starts after offset and spaces (variable position now)
+            hex_start = space_pos + 2  # Skip the two spaces
             # compute position in hex area; each byte is "XX " except last may be shorter
             # find nearest hex token by splitting.
-            tokens = text_line[10:10 + self.bytes_per_line * 3].split()
+            tokens = text_line[hex_start:hex_start + self.bytes_per_line * 3].split()
             # find which token mouse clicked over by computing char index
-            col_in_line = col - 10
+            col_in_line = col - hex_start
             if col_in_line < 0:
                 return
             # compute approximate token index
@@ -1483,16 +1743,26 @@ class HexEditorWidget(ttk.Frame):
             cursor_pos = self.hex_text.index(tk.INSERT)
             line, col = map(int, cursor_pos.split("."))
 
-            # Only allow editing in the hex area (after column 10)
-            if col < 10:
+            text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
+            # Find the first space after the offset (which separates offset from hex data)
+            space_pos = text_line.find('  ')
+            if space_pos == -1:
+                return
+            offset_hex = text_line[:space_pos].strip()
+            # Handle empty string (offset 0 case)
+            if not offset_hex:
+                base = 0
+            else:
+                base = int(offset_hex, 16)
+            # hex starts after offset and spaces (variable position now)
+            hex_start = space_pos + 2  # Skip the two spaces
+
+            # Only allow editing in the hex area
+            if col < hex_start:
                 return
 
-            text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
-            offset_hex = text_line[:8]
-            base = int(offset_hex, 16)
-
             # Calculate which byte we're editing
-            col_in_line = col - 10
+            col_in_line = col - hex_start
             token_idx = col_in_line // 3
             if token_idx >= self.bytes_per_line:
                 return
@@ -1531,7 +1801,7 @@ class HexEditorWidget(ttk.Frame):
                             # Move to next line
                             next_line = line + 1
                             if next_line < int(self.hex_text.index(tk.END).split(".")[0]):
-                                self.hex_text.mark_set(tk.INSERT, f"{next_line}.10")
+                                self.hex_text.mark_set(tk.INSERT, f"{next_line}.{hex_start}")
 
         except Exception as e:
             # Silently ignore invalid edits
@@ -1582,12 +1852,20 @@ class HexEditorWidget(ttk.Frame):
     def _text_pos_to_offset(self, line, col):
         try:
             text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
-            offset_hex = text_line[:8].strip()
-            if not offset_hex:
+            # Find the first space after the offset (which separates offset from hex data)
+            space_pos = text_line.find('  ')
+            if space_pos == -1:
                 return None
-            base = int(offset_hex, 16)
+            offset_hex = text_line[:space_pos].strip()
+            # Handle empty string (offset 0 case)
+            if not offset_hex:
+                base = 0
+            else:
+                base = int(offset_hex, 16)
+            # hex starts after offset and spaces (variable position now)
+            hex_start = space_pos + 2  # Skip the two spaces
             # find token column
-            col_in_line = col - 10
+            col_in_line = col - hex_start
             if col_in_line < 0:
                 return None
             token_idx = max(0, min(self.bytes_per_line - 1, col_in_line // 3))
@@ -1603,10 +1881,41 @@ class HexEditorWidget(ttk.Frame):
             self._clear_converters()
             return
         self.current_selection = (start, length)
-        self.offset_label.config(text=f"Offset: 0x{start:08X} ({start})")
+        # Use firmware-specific width if detected, otherwise adapt to file size
+        if self.firmware_type:
+            formatted_offset = format_offset(start, self._get_len(), base=16, min_width=self.firmware_type['width'],
+                                           max_width=self.firmware_type['width'], clamp_profile="none")
+        else:
+            formatted_offset = format_offset(start, self._get_len(), base=16, clamp_profile="firmware")
+        self.offset_label.config(text=f"Offset: 0x{formatted_offset} ({start})")
         self.length_label.config(text=f"Length: {length}")
         self.refresh_converters()
         self.refresh_live_strings()
+
+    def _on_focus_out(self, event=None):
+        """Preserve selection when focus is lost"""
+        try:
+            sel = self.hex_text.tag_ranges("sel")
+            if sel:
+                start_idx = sel[0]
+                end_idx = sel[1]
+                self.preserved_selection = (start_idx, end_idx)
+                # Apply persistent selection tag to keep it visible
+                self.hex_text.tag_add("persistent_sel", start_idx, end_idx)
+        except Exception:
+            pass
+
+    def _on_focus_in(self, event=None):
+        """Restore selection when focus is regained"""
+        if self.preserved_selection:
+            try:
+                start_idx, end_idx = self.preserved_selection
+                # Remove persistent tag and restore normal selection
+                self.hex_text.tag_remove("persistent_sel", start_idx, end_idx)
+                self.hex_text.tag_add("sel", start_idx, end_idx)
+                self.preserved_selection = None
+            except Exception:
+                pass
 
     def _clear_converters(self):
         self.int_label.config(text="Integer:")
@@ -1726,7 +2035,15 @@ class HexEditorWidget(ttk.Frame):
                 if (actual_pos <= start + length and actual_pos + len(s) >= start) or \
                     (abs(actual_pos - start) < 50) or \
                     (abs((actual_pos + len(s)) - (start + length)) < 50):
-                    relevant_strings.append(f"0x{actual_pos:08X}: {s}")
+                    # Use firmware-specific width if detected, otherwise adapt to file size
+                    if self.firmware_type:
+                        formatted_offset = format_offset(actual_pos, self._get_len(), base=16,
+                                                       min_width=self.firmware_type['width'],
+                                                       max_width=self.firmware_type['width'],
+                                                       clamp_profile="none")
+                    else:
+                        formatted_offset = format_offset(actual_pos, self._get_len(), base=16, clamp_profile='firmware')
+                    relevant_strings.append(f"0x{formatted_offset}: {s}")
 
             # Update the text widget with formatted columns
             self.strings_text.config(state="normal")
@@ -1786,7 +2103,13 @@ class HexEditorWidget(ttk.Frame):
         # write
         self._write_slice(start, bts)
         self.refresh_view()
-        self.set_status(f"Wrote {len(bts)} bytes at 0x{start:08X}")
+        # Use firmware-specific width if detected, otherwise adapt to file size
+        if self.firmware_type:
+            formatted_offset = format_offset(start, self._get_len(), base=16, min_width=self.firmware_type['width'],
+                                           max_width=self.firmware_type['width'], clamp_profile="none")
+        else:
+            formatted_offset = format_offset(start, self._get_len(), base=16, clamp_profile="firmware")
+        self.set_status(f"Wrote {len(bts)} bytes at 0x{formatted_offset}")
 
     # Undo / Redo
     def undo(self):
@@ -1923,7 +2246,13 @@ class HexEditorWidget(ttk.Frame):
         self.offset_top = max(0, idx - 256)
         self.refresh_view()
         self.update_selection_info(idx, pat_len)
-        self.set_status(f"Found at 0x{idx:08X}")
+        # Use firmware-specific width if detected, otherwise adapt to file size
+        if self.firmware_type:
+            formatted_offset = format_offset(idx, self._get_len(), base=16, min_width=self.firmware_type['width'],
+                                           max_width=self.firmware_type['width'], clamp_profile="none")
+        else:
+            formatted_offset = format_offset(idx, self._get_len(), base=16, clamp_profile="firmware")
+        self.set_status(f"Found at 0x{formatted_offset}")
 
         # Update occurrence counter
         self.occurrence_label.config(text=f"{index + 1} of {len(self.find_occurrences)}")
@@ -1947,9 +2276,14 @@ class HexEditorWidget(ttk.Frame):
             occ_end = min(offset + length, line_end_offset)
 
             if occ_start < occ_end:
+                # Get the actual line text to find hex start position
+                text_line = self.hex_text.get(f"{line_idx + 1}.0", f"{line_idx + 1}.end")
+                space_pos = text_line.find('  ')
+                hex_start = space_pos + 2 if space_pos != -1 else 10  # fallback to old position
+
                 # Convert to text positions
-                char_start = 10 + (occ_start - line_start_offset) * 3  # 3 chars per byte (XX + space)
-                char_end = 10 + (occ_end - line_start_offset) * 3 - 1  # -1 to exclude trailing space
+                char_start = hex_start + (occ_start - line_start_offset) * 3  # 3 chars per byte (XX + space)
+                char_end = hex_start + (occ_end - line_start_offset) * 3 - 1  # -1 to exclude trailing space
 
                 self.hex_text.tag_add("find_highlight", f"{line_idx + 1}.{char_start}", f"{line_idx + 1}.{char_end}")
 
@@ -2042,6 +2376,13 @@ class HexEditorWidget(ttk.Frame):
             self.offset_top = max(0, off - 32)
             self.refresh_view()
             self.update_selection_info(off, 1)
+            # Update status with firmware-specific width if detected, otherwise adapt to file size
+            if self.firmware_type:
+                formatted_offset = format_offset(off, self._get_len(), base=16, min_width=self.firmware_type['width'],
+                                               max_width=self.firmware_type['width'], clamp_profile="none")
+            else:
+                formatted_offset = format_offset(off, self._get_len(), base=16, clamp_profile="firmware")
+            self.set_status(f"Goto: 0x{formatted_offset}")
         except Exception as e:
             messagebox.showerror("Go To", f"Invalid offset: {e}")
 
@@ -2082,27 +2423,49 @@ class HexEditorWidget(ttk.Frame):
             data = self._get_slice(sel[0], sel[1])
             data_offset = sel[0]
 
-        strings_with_offsets = []
-        strings = self.extract_strings(data, min_len=4)
-        for s_offset, s_string in strings: # Corrected to unpack tuple
-            # Find all occurrences of this string in the data
+        # Use threading to prevent UI freeze during string extraction
+        def extract_strings_thread():
             try:
-                string_bytes = s_string.encode('utf-8', errors='ignore')
-                pos = 0
-                while True:
-                    pos = data.find(string_bytes, pos)
-                    if pos == -1:
-                        break
-                    strings_with_offsets.append((data_offset + pos, s_string))
-                    pos += len(string_bytes)
-            except:
-                continue
+                self.set_status("Extracting strings...")
+                if self.progress_callback:
+                    self.progress_callback.start()
 
-        # Sort by offset
-        strings_with_offsets.sort(key=lambda x: x[0])
+                strings_with_offsets = []
+                strings = self.extract_strings(data, min_len=4)
+                for s_offset, s_string in strings: # Corrected to unpack tuple
+                    # Find all occurrences of this string in the data
+                    try:
+                        string_bytes = s_string.encode('utf-8', errors='ignore')
+                        pos = 0
+                        while True:
+                            pos = data.find(string_bytes, pos)
+                            if pos == -1:
+                                break
+                            strings_with_offsets.append((data_offset + pos, s_string))
+                            pos += len(string_bytes)
+                    except:
+                        continue
 
-        # Create enhanced dialog (non-modal so selection updates work)
-        dlg = EnhancedStringsDialog(self, strings_with_offsets, self._get_len(), hex_editor=self)
+                # Sort by offset
+                strings_with_offsets.sort(key=lambda x: x[0])
+
+                # Create enhanced dialog (non-modal so selection updates work)
+                def create_dialog():
+                    dlg = EnhancedStringsDialog(self, strings_with_offsets, self._get_len(), hex_editor=self)
+                    self.set_status("Ready")
+                    # Refocus on hex editor after dialog creation
+                    self.after(100, lambda: self.hex_text.focus_set())
+
+                self.after(0, create_dialog)
+
+            except Exception as e:
+                self.log_callback(f"String extraction failed: {e}", 'error')
+                self.set_status("Ready")
+            finally:
+                if self.progress_callback:
+                    self.progress_callback.stop()
+
+        threading.Thread(target=extract_strings_thread, daemon=True).start()
 
     def byte_histogram(self):
         sel = self.current_selection
@@ -2191,6 +2554,7 @@ class EnhancedStringsDialog(tk.Toplevel):
         self.strings_with_offsets = strings_with_offsets
         self.file_size = file_size
         self.hex_editor = hex_editor
+        self.firmware_type = hex_editor.firmware_type if hex_editor else None
         self.filtered_strings = strings_with_offsets.copy()
         self.current_index = -1
         self.search_history = []
@@ -2315,8 +2679,15 @@ class EnhancedStringsDialog(tk.Toplevel):
             length = len(string)
             self.strings_tree.insert('', tk.END, values=(offset, hex_offset, length, string))
 
-        # Update status
-        self.status_label.config(text=f"Showing {len(self.filtered_strings)} of {len(self.strings_with_offsets)} strings")
+        # Update status with formatted offset info
+        if self.filtered_strings:
+            first_offset = self.filtered_strings[0][0]
+            last_offset = self.filtered_strings[-1][0]
+            formatted_first = format_offset(first_offset, self.file_size, base=16, clamp_profile="firmware")
+            formatted_last = format_offset(last_offset, self.file_size, base=16, clamp_profile="firmware")
+            self.status_label.config(text=f"Showing {len(self.filtered_strings)} of {len(self.strings_with_offsets)} strings (0x{formatted_first} - 0x{formatted_last})")
+        else:
+            self.status_label.config(text=f"Showing {len(self.filtered_strings)} of {len(self.strings_with_offsets)} strings")
 
     def _on_search_key_release(self, event):
         """Handle search input changes"""
@@ -2474,6 +2845,9 @@ class EnhancedStringsDialog(tk.Toplevel):
                 self.hex_editor.offset_top = max(0, offset - 32)  # Show some context before
                 self.hex_editor.refresh_view()
                 self.hex_editor.update_selection_info(offset, length)  # Select the full string length
+                # Update status with formatted offset
+                formatted_offset = format_offset(offset, self.hex_editor._get_len(), base=16, clamp_profile="firmware")
+                self.hex_editor.set_status(f"Jumped to string at 0x{formatted_offset}")
 
     def _on_string_select(self, event):
         """Handle Enter key on selected string"""
@@ -2489,7 +2863,15 @@ class EnhancedStringsDialog(tk.Toplevel):
         for item in selection:
             values = self.strings_tree.item(item, 'values')
             offset, hex_offset, length, string = values
-            selected_strings.append(f"0x{int(offset):08X}: {string}")
+            # Use firmware-specific width if detected, otherwise adapt to file size
+            if self.firmware_type:
+                formatted_offset = format_offset(int(offset), self.file_size, base=16,
+                                               min_width=self.firmware_type['width'],
+                                               max_width=self.firmware_type['width'],
+                                               clamp_profile="none")
+            else:
+                formatted_offset = format_offset(int(offset), self.file_size, base=16, clamp_profile='firmware')
+            selected_strings.append(f"0x{formatted_offset}: {string}")
 
         if selected_strings:
             self.clipboard_clear()
@@ -2625,7 +3007,15 @@ class EnhancedStringsDialog(tk.Toplevel):
                     escaped_string = string.replace('"', '""')
                     if ',' in escaped_string or '"' in escaped_string:
                         escaped_string = f'"{escaped_string}"'
-                    f.write(f"{offset},{hex_offset},{length},{escaped_string}\n")
+                    # Use firmware-specific width if detected, otherwise adapt to file size
+                    if self.firmware_type:
+                        hex_offset_formatted = format_offset(int(offset), self.file_size, base=16,
+                                                           min_width=self.firmware_type['width'],
+                                                           max_width=self.firmware_type['width'],
+                                                           clamp_profile="none")
+                    else:
+                        hex_offset_formatted = format_offset(int(offset), self.file_size, base=16, clamp_profile="firmware")
+                    f.write(f"{offset},0x{hex_offset_formatted},{length},{escaped_string}\n")
 
             messagebox.showinfo("Export Complete", f"Exported {len(self.filtered_strings)} strings to {filename}")
 
@@ -2889,32 +3279,32 @@ class SmartphoneFirmwareScrews(tk.Tk):
     """Main application window"""
     def __init__(self):
         super().__init__()
-        startup_logger.info("UltimateFirmwareKitchen: __init__ started.")
+        startup_logger.info("SmartphoneFirmwareScrews: __init__ started.")
         self.title(f"{APP_TITLE} v{VERSION}")
         self.geometry("1400x900")
         self.configure(bg=COLORS['bg_primary'])
         
         self.current_project: Optional[Project] = None
         
-        startup_logger.info("UltimateFirmwareKitchen: Calling _setup_style.")
+        startup_logger.info("SmartphoneFirmwareScrews: Calling _setup_style.")
         self._setup_style()
-        startup_logger.info("UltimateFirmwareKitchen: Calling _build_menu.")
+        startup_logger.info("SmartphoneFirmwareScrews: Calling _build_menu.")
         self._build_menu()
-        startup_logger.info("UltimateFirmwareKitchen: Calling _build_toolbar.")
+        startup_logger.info("SmartphoneFirmwareScrews: Calling _build_toolbar.")
         self._build_toolbar()
-        startup_logger.info("UltimateFirmwareKitchen: Calling _build_statusbar.")
+        startup_logger.info("SmartphoneFirmwareScrews: Calling _build_statusbar.")
         self._build_statusbar()
-        startup_logger.info("UltimateFirmwareKitchen: Calling _build_workspace.")
+        startup_logger.info("SmartphoneFirmwareScrews: Calling _build_workspace.")
         self._build_workspace()
         
         self.bind('<Control-o>', lambda e: self.open_firmware())
         self.bind('<Control-s>', lambda e: self.save_project())
         self.bind('<Control-n>', lambda e: self.new_project())
         self.bind('<F5>', lambda e: self.refresh_tools())
-        startup_logger.info("UltimateFirmwareKitchen: __init__ finished.")
+        startup_logger.info("SmartphoneFirmwareScrews: __init__ finished.")
     
     def _setup_style(self):
-        startup_logger.debug("UltimateFirmwareKitchen: _setup_style started.")
+        startup_logger.debug("SmartphoneFirmwareScrews: _setup_style started.")
         style = ttk.Style(self)
         style.theme_use('clam')
 
@@ -2927,21 +3317,23 @@ class SmartphoneFirmwareScrews(tk.Tk):
         style.configure('Success.TButton', background=COLORS['accent_green'])
         style.configure('Danger.TButton', background=COLORS['accent_red'])
 
+        style.configure('TLabelframe', background=COLORS['bg_card'], foreground=COLORS['text_primary'])
+
         style.configure('Treeview', background=COLORS['bg_tertiary'],
-                       foreground=COLORS['text_primary'],
-                       fieldbackground=COLORS['bg_tertiary'])
+                        foreground=COLORS['text_primary'],
+                        fieldbackground=COLORS['bg_tertiary'])
 
         # Professional progress bar styling
         style.configure('TProgressbar',
-                       background=COLORS['accent_blue'],
-                       troughcolor=COLORS['bg_secondary'],
-                       borderwidth=1,
-                       lightcolor=COLORS['accent_blue'],
-                       darkcolor=COLORS['accent_blue'])
-        startup_logger.debug("UltimateFirmwareKitchen: _setup_style finished.")
+                        background=COLORS['accent_blue'],
+                        troughcolor=COLORS['bg_secondary'],
+                        borderwidth=1,
+                        lightcolor=COLORS['accent_blue'],
+                        darkcolor=COLORS['accent_blue'])
+        startup_logger.debug("SmartphoneFirmwareScrews: _setup_style finished.")
     
     def _build_menu(self):
-        startup_logger.debug("UltimateFirmwareKitchen: _build_menu started.")
+        startup_logger.debug("SmartphoneFirmwareScrews: _build_menu started.")
         menubar = tk.Menu(self, bg=COLORS['bg_secondary'], fg=COLORS['text_primary'], font=('Segoe UI', 12))
         self.config(menu=menubar)
         # Note: Frame doesn't have config(menu=), this is handled by the parent window
@@ -2981,6 +3373,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
         firmware_menu.add_separator()
         firmware_menu.add_command(label="Decompress LZ4", command=self.decompress_lz4)
         firmware_menu.add_command(label="Compress LZ4", command=self.compress_lz4)
+        
+        port_rom_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Port ROM", menu=port_rom_menu)
+        port_rom_menu.add_command(label="Step 1: Extract Firmware", command=self.switch_to_port_rom_tab)
+        port_rom_menu.add_command(label="Step 2: Unpack Boot Images", command=lambda: self.switch_to_port_rom_tab(step=2))
         
         flash_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Flash", menu=flash_menu)
@@ -3041,10 +3438,10 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.tool_status_label = ttk.Label(toolbar, text="⚠ Not checked", 
                                            foreground=COLORS['warning'])
         self.tool_status_label.pack(side='right')
-        startup_logger.debug("UltimateFirmwareKitchen: _build_toolbar finished.")
+        startup_logger.debug("SmartphoneFirmwareScrews: _build_toolbar finished.")
     
     def _build_workspace(self):
-        startup_logger.debug("UltimateFirmwareKitchen: _build_workspace started.")
+        startup_logger.debug("SmartphoneFirmwareScrews: _build_workspace started.")
         self.workspace = ttk.PanedWindow(self, orient='vertical')
         self.workspace.pack(fill='both', expand=True, padx=5, pady=5)
 
@@ -3062,13 +3459,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
         self.log_console = LogConsole(log_frame)
         self.log_console.pack(fill='both', expand=True)
-        startup_logger.debug("UltimateFirmwareKitchen: _build_workspace finished.")
+        startup_logger.debug("SmartphoneFirmwareScrews: _build_workspace finished.")
         
         # Initial content in main pane
         self._add_notebook_to_pane(self.main_pane)
     
     def _add_notebook_to_pane(self, pane):
-        startup_logger.debug("UltimateFirmwareKitchen: _add_notebook_to_pane started.")
+        startup_logger.debug("SmartphoneFirmwareScrews: _add_notebook_to_pane started.")
         notebook = ttk.Notebook(pane)
         pane.add(notebook)
         
@@ -3092,10 +3489,18 @@ class SmartphoneFirmwareScrews(tk.Tk):
         notebook.add(hex_editor_frame, text="Hex Editor")
         self._build_hex_editor_ui(hex_editor_frame)
 
+        # Store progress bar reference for hex editor
+        self.hex_editor_progress = self.progress
+
         # Tools tab
         tools_frame = ttk.Frame(notebook)
         notebook.add(tools_frame, text="Tools")
         self._build_tools_ui(tools_frame)
+
+        # Port ROM tab
+        port_rom_frame = ttk.Frame(notebook)
+        notebook.add(port_rom_frame, text="Port ROM")
+        self._build_port_rom_ui(port_rom_frame)
     
     def split_horizontal(self):
         focused_widget = self.focus_get()
@@ -4020,11 +4425,261 @@ class SmartphoneFirmwareScrews(tk.Tk):
     def _build_hex_editor_ui(self, parent):
         # Specific UI for hex editor
         # Pass the main app's status_label method instead of the label itself
-        self.hex_editor_widget = HexEditorWidget(parent, self.log, lambda text: self.status_label.config(text=text))
+        self.hex_editor_widget = HexEditorWidget(parent, self.log, lambda text: self.status_label.config(text=text), self.progress)
         self.hex_editor_widget.pack(fill='both', expand=True)
         # Store reference for menu commands
         self.hex_editor_widget_ref = self.hex_editor_widget
     
+    def switch_to_port_rom_tab(self, step: int = 1):
+        """Switch to the Port ROM tab and optionally set initial step focus"""
+        self._port_rom_initial_step = step # Store the desired step
+        for pane_child in self.main_pane.winfo_children():
+            if isinstance(pane_child, ttk.Notebook):
+                notebook = pane_child
+                for i, tab_id in enumerate(notebook.tabs()):
+                    if notebook.tab(tab_id, "text") == "Port ROM":
+                        notebook.select(i)
+                        # Rebuild UI to apply step focus logic
+                        self._build_port_rom_ui(notebook.nametowidget(tab_id), step=self._port_rom_initial_step)
+                        return
+
+    def _build_port_rom_ui(self, parent, step: int = 1):
+        # Clear existing widgets in the tab before rebuilding
+        for widget in parent.winfo_children():
+            widget.destroy()
+
+        # Main frame for the Port ROM tab
+        main_frame = ttk.Frame(parent, padding=10)
+        main_frame.pack(fill='both', expand=True)
+
+        # --- Step 1: Firmware Extraction ---
+        step1_frame = ttk.LabelFrame(main_frame, text="Step 1: Extract Base and Port Firmware", padding=10)
+        step1_frame.pack(fill='x', pady=5, anchor='n')
+
+        # Base Firmware (the ROM you want to port)
+        ttk.Label(step1_frame, text="Base Firmware Directory (the ROM you want to port):").grid(row=0, column=0, sticky='w', pady=2)
+        self.port_rom_base_dir = tk.StringVar()
+        ttk.Entry(step1_frame, textvariable=self.port_rom_base_dir, width=80).grid(row=1, column=0, sticky='ew', padx=(0, 5))
+        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_base_dir)).grid(row=1, column=1, sticky='w')
+
+        # Port Firmware (the stock ROM for your device)
+        ttk.Label(step1_frame, text="Port Firmware Directory (the stock ROM for your device):").grid(row=2, column=0, sticky='w', pady=(10, 2))
+        self.port_rom_port_dir = tk.StringVar()
+        ttk.Entry(step1_frame, textvariable=self.port_rom_port_dir, width=80).grid(row=3, column=0, sticky='ew', padx=(0, 5))
+        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_port_dir)).grid(row=3, column=1, sticky='w')
+
+        step1_frame.grid_columnconfigure(0, weight=1)
+
+        # Action button
+        action_frame = ttk.Frame(main_frame)
+        action_frame.pack(fill='x', pady=10)
+        ttk.Button(action_frame, text="Start Firmware Extraction", command=self._start_firmware_extraction, style='Accent.TButton').pack()
+
+        # --- Step 2: Boot Image Unpacking ---
+        step2_frame = ttk.LabelFrame(main_frame, text="Step 2: Unpack Boot Images", padding=10)
+        step2_frame.pack(fill='x', pady=5, anchor='n')
+
+        ttk.Label(step2_frame, text="This step will unpack the boot.img and extract the ramdisk for both Base and Port firmware.").pack(anchor='w', pady=5)
+        ttk.Button(step2_frame, text="Start Boot Image Unpacking", command=self._start_boot_image_unpacking, style='Accent.TButton').pack(pady=5)
+
+        # Scroll to specific step if requested
+        if step == 2:
+            # This is a placeholder. Actual scrolling would require a canvas or similar.
+            # For now, just log that it's intended to go to step 2.
+            self.log("Navigated to Port ROM tab, intended to focus on Step 2.", 'info')
+            # Attempt to scroll to the step2_frame if possible (requires a scrollable container)
+            # For now, we'll just ensure the frame is packed.
+            step2_frame.after(100, lambda: step2_frame.focus_set()) # Attempt to set focus
+
+    def _browse_dir(self, var: tk.StringVar):
+        path = filedialog.askdirectory()
+        if path:
+            var.set(path)
+
+    def _start_firmware_extraction(self):
+        base_dir = self.port_rom_base_dir.get()
+        port_dir = self.port_rom_port_dir.get()
+
+        if not base_dir or not port_dir:
+            messagebox.showerror("Error", "Please select both firmware directories.")
+            return
+
+        if not os.path.isdir(base_dir) or not os.path.isdir(port_dir):
+            messagebox.showerror("Error", "One or both selected paths are not valid directories.")
+            return
+
+        threading.Thread(target=self._extract_firmware_for_porting_thread,
+                         args=(base_dir, port_dir), daemon=True).start()
+
+    def _extract_tar_md5_for_porting(self, tar_md5_path: str, extract_to_dir: str):
+        self.log(f"[*] Extracting {os.path.basename(tar_md5_path)}")
+        tmp_tar = tempfile.mktemp(suffix=".tar")
+        try:
+            strip_md5_footer(tar_md5_path, tmp_tar)
+            with tarfile.open(tmp_tar, "r") as tar:
+                tar.extractall(path=extract_to_dir)
+        finally:
+            if os.path.exists(tmp_tar):
+                os.remove(tmp_tar)
+
+    def _extract_firmware_for_porting_thread(self, base_dir: str, port_dir: str):
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        self.log(f"[*] Starting firmware extraction. Working directory: {work_dir}")
+
+        # Create working directory structure
+        base_work_dir = os.path.join(work_dir, "base")
+        port_work_dir = os.path.join(work_dir, "port")
+        ensure_dir(os.path.join(base_work_dir, "extracted"))
+        ensure_dir(os.path.join(port_work_dir, "extracted"))
+
+        try:
+            self.status_label.config(text="Extracting firmware...")
+            self.progress.start()
+
+            # --- Extract Base Firmware ---
+            self.log("[*] Extracting Base firmware...")
+            for pattern in ["AP_*.tar.md5", "BL_*.tar.md5", "CP_*.tar.md5", "CSC_*.tar.md5", "HOME_CSC_*.tar.md5"]:
+                files = glob.glob(os.path.join(base_dir, pattern))
+                for file_path in files:
+                    self._extract_tar_md5_for_porting(file_path, os.path.join(base_work_dir, "extracted"))
+                    if "CP_" in os.path.basename(file_path):
+                        shutil.copy(file_path, os.path.join(base_work_dir, "CP_original.tar.md5"))
+
+            # --- Extract Port Firmware ---
+            self.log("[*] Extracting Port firmware...")
+            for pattern in ["AP_*.tar.md5", "BL_*.tar.md5", "CP_*.tar.md5", "CSC_*.tar.md5", "HOME_CSC_*.tar.md5"]:
+                files = glob.glob(os.path.join(port_dir, pattern))
+                for file_path in files:
+                    self._extract_tar_md5_for_porting(file_path, os.path.join(port_work_dir, "extracted"))
+                    if "BL_" in os.path.basename(file_path):
+                        shutil.copy(file_path, os.path.join(port_work_dir, "BL_original.tar.md5"))
+                    if "CP_" in os.path.basename(file_path):
+                        shutil.copy(file_path, os.path.join(port_work_dir, "CP_original.tar.md5"))
+
+            self.log("[*] Firmware extraction complete.", 'success')
+            self.log(f"[*] Base extracted to: {os.path.join(base_work_dir, 'extracted')}")
+            self.log(f"[*] Port extracted to: {os.path.join(port_work_dir, 'extracted')}")
+            self.after(0, lambda: messagebox.showinfo("Success", "Firmware extraction complete!"))
+
+        except Exception as e:
+            self.log(f"[!] Error during extraction: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during extraction: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _start_boot_image_unpacking(self):
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        base_extracted_dir = os.path.join(work_dir, "base", "extracted")
+        port_extracted_dir = os.path.join(work_dir, "port", "extracted")
+
+        if not os.path.isdir(base_extracted_dir) or not os.path.isdir(port_extracted_dir):
+            messagebox.showerror("Error", "Firmware not extracted. Please complete Step 1 first.")
+            return
+
+        threading.Thread(target=self._unpack_boot_images_thread, daemon=True).start()
+
+    def _unpack_boot_images_thread(self):
+        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        base_extracted_dir = os.path.join(work_dir, "base", "extracted")
+        port_extracted_dir = os.path.join(work_dir, "port", "extracted")
+
+        base_boot_dir = os.path.join(work_dir, "base", "boot")
+        port_boot_dir = os.path.join(work_dir, "port", "boot")
+
+        ensure_dir(base_boot_dir)
+        ensure_dir(port_boot_dir)
+
+        try:
+            self.status_label.config(text="Unpacking boot images...")
+            self.progress.start()
+            self.log("[*] Starting boot image unpacking...", 'info')
+
+            # --- Unpack Base Boot Image ---
+            self.log("[*] Unpacking Base boot.img...")
+            boot_a33_path = glob.glob(os.path.join(base_extracted_dir, "boot.img*"))
+            if not boot_a33_path:
+                self.log("[!] boot.img not found in Base firmware", 'error')
+                raise FileNotFoundError("boot.img not found in Base firmware")
+            boot_a33_file = boot_a33_path[0]
+            shutil.copy(boot_a33_file, os.path.join(base_boot_dir, "boot.img"))
+            
+            unpack_boot_img(os.path.join(base_boot_dir, "boot.img"), base_boot_dir)
+            self.log(f"[*] Base boot.img unpacked to: {base_boot_dir}", 'success')
+
+            # Extract ramdisk for Base
+            self._extract_ramdisk_from_boot_dir(base_boot_dir)
+
+            # --- Unpack Port Boot Image ---
+            self.log("[*] Unpacking Port boot.img...")
+            boot_a32_path = glob.glob(os.path.join(port_extracted_dir, "boot.img*"))
+            if not boot_a32_path:
+                self.log("[!] boot.img not found in Port firmware", 'error')
+                raise FileNotFoundError("boot.img not found in Port firmware")
+            boot_a32_file = boot_a32_path[0]
+            shutil.copy(boot_a32_file, os.path.join(port_boot_dir, "boot.img"))
+
+            unpack_boot_img(os.path.join(port_boot_dir, "boot.img"), port_boot_dir)
+            self.log(f"[*] Port boot.img unpacked to: {port_boot_dir}", 'success')
+
+            # Extract ramdisk for Port
+            self._extract_ramdisk_from_boot_dir(port_boot_dir)
+
+            self.log("[*] Boot image unpacking complete.", 'success')
+            self.log(f"[*] Base kernel: {os.path.join(base_boot_dir, 'kernel')}")
+            self.log(f"[*] Port kernel: {os.path.join(port_boot_dir, 'kernel')}")
+            self.log(f"[*] Base ramdisk: {os.path.join(base_boot_dir, 'ramdisk')}")
+            self.log(f"[*] Port ramdisk: {os.path.join(port_boot_dir, 'ramdisk')}")
+            self.after(0, lambda: messagebox.showinfo("Success", "Boot image unpacking complete!"))
+
+        except Exception as e:
+            self.log(f"[!] Error during boot image unpacking: {e}", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during boot image unpacking: {e}"))
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
+
+    def _extract_ramdisk_from_boot_dir(self, boot_dir: str):
+        ramdisk_cpio = os.path.join(boot_dir, "ramdisk.cpio")
+        ramdisk_cpio_gz = os.path.join(boot_dir, "ramdisk.cpio.gz")
+        ramdisk_out_dir = os.path.join(boot_dir, "ramdisk")
+        ensure_dir(ramdisk_out_dir)
+
+        if os.path.exists(ramdisk_cpio):
+            self.log(f"[*] Extracting {ramdisk_cpio}...", 'info')
+            extract_ramdisk(ramdisk_cpio, ramdisk_out_dir)
+            self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
+        elif os.path.exists(ramdisk_cpio_gz):
+            self.log(f"[*] Decompressing and extracting {ramdisk_cpio_gz}...", 'info')
+            # Use piping like the bash script: gzip -dc ramdisk.cpio.gz | cpio -idm
+            cpio = tool_resolve("cpio")
+            if cpio:
+                try:
+                    with open(ramdisk_cpio_gz, 'rb') as f_in:
+                        gz_data = gzip.decompress(f_in.read())
+                        result = run_cmd([cpio, "-idm"], cwd=ramdisk_out_dir, input_data=gz_data)
+                        if result.returncode == 0:
+                            self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
+                        else:
+                            raise RuntimeError("cpio extraction failed")
+                except Exception as e:
+                    self.log(f"[!] Failed to decompress or extract ramdisk.cpio.gz: {e}", 'error')
+            else:
+                # Fallback to temporary file method
+                tmp_cpio = tempfile.mktemp(suffix=".cpio")
+                try:
+                    with open(ramdisk_cpio_gz, 'rb') as f_in, gzip.open(tmp_cpio, 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                    extract_ramdisk(tmp_cpio, ramdisk_out_dir)
+                    self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
+                except Exception as e:
+                    self.log(f"[!] Failed to decompress or extract ramdisk.cpio.gz: {e}", 'error')
+                finally:
+                    if os.path.exists(tmp_cpio):
+                        os.remove(tmp_cpio)
+        else:
+            self.log(f"[!] Ramdisk (ramdisk.cpio or ramdisk.cpio.gz) not found in {boot_dir}", 'warning')
+
     def _build_statusbar(self):
         # Create a frame to hold status bar and progress bar
         status_frame = tk.Frame(self)
@@ -5339,9 +5994,9 @@ def main():
     app.refresh_tools()
     app.log(f"{APP_TITLE} v{VERSION} started", 'success')
     app.log(f"Tools directory: {TOOLS_DIR}", 'info')
-    startup_logger.info("Calling app.mainloop() for UltimateFirmwareKitchen.")
+    startup_logger.info("Calling app.mainloop() for SmartphoneFirmwareScrews.")
     app.mainloop()
-    startup_logger.info("app.mainloop() for UltimateFirmwareKitchen exited.")
+    startup_logger.info("app.mainloop() for SmartphoneFirmwareScrews exited.")
 
 if __name__ == "__main__":
     try:

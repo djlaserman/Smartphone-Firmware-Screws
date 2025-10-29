@@ -1,6 +1,6 @@
 # Smartphone Firmware Screws
 
-## Ultimate Firmware Kitchen - Complete Android ROM & Firmware Toolkit
+## Ultimate Firmware Studio - Complete Android ROM & Firmware Toolkit
 
 Professional-grade ROM building, firmware modification, and device flashing toolkit. This comprehensive suite provides everything needed for Android firmware development, from source code compilation to device flashing.
 
