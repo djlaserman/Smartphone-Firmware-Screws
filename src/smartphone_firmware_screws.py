@@ -241,7 +241,7 @@ class Project:
     rom_config: Optional[Dict[str, Any]] = None
     created: str = ""
     modified: str = ""
-    
+
     def __post_init__(self):
         if self.replacements is None:
             self.replacements = {}
@@ -250,17 +250,78 @@ class Project:
         if not self.created:
             self.created = datetime.now().isoformat()
         self.modified = datetime.now().isoformat()
-    
+
     def save(self):
         os.makedirs(self.path, exist_ok=True)
         with open(os.path.join(self.path, "project.json"), "w") as f:
             json.dump(asdict(self), f, indent=2)
-    
+
     @classmethod
     def load(cls, path: str):
         with open(os.path.join(path, "project.json"), "r") as f:
             data = json.load(f)
         return cls(**data)
+
+@dataclass
+class PortRomConfig:
+    """Configuration for device-agnostic ROM porting operations"""
+    source_device: str = ""
+    target_device: str = ""
+    source_firmware_dir: str = ""
+    target_firmware_dir: str = ""
+    work_dir: str = ""
+
+    def get_work_subdir(self, device: str, subdir: str) -> str:
+        """Get work directory path for a specific device and subdirectory"""
+        return os.path.join(self.work_dir, device, subdir)
+
+    def get_extracted_dir(self, device: str) -> str:
+        """Get extracted firmware directory for a device"""
+        return self.get_work_subdir(device, "extracted")
+
+    def get_boot_dir(self, device: str) -> str:
+        """Get boot directory for a device"""
+        return self.get_work_subdir(device, "boot")
+
+    def get_system_dir(self, device: str) -> str:
+        """Get system directory for a device"""
+        return self.get_work_subdir(device, "system")
+
+    def get_vendor_dir(self, device: str) -> str:
+        """Get vendor directory for a device"""
+        return self.get_work_subdir(device, "vendor")
+
+    def get_output_dir(self) -> str:
+        """Get output directory for final packages"""
+        return os.path.join(self.work_dir, "output")
+
+    def get_odin_dir(self) -> str:
+        """Get Odin package directory"""
+        return os.path.join(self.work_dir, "odin_package")
+
+    def get_ap_package_name(self) -> str:
+        """Get AP package name for Odin"""
+        return f"AP_{self.source_device}_to_{self.target_device}.tar.md5"
+
+    def get_bl_package_name(self) -> str:
+        """Get BL package name for Odin"""
+        return f"BL_{self.target_device}.tar.md5"
+
+    def get_cp_package_name(self) -> str:
+        """Get CP package name for Odin"""
+        return f"CP_{self.target_device}.tar.md5"
+
+    def get_mmc_controller(self, device: str) -> str:
+        """Get MMC controller path for a device"""
+        # This method is not used, but is kept for future reference.
+        # In a fully agnostic system, this should be detected from firmware files.
+        return '13500000.dwmmc0'  # Default fallback
+
+    def get_device_model_code(self, device: str) -> str:
+        """Get device model code for property replacements"""
+        # This method is not used, but is kept for future reference.
+        # In a fully agnostic system, this should be detected from firmware files.
+        return device.upper()
 
 # -------------------------
 # Utility Functions
@@ -3283,9 +3344,10 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.title(f"{APP_TITLE} v{VERSION}")
         self.geometry("1400x900")
         self.configure(bg=COLORS['bg_primary'])
-        
+
         self.current_project: Optional[Project] = None
-        
+        self.port_rom_config: Optional[PortRomConfig] = None
+
         startup_logger.info("SmartphoneFirmwareScrews: Calling _setup_style.")
         self._setup_style()
         startup_logger.info("SmartphoneFirmwareScrews: Calling _build_menu.")
@@ -3296,7 +3358,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self._build_statusbar()
         startup_logger.info("SmartphoneFirmwareScrews: Calling _build_workspace.")
         self._build_workspace()
-        
+
         self.bind('<Control-o>', lambda e: self.open_firmware())
         self.bind('<Control-s>', lambda e: self.save_project())
         self.bind('<Control-n>', lambda e: self.new_project())
@@ -4505,19 +4567,30 @@ class SmartphoneFirmwareScrews(tk.Tk):
         step1_frame = ttk.LabelFrame(scrollable_frame, text="Step 1: Extract Base and Port Firmware", padding=10)
         step1_frame.pack(fill='x', pady=5, anchor='n')
 
+        # Source Device (the device you're porting FROM)
+        ttk.Label(step1_frame, text="Source Device Model (e.g., A336, S21, etc.):").grid(row=0, column=0, sticky='w', pady=2)
+        self.port_rom_source_device = tk.StringVar()
+        ttk.Entry(step1_frame, textvariable=self.port_rom_source_device, width=30).grid(row=1, column=0, sticky='w', padx=(0, 10))
+
+        # Target Device (the device you're porting TO)
+        ttk.Label(step1_frame, text="Target Device Model (e.g., A325, A32, etc.):").grid(row=0, column=1, sticky='w', pady=2)
+        self.port_rom_target_device = tk.StringVar()
+        ttk.Entry(step1_frame, textvariable=self.port_rom_target_device, width=30).grid(row=1, column=1, sticky='w')
+
         # Base Firmware (the ROM you want to port)
-        ttk.Label(step1_frame, text="Base Firmware Directory (the ROM you want to port):").grid(row=0, column=0, sticky='w', pady=2)
+        ttk.Label(step1_frame, text="Source Firmware Directory (the ROM you want to port):").grid(row=2, column=0, columnspan=2, sticky='w', pady=(10, 2))
         self.port_rom_base_dir = tk.StringVar()
-        ttk.Entry(step1_frame, textvariable=self.port_rom_base_dir, width=80).grid(row=1, column=0, sticky='ew', padx=(0, 5))
-        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_base_dir)).grid(row=1, column=1, sticky='w')
+        ttk.Entry(step1_frame, textvariable=self.port_rom_base_dir, width=80).grid(row=3, column=0, columnspan=2, sticky='ew', padx=(0, 5))
+        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_base_dir)).grid(row=3, column=2, sticky='w')
 
         # Port Firmware (the stock ROM for your device)
-        ttk.Label(step1_frame, text="Port Firmware Directory (the stock ROM for your device):").grid(row=2, column=0, sticky='w', pady=(10, 2))
+        ttk.Label(step1_frame, text="Target Firmware Directory (the stock ROM for your target device):").grid(row=4, column=0, columnspan=2, sticky='w', pady=(10, 2))
         self.port_rom_port_dir = tk.StringVar()
-        ttk.Entry(step1_frame, textvariable=self.port_rom_port_dir, width=80).grid(row=3, column=0, sticky='ew', padx=(0, 5))
-        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_port_dir)).grid(row=3, column=1, sticky='w')
+        ttk.Entry(step1_frame, textvariable=self.port_rom_port_dir, width=80).grid(row=5, column=0, columnspan=2, sticky='ew', padx=(0, 5))
+        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_port_dir)).grid(row=5, column=2, sticky='w')
 
         step1_frame.grid_columnconfigure(0, weight=1)
+        step1_frame.grid_columnconfigure(1, weight=1)
 
         # Action button
         action_frame = ttk.Frame(scrollable_frame)
@@ -4651,8 +4724,14 @@ class SmartphoneFirmwareScrews(tk.Tk):
             var.set(path)
 
     def _start_firmware_extraction(self):
+        source_device = self.port_rom_source_device.get().strip()
+        target_device = self.port_rom_target_device.get().strip()
         base_dir = self.port_rom_base_dir.get()
         port_dir = self.port_rom_port_dir.get()
+
+        if not source_device or not target_device:
+            messagebox.showerror("Error", "Please enter both source and target device models.")
+            return
 
         if not base_dir or not port_dir:
             messagebox.showerror("Error", "Please select both firmware directories.")
@@ -4661,6 +4740,15 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if not os.path.isdir(base_dir) or not os.path.isdir(port_dir):
             messagebox.showerror("Error", "One or both selected paths are not valid directories.")
             return
+
+        # Create device-agnostic configuration
+        self.port_rom_config = PortRomConfig(
+            source_device=source_device,
+            target_device=target_device,
+            source_firmware_dir=base_dir,
+            target_firmware_dir=port_dir,
+            work_dir=os.path.join(os.getcwd(), "firmware_port")
+        )
 
         threading.Thread(target=self._extract_firmware_for_porting_thread,
                          args=(base_dir, port_dir), daemon=True).start()
@@ -4689,42 +4777,48 @@ class SmartphoneFirmwareScrews(tk.Tk):
     def _extract_firmware_for_porting_thread(self, base_dir: str, port_dir: str):
         import os
         import shutil
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            self.log("[!] No port ROM configuration found", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", "Port ROM configuration not initialized"))
+            return
+
+        config = self.port_rom_config
+        work_dir = config.work_dir
         self.log(f"[*] Starting firmware extraction. Working directory: {work_dir}")
 
-        # Create working directory structure
-        base_work_dir = os.path.join(work_dir, "base")
-        port_work_dir = os.path.join(work_dir, "port")
-        ensure_dir(os.path.join(base_work_dir, "extracted"))
-        ensure_dir(os.path.join(port_work_dir, "extracted"))
+        # Create working directory structure using device-agnostic paths
+        base_work_dir = config.get_work_subdir(config.source_device, "")
+        port_work_dir = config.get_work_subdir(config.target_device, "")
+        ensure_dir(config.get_extracted_dir(config.source_device))
+        ensure_dir(config.get_extracted_dir(config.target_device))
 
         try:
             self.status_label.config(text="Extracting firmware...")
             self.progress.start()
 
-            # --- Extract Base Firmware ---
-            self.log("[*] Extracting Base firmware...")
+            # --- Extract Source Firmware ---
+            self.log(f"[*] Extracting {config.source_device} firmware...")
             for pattern in ["AP_*.tar.md5", "BL_*.tar.md5", "CP_*.tar.md5", "CSC_*.tar.md5", "HOME_CSC_*.tar.md5"]:
                 files = glob.glob(os.path.join(base_dir, pattern))
                 for file_path in files:
-                    self._extract_tar_md5_for_porting(file_path, os.path.join(base_work_dir, "extracted"))
+                    self._extract_tar_md5_for_porting(file_path, config.get_extracted_dir(config.source_device))
                     if "CP_" in os.path.basename(file_path):
                         shutil.copy(file_path, os.path.join(base_work_dir, "CP_original.tar.md5"))
 
-            # --- Extract Port Firmware ---
-            self.log("[*] Extracting Port firmware...")
+            # --- Extract Target Firmware ---
+            self.log(f"[*] Extracting {config.target_device} firmware...")
             for pattern in ["AP_*.tar.md5", "BL_*.tar.md5", "CP_*.tar.md5", "CSC_*.tar.md5", "HOME_CSC_*.tar.md5"]:
                 files = glob.glob(os.path.join(port_dir, pattern))
                 for file_path in files:
-                    self._extract_tar_md5_for_porting(file_path, os.path.join(port_work_dir, "extracted"))
+                    self._extract_tar_md5_for_porting(file_path, config.get_extracted_dir(config.target_device))
                     if "BL_" in os.path.basename(file_path):
                         shutil.copy(file_path, os.path.join(port_work_dir, "BL_original.tar.md5"))
                     if "CP_" in os.path.basename(file_path):
                         shutil.copy(file_path, os.path.join(port_work_dir, "CP_original.tar.md5"))
 
             self.log("[*] Firmware extraction complete.", 'success')
-            self.log(f"[*] Base extracted to: {os.path.join(base_work_dir, 'extracted')}")
-            self.log(f"[*] Port extracted to: {os.path.join(port_work_dir, 'extracted')}")
+            self.log(f"[*] {config.source_device} extracted to: {config.get_extracted_dir(config.source_device)}")
+            self.log(f"[*] {config.target_device} extracted to: {config.get_extracted_dir(config.target_device)}")
             self.after(0, lambda: messagebox.showinfo("Success", "Firmware extraction complete!"))
 
         except Exception as e:
@@ -4746,56 +4840,63 @@ class SmartphoneFirmwareScrews(tk.Tk):
         threading.Thread(target=self._unpack_boot_images_thread, daemon=True).start()
 
     def _unpack_boot_images_thread(self):
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
-        base_extracted_dir = os.path.join(work_dir, "base", "extracted")
-        port_extracted_dir = os.path.join(work_dir, "port", "extracted")
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            self.log("[!] No port ROM configuration found", 'error')
+            self.after(0, lambda: messagebox.showerror("Error", "Port ROM configuration not initialized"))
+            return
 
-        base_boot_dir = os.path.join(work_dir, "base", "boot")
-        port_boot_dir = os.path.join(work_dir, "port", "boot")
+        config: PortRomConfig = self.port_rom_config  # Type assertion for Pylance
+        self.log("[*] Starting boot image unpacking...")
 
-        ensure_dir(base_boot_dir)
-        ensure_dir(port_boot_dir)
+        # Get device-specific directories from config
+        source_boot_dir = config.get_boot_dir(config.source_device)
+        target_boot_dir = config.get_boot_dir(config.target_device)
+        source_extracted_dir = config.get_extracted_dir(config.source_device)
+        target_extracted_dir = config.get_extracted_dir(config.target_device)
+
+        ensure_dir(source_boot_dir)
+        ensure_dir(target_boot_dir)
 
         try:
             self.status_label.config(text="Unpacking boot images...")
             self.progress.start()
             self.log("[*] Starting boot image unpacking...", 'info')
 
-            # --- Unpack Base Boot Image ---
-            self.log("[*] Unpacking Base boot.img...")
-            boot_a33_path = glob.glob(os.path.join(base_extracted_dir, "boot.img*"))
-            if not boot_a33_path:
-                self.log("[!] boot.img not found in Base firmware", 'error')
-                raise FileNotFoundError("boot.img not found in Base firmware")
-            boot_a33_file = boot_a33_path[0]
-            shutil.copy(boot_a33_file, os.path.join(base_boot_dir, "boot.img"))
-            
-            unpack_boot_img(os.path.join(base_boot_dir, "boot.img"), base_boot_dir)
-            self.log(f"[*] Base boot.img unpacked to: {base_boot_dir}", 'success')
+            # --- Unpack Source Boot Image ---
+            self.log(f"[*] Unpacking {self.port_rom_config.source_device} boot.img...")
+            boot_source_path = glob.glob(os.path.join(source_extracted_dir, "boot.img*"))
+            if not boot_source_path:
+                self.log(f"[!] boot.img not found in {self.port_rom_config.source_device} firmware", 'error')
+                raise FileNotFoundError(f"boot.img not found in {self.port_rom_config.source_device} firmware")
+            boot_source_file = boot_source_path[0]
+            shutil.copy(boot_source_file, os.path.join(source_boot_dir, "boot.img"))
 
-            # Extract ramdisk for Base
-            self._extract_ramdisk_from_boot_dir(base_boot_dir)
+            unpack_boot_img(os.path.join(source_boot_dir, "boot.img"), source_boot_dir)
+            self.log(f"[*] {self.port_rom_config.source_device} boot.img unpacked to: {source_boot_dir}", 'success')
 
-            # --- Unpack Port Boot Image ---
-            self.log("[*] Unpacking Port boot.img...")
-            boot_a32_path = glob.glob(os.path.join(port_extracted_dir, "boot.img*"))
-            if not boot_a32_path:
-                self.log("[!] boot.img not found in Port firmware", 'error')
-                raise FileNotFoundError("boot.img not found in Port firmware")
-            boot_a32_file = boot_a32_path[0]
-            shutil.copy(boot_a32_file, os.path.join(port_boot_dir, "boot.img"))
+            # Extract ramdisk for Source
+            self._extract_ramdisk_from_boot_dir(source_boot_dir)
 
-            unpack_boot_img(os.path.join(port_boot_dir, "boot.img"), port_boot_dir)
-            self.log(f"[*] Port boot.img unpacked to: {port_boot_dir}", 'success')
+            # --- Unpack Target Boot Image ---
+            self.log(f"[*] Unpacking {self.port_rom_config.target_device} boot.img...")
+            boot_target_path = glob.glob(os.path.join(target_extracted_dir, "boot.img*"))
+            if not boot_target_path:
+                self.log(f"[!] boot.img not found in {self.port_rom_config.target_device} firmware", 'error')
+                raise FileNotFoundError(f"boot.img not found in {self.port_rom_config.target_device} firmware")
+            boot_target_file = boot_target_path[0]
+            shutil.copy(boot_target_file, os.path.join(target_boot_dir, "boot.img"))
 
-            # Extract ramdisk for Port
-            self._extract_ramdisk_from_boot_dir(port_boot_dir)
+            unpack_boot_img(os.path.join(target_boot_dir, "boot.img"), target_boot_dir)
+            self.log(f"[*] {self.port_rom_config.target_device} boot.img unpacked to: {target_boot_dir}", 'success')
+
+            # Extract ramdisk for Target
+            self._extract_ramdisk_from_boot_dir(target_boot_dir)
 
             self.log("[*] Boot image unpacking complete.", 'success')
-            self.log(f"[*] Base kernel: {os.path.join(base_boot_dir, 'kernel')}")
-            self.log(f"[*] Port kernel: {os.path.join(port_boot_dir, 'kernel')}")
-            self.log(f"[*] Base ramdisk: {os.path.join(base_boot_dir, 'ramdisk')}")
-            self.log(f"[*] Port ramdisk: {os.path.join(port_boot_dir, 'ramdisk')}")
+            self.log(f"[*] {self.port_rom_config.source_device} kernel: {os.path.join(source_boot_dir, 'kernel')}")
+            self.log(f"[*] {self.port_rom_config.target_device} kernel: {os.path.join(target_boot_dir, 'kernel')}")
+            self.log(f"[*] {self.port_rom_config.source_device} ramdisk: {os.path.join(source_boot_dir, 'ramdisk')}")
+            self.log(f"[*] {self.port_rom_config.target_device} ramdisk: {os.path.join(target_boot_dir, 'ramdisk')}")
             self.after(0, lambda: messagebox.showinfo("Success", "Boot image unpacking complete!"))
 
         except Exception as e:
@@ -4848,20 +4949,22 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def _start_ramdisk_modification(self):
         """Start the ramdisk modification process"""
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
-        base_boot_dir = os.path.join(work_dir, "base", "boot")
-        port_boot_dir = os.path.join(work_dir, "port", "boot")
-        base_ramdisk_dir = os.path.join(base_boot_dir, "ramdisk")
-        port_ramdisk_dir = os.path.join(port_boot_dir, "ramdisk")
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
+            return
+
+        config = self.port_rom_config
+        base_ramdisk_dir = os.path.join(config.get_boot_dir(config.source_device), "ramdisk")
+        port_ramdisk_dir = os.path.join(config.get_boot_dir(config.target_device), "ramdisk")
 
         if not os.path.isdir(base_ramdisk_dir) or not os.path.isdir(port_ramdisk_dir):
             messagebox.showerror("Error", "Ramdisk directories not found. Please complete Step 2 first.")
             return
 
         threading.Thread(target=self._modify_ramdisk_thread,
-                        args=(base_ramdisk_dir, port_ramdisk_dir), daemon=True).start()
+                        args=(base_ramdisk_dir, port_ramdisk_dir, config), daemon=True).start()
 
-    def _modify_ramdisk_thread(self, base_ramdisk_dir: str, port_ramdisk_dir: str):
+    def _modify_ramdisk_thread(self, base_ramdisk_dir: str, port_ramdisk_dir: str, config: PortRomConfig):
         """Thread to perform ramdisk modification"""
         try:
             self.status_label.config(text="Modifying ramdisk...")
@@ -4879,19 +4982,19 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
             # Find and replace fstab files
             self.log("[*] Modifying fstab files...")
-            self._modify_fstab_files(base_ramdisk_dir, port_ramdisk_dir)
+            self._modify_fstab_files(base_ramdisk_dir, port_ramdisk_dir, config)
 
             # Modify init scripts
             self.log("[*] Modifying init scripts...")
-            self._modify_init_scripts(base_ramdisk_dir)
+            self._modify_init_scripts(base_ramdisk_dir, config)
 
             # Modify property files
             self.log("[*] Modifying property files...")
-            self._modify_property_files(base_ramdisk_dir)
+            self._modify_property_files(base_ramdisk_dir, config)
 
-            # Copy A32-specific hardware configurations
-            self.log("[*] Copying port-specific hardware configurations...")
-            self._copy_hardware_configs(base_ramdisk_dir, port_ramdisk_dir)
+            # Copy port-specific hardware configurations
+            self.log(f"[*] Copying {config.target_device}-specific hardware configurations...")
+            self._copy_hardware_configs(base_ramdisk_dir, port_ramdisk_dir, config)
 
             # Verify critical files
             missing_files = self._verify_critical_files(base_ramdisk_dir)
@@ -4916,40 +5019,42 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.status_label.config(text="Ready")
             self.progress.stop()
 
-    def _modify_fstab_files(self, base_ramdisk_dir: str, port_ramdisk_dir: str):
+    def _modify_fstab_files(self, base_ramdisk_dir: str, port_ramdisk_dir: str, config: PortRomConfig):
         """Modify fstab files in the ramdisk"""
         import glob
         import filecmp
-        
+
         fstab_patterns = ['fstab.*']
         for pattern in fstab_patterns:
             for fstab_path in glob.glob(os.path.join(base_ramdisk_dir, pattern)):
                 filename = os.path.basename(fstab_path)
                 self.log(f"[*] Processing {filename}", 'info')
-                
+
                 # Read original content
                 with open(fstab_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                
-                # Apply modifications - replace common device identifiers
-                # These are examples that can be customized based on actual devices
+
+                # Apply device-agnostic modifications based on source and target devices
                 modifications = [
-                    # Common device model replacements (examples)
-                    ('a33', 'a32'), ('A33', 'A32'),
-                    ('SM-A336', 'SM-A325'), ('sm-a336', 'sm-a325'),
-                    # Common chipset replacements
-                    ('exynos1280', 'exynos850'), ('Exynos1280', 'Exynos850'),
-                    # Add more patterns as needed
+                    # Device model replacements (case-insensitive)
+                    (config.source_device.lower(), config.target_device.lower()),
+                    (config.source_device.upper(), config.target_device.upper()),
+                    (config.source_device.capitalize(), config.target_device.capitalize()),
+                    # Common Samsung model patterns (SM-XXXX)
+                    (f'SM-{config.source_device.upper()}', f'SM-{config.target_device.upper()}'),
+                    (f'sm-{config.source_device.lower()}', f'sm-{config.target_device.lower()}'),
+                    # Chipset replacements (if known, can be extended)
+                    # Add more patterns as needed based on device characteristics
                 ]
-                
+
                 modified_content = content
                 for old, new in modifications:
                     modified_content = modified_content.replace(old, new)
-                
+
                 # Write modified content
                 with open(fstab_path, 'w', encoding='utf-8') as f:
                     f.write(modified_content)
-                
+
                 # Check if port device has corresponding fstab for comparison
                 port_fstab_path = os.path.join(port_ramdisk_dir, filename)
                 if os.path.exists(port_fstab_path):
@@ -4959,7 +5064,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                             base_partitions = set(re.findall(r'/dev/block/[^\s]+', f.read()))
                         with open(port_fstab_path, 'r', encoding='utf-8', errors='ignore') as f:
                             port_partitions = set(re.findall(r'/dev/block/[^\s]+', f.read()))
-                        
+
                         if base_partitions != port_partitions:
                             self.log("[!] WARNING: Partition layout differences detected", 'warning')
                             self.log("[!] Manual verification required for partition paths", 'warning')
@@ -4968,84 +5073,94 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     except Exception as e:
                         self.log(f"[!] Error comparing partition layouts: {e}", 'warning')
 
-    def _modify_init_scripts(self, ramdisk_dir: str):
+    def _modify_init_scripts(self, ramdisk_dir: str, config: PortRomConfig):
         """Modify init scripts in the ramdisk"""
         import glob
-        
+
         init_patterns = ['init*.rc', 'init*']
         for pattern in init_patterns:
             for init_path in glob.glob(os.path.join(ramdisk_dir, pattern)):
                 if os.path.isfile(init_path):
                     filename = os.path.basename(init_path)
                     self.log(f"[*] Processing {filename}", 'info')
-                    
+
                     try:
                         # Read original content
                         with open(init_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
-                        
-                        # Apply modifications for hardware identifiers
+
+                        # Apply device-agnostic modifications based on source and target devices
                         modifications = [
-                            # Device model replacements
-                            ('a33', 'a32'), ('A33', 'A32'),
-                            ('SM-A336', 'SM-A325'), ('sm-a336', 'sm-a325'),
-                            # Chipset replacements
-                            ('exynos1280', 'exynos850'), ('Exynos1280', 'Exynos850'),
-                            # Service replacements (examples - customize based on actual services)
-                            ('vendor.samsung.hardware.biometrics.fingerprint@3.0',
-                             'vendor.samsung.hardware.biometrics.fingerprint@2.1'),
+                            # Device model replacements (case-insensitive)
+                            (config.source_device.lower(), config.target_device.lower()),
+                            (config.source_device.upper(), config.target_device.upper()),
+                            (config.source_device.capitalize(), config.target_device.capitalize()),
+                            # Common Samsung model patterns (SM-XXXX)
+                            (f'SM-{config.source_device.upper()}', f'SM-{config.target_device.upper()}'),
+                            (f'sm-{config.source_device.lower()}', f'sm-{config.target_device.lower()}'),
+                            # Add more patterns as needed based on device characteristics
                         ]
-                        
+
                         modified_content = content
                         for old, new in modifications:
                             modified_content = modified_content.replace(old, new)
-                        
+
                         # Write modified content
                         with open(init_path, 'w', encoding='utf-8') as f:
                             f.write(modified_content)
-                            
+
                     except Exception as e:
                         self.log(f"[!] Error processing {filename}: {e}", 'warning')
 
-    def _modify_property_files(self, ramdisk_dir: str):
+    def _modify_property_files(self, ramdisk_dir: str, config: PortRomConfig):
         """Modify property files in the ramdisk"""
         import glob
-        
+
         prop_patterns = ['*.prop', 'default.prop']
         for pattern in prop_patterns:
             for prop_path in glob.glob(os.path.join(ramdisk_dir, pattern)):
                 if os.path.isfile(prop_path):
                     filename = os.path.basename(prop_path)
                     self.log(f"[*] Processing {filename}", 'info')
-                    
+
                     try:
                         # Read original content
                         with open(prop_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
-                        
-                        # Apply property modifications
+
+                        # Apply device-agnostic property modifications based on source and target devices
                         modifications = [
-                            ('ro.product.device=a33', 'ro.product.device=a32'),
-                            ('ro.product.model=SM-A336', 'ro.product.model=SM-A325'),
-                            ('ro.product.name=a33', 'ro.product.name=a32'),
-                            ('ro.build.product=a33', 'ro.build.product=a32'),
+                            # Device model replacements (case-insensitive)
+                            (f'ro.product.device={config.source_device.lower()}', f'ro.product.device={config.target_device.lower()}'),
+                            (f'ro.product.device={config.source_device.upper()}', f'ro.product.device={config.target_device.upper()}'),
+                            (f'ro.product.device={config.source_device.capitalize()}', f'ro.product.device={config.target_device.capitalize()}'),
+                            # Model name replacements (assuming SM-XXXX format)
+                            (f'ro.product.model=SM-{config.source_device.upper()}', f'ro.product.model=SM-{config.target_device.upper()}'),
+                            (f'ro.product.name={config.source_device.lower()}', f'ro.product.name={config.target_device.lower()}'),
+                            (f'ro.product.name={config.source_device.upper()}', f'ro.product.name={config.target_device.upper()}'),
+                            (f'ro.product.name={config.source_device.capitalize()}', f'ro.product.name={config.target_device.capitalize()}'),
+                            # Build product replacements
+                            (f'ro.build.product={config.source_device.lower()}', f'ro.build.product={config.target_device.lower()}'),
+                            (f'ro.build.product={config.source_device.upper()}', f'ro.build.product={config.target_device.upper()}'),
+                            (f'ro.build.product={config.source_device.capitalize()}', f'ro.build.product={config.target_device.capitalize()}'),
+                            # Add more patterns as needed based on device characteristics
                         ]
-                        
+
                         modified_content = content
                         for old, new in modifications:
                             modified_content = modified_content.replace(old, new)
-                        
+
                         # Write modified content
                         with open(prop_path, 'w', encoding='utf-8') as f:
                             f.write(modified_content)
-                            
+
                     except Exception as e:
                         self.log(f"[!] Error processing {filename}: {e}", 'warning')
 
-    def _copy_hardware_configs(self, base_ramdisk_dir: str, port_ramdisk_dir: str):
+    def _copy_hardware_configs(self, base_ramdisk_dir: str, port_ramdisk_dir: str, config: PortRomConfig):
         """Copy port-specific hardware configuration files"""
         import glob
-        
+
         # Hardware-specific files to copy from port device
         hardware_files = [
             'init.exynos*.rc',  # Chipset-specific init files
@@ -5053,12 +5168,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
             'init.target.rc',   # Target-specific configs
             'dt'                # Device tree directory
         ]
-        
+
         for pattern in hardware_files:
             for port_file in glob.glob(os.path.join(port_ramdisk_dir, pattern)):
                 filename = os.path.basename(port_file)
                 base_file = os.path.join(base_ramdisk_dir, filename)
-                
+
                 try:
                     if os.path.isdir(port_file):
                         # Handle directories (like dt)
@@ -5073,7 +5188,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         import shutil
                         shutil.copy2(port_file, base_file)
                         self.log(f"[*] Copied file: {filename}", 'info')
-                        
+
                 except Exception as e:
                     self.log(f"[!] Error copying {filename}: {e}", 'warning')
 
@@ -5395,13 +5510,18 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def _start_vendor_modification(self):
         """Start the vendor partition modification process"""
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
+            return
+
+        config = self.port_rom_config
+        work_dir = config.work_dir
 
         # Check if vendor directories exist from Step 5
-        a33_vendor = os.path.join(work_dir, "a33", "vendor", "work")
-        a32_vendor = os.path.join(work_dir, "a32", "vendor", "work")
+        source_vendor = config.get_vendor_dir(config.source_device)
+        target_vendor = config.get_vendor_dir(config.target_device)
 
-        if not os.path.isdir(a33_vendor) or not os.path.isdir(a32_vendor):
+        if not os.path.isdir(source_vendor) or not os.path.isdir(target_vendor):
             messagebox.showerror("Error", "Vendor directories not found. Please complete Step 5 first.")
             return
 
@@ -5409,13 +5529,18 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def _start_system_modification(self):
         """Start the system partition modification process"""
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
+            return
+
+        config = self.port_rom_config
+        work_dir = config.work_dir
 
         # Check if system directories exist from Step 5
-        a33_system = os.path.join(work_dir, "a33", "system", "work")
-        a32_system = os.path.join(work_dir, "a32", "system", "work")
+        source_system = config.get_system_dir(config.source_device)
+        target_system = config.get_system_dir(config.target_device)
 
-        if not os.path.isdir(a33_system) or not os.path.isdir(a32_system):
+        if not os.path.isdir(source_system) or not os.path.isdir(target_system):
             messagebox.showerror("Error", "System directories not found. Please complete Step 5 first.")
             return
 
@@ -5517,24 +5642,30 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.progress.start()
             self.log("[*] Starting vendor partition modification...", 'info')
 
-            work_dir = os.path.join(os.getcwd(), "firmware_port")
-            a33_vendor = os.path.join(work_dir, "a33", "vendor", "work")
-            a32_vendor = os.path.join(work_dir, "a32", "vendor", "work")
+            if not self.port_rom_config:
+                raise RuntimeError("Port ROM configuration not initialized.")
+            config: PortRomConfig = self.port_rom_config
+
+            source_device = config.source_device
+            target_device = config.target_device
+
+            source_vendor_work_dir = os.path.join(config.work_dir, source_device, "vendor", "work")
+            target_vendor_work_dir = os.path.join(config.work_dir, target_device, "vendor", "work")
 
             # Verify directories exist
-            if not os.path.isdir(a33_vendor):
-                raise FileNotFoundError(f"A33 vendor directory not found: {a33_vendor}")
-            if not os.path.isdir(a32_vendor):
-                raise FileNotFoundError(f"A32 vendor directory not found: {a32_vendor}")
+            if not os.path.isdir(source_vendor_work_dir):
+                raise FileNotFoundError(f"Source vendor directory not found: {source_vendor_work_dir}")
+            if not os.path.isdir(target_vendor_work_dir):
+                raise FileNotFoundError(f"Target vendor directory not found: {target_vendor_work_dir}")
 
-            # Create backup
+            # Create backup of original source vendor
             self.log("[*] Creating backup...")
-            backup_dir = os.path.join(work_dir, "a33", "vendor", "work.backup")
+            backup_dir = os.path.join(config.work_dir, source_device, "vendor", "work.backup")
             if os.path.exists(backup_dir):
                 import shutil
                 shutil.rmtree(backup_dir)
             import shutil
-            shutil.copytree(a33_vendor, backup_dir)
+            shutil.copytree(source_vendor_work_dir, backup_dir)
             self.log(f"[*] Backup created: {backup_dir}", 'info')
 
             # Function to safely copy files/directories
@@ -5557,191 +5688,191 @@ class SmartphoneFirmwareScrews(tk.Tk):
             # Camera HALs
             self.log("[*] Replacing camera HALs...")
             import glob
-            for cam_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "camera.*")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.camera*")):
+            for cam_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "camera.*")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "android.hardware.camera*")):
                 if os.path.exists(cam_lib):
-                    rel_path = os.path.relpath(cam_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(cam_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(cam_lib, dest_path)
 
             # Camera firmware
-            camera_fw_src = os.path.join(a32_vendor, "firmware", "camera")
+            camera_fw_src = os.path.join(target_vendor_work_dir, "firmware", "camera")
             if os.path.exists(camera_fw_src):
-                camera_fw_dest = os.path.join(a33_vendor, "firmware", "camera")
+                camera_fw_dest = os.path.join(source_vendor_work_dir, "firmware", "camera")
                 if os.path.exists(camera_fw_dest):
                     shutil.rmtree(camera_fw_dest)
                 safe_copy(camera_fw_src, camera_fw_dest)
 
             # Audio HALs
             self.log("[*] Replacing audio HALs...")
-            for audio_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "audio.*")) + \
-                            glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.audio*")):
+            for audio_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "audio.*")) + \
+                            glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "android.hardware.audio*")):
                 if os.path.exists(audio_lib):
-                    rel_path = os.path.relpath(audio_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(audio_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(audio_lib, dest_path)
 
             # Sensor HALs
             self.log("[*] Replacing sensor HALs...")
-            for sensor_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "sensors.*")) + \
-                             glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.sensors*")):
+            for sensor_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "sensors.*")) + \
+                             glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "android.hardware.sensors*")):
                 if os.path.exists(sensor_lib):
-                    rel_path = os.path.relpath(sensor_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(sensor_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(sensor_lib, dest_path)
 
             # Graphics HALs (CRITICAL - wrong GPU = no boot)
             self.log("[*] Replacing graphics HALs...")
             for gfx_dir in ["egl", "vulkan"]:
-                src_dir = os.path.join(a32_vendor, "lib", gfx_dir)
+                src_dir = os.path.join(target_vendor_work_dir, "lib", gfx_dir)
                 if os.path.exists(src_dir):
-                    dest_dir = os.path.join(a33_vendor, "lib", gfx_dir)
+                    dest_dir = os.path.join(source_vendor_work_dir, "lib", gfx_dir)
                     if os.path.exists(dest_dir):
                         shutil.rmtree(dest_dir)
                     safe_copy(src_dir, dest_dir)
 
-                src_dir64 = os.path.join(a32_vendor, "lib64", gfx_dir)
+                src_dir64 = os.path.join(target_vendor_work_dir, "lib64", gfx_dir)
                 if os.path.exists(src_dir64):
-                    dest_dir64 = os.path.join(a33_vendor, "lib64", gfx_dir)
+                    dest_dir64 = os.path.join(source_vendor_work_dir, "lib64", gfx_dir)
                     if os.path.exists(dest_dir64):
                         shutil.rmtree(dest_dir64)
                     safe_copy(src_dir64, dest_dir64)
 
-            for gfx_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "gralloc.*")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "hwcomposer.*")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "vulkan.*")):
+            for gfx_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "gralloc.*")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "hwcomposer.*")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "vulkan.*")):
                 if os.path.exists(gfx_lib):
-                    rel_path = os.path.relpath(gfx_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(gfx_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(gfx_lib, dest_path)
 
             # GPU firmware and drivers
-            mali_lib = os.path.join(a32_vendor, "lib", "libGLES_mali.so")
+            mali_lib = os.path.join(target_vendor_work_dir, "lib", "libGLES_mali.so")
             if os.path.exists(mali_lib):
-                safe_copy(mali_lib, os.path.join(a33_vendor, "lib", "libGLES_mali.so"))
+                safe_copy(mali_lib, os.path.join(source_vendor_work_dir, "lib", "libGLES_mali.so"))
 
-            mali_lib64 = os.path.join(a32_vendor, "lib64", "libGLES_mali.so")
+            mali_lib64 = os.path.join(target_vendor_work_dir, "lib64", "libGLES_mali.so")
             if os.path.exists(mali_lib64):
-                safe_copy(mali_lib64, os.path.join(a33_vendor, "lib64", "libGLES_mali.so"))
+                safe_copy(mali_lib64, os.path.join(source_vendor_work_dir, "lib64", "libGLES_mali.so"))
 
             # Fingerprint HALs
             self.log("[*] Replacing fingerprint HALs...")
-            for fp_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "fingerprint.*")) + \
-                         glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.biometrics.fingerprint*")):
+            for fp_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "fingerprint.*")) + \
+                         glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "android.hardware.biometrics.fingerprint*")):
                 if os.path.exists(fp_lib):
-                    rel_path = os.path.relpath(fp_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(fp_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(fp_lib, dest_path)
 
             # Wi-Fi and Bluetooth firmware
             self.log("[*] Replacing wireless firmware...")
-            wifi_src = os.path.join(a32_vendor, "firmware", "wifi")
+            wifi_src = os.path.join(target_vendor_work_dir, "firmware", "wifi")
             if os.path.exists(wifi_src):
-                wifi_dest = os.path.join(a33_vendor, "firmware", "wifi")
+                wifi_dest = os.path.join(source_vendor_work_dir, "firmware", "wifi")
                 if os.path.exists(wifi_dest):
                     shutil.rmtree(wifi_dest)
                 safe_copy(wifi_src, wifi_dest)
 
-            bt_src = os.path.join(a32_vendor, "firmware", "bluetooth")
+            bt_src = os.path.join(target_vendor_work_dir, "firmware", "bluetooth")
             if os.path.exists(bt_src):
-                bt_dest = os.path.join(a33_vendor, "firmware", "bluetooth")
+                bt_dest = os.path.join(source_vendor_work_dir, "firmware", "bluetooth")
                 if os.path.exists(bt_dest):
                     shutil.rmtree(bt_dest)
                 safe_copy(bt_src, bt_dest)
 
             # All other firmware
             self.log("[*] Syncing all firmware files...")
-            firmware_src = os.path.join(a32_vendor, "firmware")
+            firmware_src = os.path.join(target_vendor_work_dir, "firmware")
             if os.path.exists(firmware_src):
-                # Copy all A32 firmware, overwriting A33
+                # Copy all target firmware, overwriting source
                 import subprocess
                 rsync_path = tool_resolve("rsync")
                 if rsync_path:
-                    result = run_cmd([rsync_path, "-av", firmware_src + "/", os.path.join(a33_vendor, "firmware") + "/"])
+                    result = run_cmd([rsync_path, "-av", firmware_src + "/", os.path.join(source_vendor_work_dir, "firmware") + "/"])
                     if result.returncode != 0:
                         self.log("[!] rsync failed, using shutil copytree", 'warning')
                         # Fallback to shutil
-                        firmware_dest = os.path.join(a33_vendor, "firmware")
+                        firmware_dest = os.path.join(source_vendor_work_dir, "firmware")
                         if os.path.exists(firmware_dest):
                             shutil.rmtree(firmware_dest)
                         shutil.copytree(firmware_src, firmware_dest)
                 else:
                     # Fallback to shutil
-                    firmware_dest = os.path.join(a33_vendor, "firmware")
+                    firmware_dest = os.path.join(source_vendor_work_dir, "firmware")
                     if os.path.exists(firmware_dest):
                         shutil.rmtree(firmware_dest)
                     shutil.copytree(firmware_src, firmware_dest)
 
             # RIL (Radio Interface Layer) - critical for modem
             self.log("[*] Replacing RIL libraries...")
-            for ril_lib in glob.glob(os.path.join(a32_vendor, "lib*", "libril*.so")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "libsec-ril*.so")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "*ril*.so")):
+            for ril_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "libril*.so")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "libsec-ril*.so")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "*ril*.so")):
                 if os.path.exists(ril_lib):
-                    rel_path = os.path.relpath(ril_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(ril_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(ril_lib, dest_path)
 
             # Power HALs
             self.log("[*] Replacing power HALs...")
-            for pwr_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "power.*")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.power*")):
+            for pwr_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "power.*")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "android.hardware.power*")):
                 if os.path.exists(pwr_lib):
-                    rel_path = os.path.relpath(pwr_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(pwr_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(pwr_lib, dest_path)
 
             # Thermal HALs
             self.log("[*] Replacing thermal HALs...")
-            for thm_lib in glob.glob(os.path.join(a32_vendor, "lib*", "hw", "thermal.*")) + \
-                          glob.glob(os.path.join(a32_vendor, "lib*", "hw", "android.hardware.thermal*")):
+            for thm_lib in glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "thermal.*")) + \
+                          glob.glob(os.path.join(target_vendor_work_dir, "lib*", "hw", "android.hardware.thermal*")):
                 if os.path.exists(thm_lib):
-                    rel_path = os.path.relpath(thm_lib, a32_vendor)
-                    dest_path = os.path.join(a33_vendor, rel_path)
+                    rel_path = os.path.relpath(thm_lib, target_vendor_work_dir)
+                    dest_path = os.path.join(source_vendor_work_dir, rel_path)
                     safe_copy(thm_lib, dest_path)
 
             # Modify vendor build.prop
             self.log("[*] Modifying vendor/build.prop...")
-            build_prop_path = os.path.join(a33_vendor, "build.prop")
+            build_prop_path = os.path.join(source_vendor_work_dir, "build.prop")
             if os.path.exists(build_prop_path):
                 # Create backup
                 shutil.copy2(build_prop_path, build_prop_path + ".backup")
 
-                # Get A32 device info
-                a32_build_prop = os.path.join(a32_vendor, "build.prop")
-                if os.path.exists(a32_build_prop):
-                    a32_device = None
-                    a32_model = None
-                    a32_fingerprint = None
+                # Get target device info
+                target_build_prop = os.path.join(target_vendor_work_dir, "build.prop")
+                if os.path.exists(target_build_prop):
+                    target_device_prop = None
+                    target_model_prop = None
+                    target_fingerprint_prop = None
 
-                    with open(a32_build_prop, 'r', encoding='utf-8', errors='ignore') as f:
+                    with open(target_build_prop, 'r', encoding='utf-8', errors='ignore') as f:
                         for line in f:
                             line = line.strip()
                             if line.startswith('ro.product.vendor.device='):
-                                a32_device = line.split('=', 1)[1]
+                                target_device_prop = line.split('=', 1)[1]
                             elif line.startswith('ro.product.vendor.model='):
-                                a32_model = line.split('=', 1)[1]
+                                target_model_prop = line.split('=', 1)[1]
                             elif line.startswith('ro.vendor.build.fingerprint='):
-                                a32_fingerprint = line.split('=', 1)[1]
+                                target_fingerprint_prop = line.split('=', 1)[1]
 
-                    # Read and modify A33 vendor build.prop
+                    # Read and modify source vendor build.prop
                     with open(build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read()
 
                     # Replace device info
-                    if a32_device:
-                        content = content.replace('ro.product.vendor.device=a33', f'ro.product.vendor.device={a32_device}')
-                    if a32_model:
-                        content = content.replace('ro.product.vendor.model=SM-A336', f'ro.product.vendor.model={a32_model}')
-                    if a32_fingerprint:
+                    if target_device_prop:
+                        content = content.replace(f'ro.product.vendor.device={source_device.lower()}', f'ro.product.vendor.device={target_device_prop}')
+                    if target_model_prop:
+                        content = content.replace(f'ro.product.vendor.model=SM-{source_device.upper()}', f'ro.product.vendor.model={target_model_prop}')
+                    if target_fingerprint_prop:
                         import re
-                        content = re.sub(r'ro\.vendor\.build\.fingerprint=.*', f'ro.vendor.build.fingerprint={a32_fingerprint}', content)
+                        content = re.sub(r'ro\.vendor\.build\.fingerprint=.*', f'ro.vendor.build.fingerprint={target_fingerprint_prop}', content)
 
-                    # Replace A33 references
-                    content = content.replace('a33', 'a32')
-                    content = content.replace('A33', 'A32')
-                    content = content.replace('SM-A336', 'SM-A325')
-                    content = content.replace('exynos1280', 'exynos850')
+                    # Replace source device references with target device references
+                    content = content.replace(source_device.lower(), target_device.lower())
+                    content = content.replace(source_device.upper(), target_device.upper())
+                    # Example: replace chipset if known
+                    # content = content.replace('exynos1280', 'exynos850') # This should be dynamic or user-defined
 
                     # Write modified content
                     with open(build_prop_path, 'w', encoding='utf-8') as f:
@@ -5749,43 +5880,43 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
                     self.log("[*] vendor/build.prop modified", 'success')
                 else:
-                    self.log("[!] A32 build.prop not found for reference", 'warning')
+                    self.log(f"[!] {target_device} build.prop not found for reference", 'warning')
 
             # Modify default.prop if exists
-            default_prop_path = os.path.join(a33_vendor, "default.prop")
+            default_prop_path = os.path.join(source_vendor_work_dir, "default.prop")
             if os.path.exists(default_prop_path):
                 with open(default_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                content = content.replace('a33', 'a32')
-                content = content.replace('A33', 'A32')
+                content = content.replace(source_device.lower(), target_device.lower())
+                content = content.replace(source_device.upper(), target_device.upper())
                 with open(default_prop_path, 'w', encoding='utf-8') as f:
                     f.write(content)
 
-            # Copy A32 device-specific configuration files
-            self.log("[*] Copying A32 device configs...")
+            # Copy target device-specific configuration files
+            self.log(f"[*] Copying {target_device} device configs...")
 
-            etc_src = os.path.join(a32_vendor, "etc")
+            etc_src = os.path.join(target_vendor_work_dir, "etc")
             if os.path.exists(etc_src):
                 # Audio configs
                 for audio_conf in glob.glob(os.path.join(etc_src, "audio*.xml")) + \
                                 glob.glob(os.path.join(etc_src, "*audio*.conf")):
                     if os.path.exists(audio_conf):
-                        rel_path = os.path.relpath(audio_conf, a32_vendor)
-                        dest_path = os.path.join(a33_vendor, rel_path)
+                        rel_path = os.path.relpath(audio_conf, target_vendor_work_dir)
+                        dest_path = os.path.join(source_vendor_work_dir, rel_path)
                         safe_copy(audio_conf, dest_path)
 
                 # Media configs
                 for media_conf in glob.glob(os.path.join(etc_src, "media_*.xml")) + \
                                 glob.glob(os.path.join(etc_src, "*media*.xml")):
                     if os.path.exists(media_conf):
-                        rel_path = os.path.relpath(media_conf, a32_vendor)
-                        dest_path = os.path.join(a33_vendor, rel_path)
+                        rel_path = os.path.relpath(media_conf, target_vendor_work_dir)
+                        dest_path = os.path.join(source_vendor_work_dir, rel_path)
                         safe_copy(media_conf, dest_path)
 
                 # Thermal configs
                 thermal_src = os.path.join(etc_src, "thermal")
                 if os.path.exists(thermal_src):
-                    thermal_dest = os.path.join(a33_vendor, "etc", "thermal")
+                    thermal_dest = os.path.join(source_vendor_work_dir, "etc", "thermal")
                     if os.path.exists(thermal_dest):
                         shutil.rmtree(thermal_dest)
                     safe_copy(thermal_src, thermal_dest)
@@ -5800,24 +5931,24 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     pass  # Windows permissions are handled differently
                 else:
                     # Unix-like systems
-                    result = run_cmd(['chown', '-R', 'root:root', a33_vendor])
+                    result = run_cmd(['chown', '-R', 'root:root', source_vendor_work_dir])
                     if result.returncode != 0:
                         self.log("[!] Could not set ownership (may require sudo)", 'warning')
 
                 # Set directory permissions to 755
-                for root_dir, dirs, files in os.walk(a33_vendor):
+                for root_dir, dirs, files in os.walk(source_vendor_work_dir):
                     for d in dirs:
                         dir_path = os.path.join(root_dir, d)
                         os.chmod(dir_path, 0o755)
 
                 # Set file permissions to 644
-                for root_dir, dirs, files in os.walk(a33_vendor):
+                for root_dir, dirs, files in os.walk(source_vendor_work_dir):
                     for f in files:
                         file_path = os.path.join(root_dir, f)
                         os.chmod(file_path, 0o644)
 
                 # Set executable permissions for bin directory
-                bin_dir = os.path.join(a33_vendor, "bin")
+                bin_dir = os.path.join(source_vendor_work_dir, "bin")
                 if os.path.exists(bin_dir):
                     for root_dir, dirs, files in os.walk(bin_dir):
                         for f in files:
@@ -5825,7 +5956,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                             os.chmod(file_path, 0o755)
 
                 # Set executable permissions for .so files
-                for root_dir, dirs, files in os.walk(a33_vendor):
+                for root_dir, dirs, files in os.walk(source_vendor_work_dir):
                     for f in files:
                         if f.endswith('.so'):
                             file_path = os.path.join(root_dir, f)
@@ -5835,10 +5966,10 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 self.log(f"[!] Error fixing permissions: {e}", 'warning')
 
             self.log("[*] Vendor modification complete.", 'success')
-            self.log(f"[*] Modified vendor: {a33_vendor}", 'info')
+            self.log(f"[*] Modified vendor: {source_vendor_work_dir}", 'info')
             self.log(f"[*] Backup: {backup_dir}", 'info')
             self.log("", 'info')
-            self.log("[!] Files replaced from A32:", 'warning')
+            self.log(f"[!] Files replaced from {target_device}:", 'warning')
             self.log("    - Camera HALs and firmware", 'info')
             self.log("    - Audio HALs and configs", 'info')
             self.log("    - Graphics HALs (GPU drivers)", 'info')
@@ -5851,9 +5982,9 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
             self.after(0, lambda: messagebox.showinfo("Success",
                 "Vendor partition modification complete!\n\n"
-                "Modified vendor: " + a33_vendor + "\n"
-                "Backup: " + backup_dir + "\n\n"
-                "Files replaced from A32:\n"
+                f"Modified vendor: {source_vendor_work_dir}\n"
+                f"Backup: {backup_dir}\n\n"
+                f"Files replaced from {target_device}:\n"
                 "• Camera HALs and firmware\n"
                 "• Audio HALs and configs\n"
                 "• Graphics HALs (GPU drivers)\n"
