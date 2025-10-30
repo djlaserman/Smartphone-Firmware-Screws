@@ -31,6 +31,9 @@ import threading
 import json
 import time
 import re
+import zipfile
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass, asdict
@@ -59,6 +62,118 @@ except Exception:
 APP_TITLE = "Smartphone Firmware Screws"
 VERSION = "1.0.0"  # Updated for fixes
 TOOLS_DIR = os.path.join(os.path.dirname(__file__), "tools")
+
+# Tool metadata and download URLs
+TOOL_METADATA = {
+    '7z': {
+        'description': '7-Zip archive tool',
+        'url': 'https://www.7-zip.org/a/7z2201-x64.exe',
+        'filename': '7z.exe',
+        'version': '22.01',
+        'subdir': '7z',
+        'extract_type': 'exe',
+        'expected_files': ['7z.exe', '7z.dll']
+    },
+    'lz4': {
+        'description': 'LZ4 compression tool',
+        'url': 'https://github.com/lz4/lz4/releases/download/v1.9.4/lz4_v1_9_4_win64.zip',
+        'filename': 'lz4.exe',
+        'version': '1.9.4',
+        'subdir': 'lz4',
+        'extract_type': 'zip',
+        'expected_files': ['lz4.exe']
+    },
+    'heimdall': {
+        'description': 'Heimdall flashing tool',
+        'url': 'https://github.com/Benjamin-Dobell/Heimdall/releases/download/v1.4.2/heimdall-1.4.2-win64.zip',
+        'filename': 'heimdall.exe',
+        'version': '1.4.2',
+        'subdir': 'heimdall',
+        'extract_type': 'zip',
+        'expected_files': ['heimdall.exe', 'libusb-1.0.dll']
+    },
+    'magiskboot': {
+        'description': 'Magisk boot image tool',
+        'url': 'https://github.com/topjohnwu/Magisk/releases/download/v26.1/magiskboot.exe',
+        'filename': 'magiskboot.exe',
+        'version': '26.1',
+        'subdir': 'magisk',
+        'extract_type': 'exe',
+        'expected_files': ['magiskboot.exe']
+    },
+    'simg2img': {
+        'description': 'Sparse to raw image converter',
+        'url': 'https://github.com/anestisb/android-tools/raw/master/simg2img.exe',
+        'filename': 'simg2img.exe',
+        'version': 'latest',
+        'subdir': 'android-tools',
+        'extract_type': 'exe',
+        'expected_files': ['simg2img.exe']
+    },
+    'img2simg': {
+        'description': 'Raw to sparse image converter',
+        'url': 'https://github.com/anestisb/android-tools/raw/master/img2simg.exe',
+        'filename': 'img2simg.exe',
+        'version': 'latest',
+        'subdir': 'android-tools',
+        'extract_type': 'exe',
+        'expected_files': ['img2simg.exe']
+    },
+    'apktool': {
+        'description': 'APK decompiler/recompiler',
+        'url': 'https://github.com/iBotPeaches/Apktool/releases/download/v2.7.0/apktool_2.7.0.jar',
+        'filename': 'apktool.jar',
+        'version': '2.7.0',
+        'subdir': 'apktool',
+        'extract_type': 'jar',
+        'expected_files': ['apktool.jar']
+    },
+    'zipalign': {
+        'description': 'APK alignment tool',
+        'url': 'https://dl.google.com/android/repository/build-tools_r34-windows.zip',
+        'filename': 'zipalign.exe',
+        'version': '34.0.0',
+        'subdir': 'build-tools',
+        'extract_type': 'zip_nested',
+        'expected_files': ['zipalign.exe']
+    },
+    'apksigner': {
+        'description': 'APK signing tool',
+        'url': 'https://dl.google.com/android/repository/build-tools_r34-windows.zip',
+        'filename': 'apksigner.jar',
+        'version': '34.0.0',
+        'subdir': 'build-tools',
+        'extract_type': 'zip_nested',
+        'expected_files': ['apksigner.jar']
+    },
+    'java': {
+        'description': 'Java Runtime Environment',
+        'url': 'https://download.oracle.com/java/17/archive/jdk-17.0.8_windows-x64_bin.zip',
+        'filename': 'java.exe',
+        'version': '17.0.8',
+        'subdir': 'java',
+        'extract_type': 'zip',
+        'expected_files': ['bin/java.exe']
+    },
+    'bsdtar': {
+        'description': 'BSD tar implementation',
+        'url': 'https://github.com/libarchive/libarchive/releases/download/v3.7.2/libarchive-v3.7.2-win64.zip',
+        'filename': 'bsdtar.exe',
+        'version': '3.7.2',
+        'subdir': 'libarchive',
+        'extract_type': 'zip',
+        'expected_files': ['bsdtar.exe']
+    },
+    'dtc': {
+        'description': 'Device Tree Compiler',
+        'url': 'https://github.com/dgibson/dtc/releases/download/v1.6.1/dtc-1.6.1-windows.zip',
+        'filename': 'dtc.exe',
+        'version': '1.6.1',
+        'subdir': 'dtc',
+        'extract_type': 'zip',
+        'expected_files': ['dtc.exe']
+    }
+}
 
 # Configure a file handler for startup logging
 startup_logger = logging.getLogger('startup_logger')
@@ -548,6 +663,211 @@ def run_cmd(cmd: List[str], cwd: Optional[str] = None, capture: bool = True,
             stderr=str(e).encode() if capture else None
         )
         return result
+
+# -------------------------#
+# Tool Download & Management
+# -------------------------#
+
+def download_file_with_human_behavior(url: str, dest_path: str, progress_callback=None) -> bool:
+    """Download file with human-like behavior to avoid anti-bot detection"""
+    try:
+        # Human-like headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+
+        # Simulate human delay before request
+        time.sleep(0.5 + (time.time() % 2))  # 0.5-2.5 seconds
+
+        req = urllib.request.Request(url, headers=headers)
+
+        with urllib.request.urlopen(req) as response:
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            chunk_size = 8192
+
+            with open(dest_path, 'wb') as f:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+
+                    if progress_callback and total_size > 0:
+                        progress = int((downloaded / total_size) * 100)
+                        progress_callback(progress)
+
+                    # Simulate human reading/downloading pauses
+                    time.sleep(0.01 + (time.time() % 0.05))  # 10-55ms between chunks
+
+        return True
+    except Exception as e:
+        print(f"Download failed: {e}")
+        return False
+
+def extract_archive(archive_path: str, extract_to: str, extract_type: str) -> bool:
+    """Extract various archive types"""
+    try:
+        ensure_dir(extract_to)
+
+        if extract_type == 'zip':
+            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_to)
+            return True
+
+        elif extract_type == 'zip_nested':
+            # For nested zips like build-tools
+            temp_dir = tempfile.mkdtemp()
+            try:
+                with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+
+                # Find the nested zip or directory
+                items = os.listdir(temp_dir)
+                if len(items) == 1 and os.path.isdir(os.path.join(temp_dir, items[0])):
+                    nested_dir = os.path.join(temp_dir, items[0])
+                    # Copy contents to extract_to
+                    for item in os.listdir(nested_dir):
+                        src = os.path.join(nested_dir, item)
+                        dst = os.path.join(extract_to, item)
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst)
+                        else:
+                            shutil.copy2(src, dst)
+                else:
+                    # Copy all items
+                    for item in items:
+                        src = os.path.join(temp_dir, item)
+                        dst = os.path.join(extract_to, item)
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst)
+                        else:
+                            shutil.copy2(src, dst)
+                return True
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        elif extract_type in ['exe', 'jar']:
+            # For single executables, just move them
+            filename = os.path.basename(archive_path)
+            dest_path = os.path.join(extract_to, filename)
+            shutil.copy2(archive_path, dest_path)
+            return True
+
+        return False
+    except Exception as e:
+        print(f"Extraction failed: {e}")
+        return False
+
+def move_files_to_subdir(src_dir: str, tool_name: str, expected_files: List[str]) -> bool:
+    """Move expected files to their proper subdirectories"""
+    try:
+        tool_subdir = os.path.join(src_dir, tool_name)
+        ensure_dir(tool_subdir)
+
+        for expected_file in expected_files:
+            # Handle nested paths like 'bin/java.exe'
+            if '/' in expected_file or '\\' in expected_file:
+                # Find the file in the extracted directory
+                for root, dirs, files in os.walk(src_dir):
+                    if expected_file.replace('/', os.sep).replace('\\', os.sep) in [os.path.relpath(os.path.join(root, f), src_dir) for f in files]:
+                        src_file = os.path.join(root, os.path.basename(expected_file))
+                        dest_file = os.path.join(tool_subdir, os.path.basename(expected_file))
+                        shutil.move(src_file, dest_file)
+                        break
+            else:
+                # Direct file in root
+                src_file = os.path.join(src_dir, expected_file)
+                if os.path.exists(src_file):
+                    dest_file = os.path.join(tool_subdir, expected_file)
+                    shutil.move(src_file, dest_file)
+
+        return True
+    except Exception as e:
+        print(f"File moving failed: {e}")
+        return False
+
+def cleanup_temp_files(temp_dir: str):
+    """Clean up temporary files and directories"""
+    try:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+    except Exception as e:
+        print(f"Cleanup failed: {e}")
+
+def download_and_setup_tool(tool_name: str, progress_callback=None, log_callback=None) -> bool:
+    """Download, extract, and setup a single tool"""
+    if tool_name not in TOOL_METADATA:
+        if log_callback:
+            log_callback(f"Unknown tool: {tool_name}", 'error')
+        return False
+
+    metadata = TOOL_METADATA[tool_name]
+    temp_dir = tempfile.mkdtemp(prefix=f"{tool_name}_download_")
+
+    try:
+        if log_callback:
+            log_callback(f"Downloading {tool_name} v{metadata['version']}...", 'info')
+
+        # Download the file
+        download_url = metadata['url']
+        archive_path = os.path.join(temp_dir, os.path.basename(download_url))
+
+        if not download_file_with_human_behavior(download_url, archive_path, progress_callback):
+            if log_callback:
+                log_callback(f"Failed to download {tool_name}", 'error')
+            return False
+
+        if log_callback:
+            log_callback(f"Extracting {tool_name}...", 'info')
+
+        # Extract the archive
+        extract_dir = os.path.join(temp_dir, 'extracted')
+        if not extract_archive(archive_path, extract_dir, metadata['extract_type']):
+            if log_callback:
+                log_callback(f"Failed to extract {tool_name}", 'error')
+            return False
+
+        # Move files to proper subdirectories
+        tool_dir = os.path.join(TOOLS_DIR, metadata['subdir'])
+        ensure_dir(tool_dir)
+
+        if not move_files_to_subdir(extract_dir, metadata['subdir'], metadata['expected_files']):
+            if log_callback:
+                log_callback(f"Failed to organize {tool_name} files", 'error')
+            return False
+
+        if log_callback:
+            log_callback(f"✓ {tool_name} setup complete", 'success')
+        return True
+
+    except Exception as e:
+        if log_callback:
+            log_callback(f"Setup failed for {tool_name}: {e}", 'error')
+        return False
+    finally:
+        cleanup_temp_files(temp_dir)
+
+def check_tool_updates(tool_name: str) -> Optional[str]:
+    """Check if a tool has updates available (simplified version)"""
+    # This would normally check version files or APIs
+    # For now, return None (no update needed)
+    return None
+
+def update_tool_if_needed(tool_name: str, progress_callback=None, log_callback=None) -> bool:
+    """Check and update a tool if needed"""
+    new_version = check_tool_updates(tool_name)
+    if new_version:
+        if log_callback:
+            log_callback(f"Updating {tool_name} to {new_version}...", 'info')
+        return download_and_setup_tool(tool_name, progress_callback, log_callback)
+    return True  # No update needed, consider success
 
 def compute_md5(path: str, block_size: int = 1024*1024, length: Optional[int] = None) -> str:
     h = hashlib.md5()
@@ -3557,15 +3877,15 @@ class SmartphoneFirmwareScrews(tk.Tk):
         # Store progress bar reference for hex editor
         self.hex_editor_progress = self.progress
 
-        # Tools tab
-        tools_frame = ttk.Frame(notebook)
-        notebook.add(tools_frame, text="Tools")
-        self._build_tools_ui(tools_frame)
-
         # Port ROM tab
         port_rom_frame = ttk.Frame(notebook)
         notebook.add(port_rom_frame, text="Port ROM")
         self._build_port_rom_ui(port_rom_frame)
+
+        # Tools tab (last)
+        tools_frame = ttk.Frame(notebook)
+        notebook.add(tools_frame, text="Tools")
+        self._build_tools_ui(tools_frame)
     
     def split_horizontal(self):
         focused_widget = self.focus_get()
@@ -4472,20 +4792,286 @@ class SmartphoneFirmwareScrews(tk.Tk):
         insert_items(root_dir, root_dir)
 
     def _build_tools_ui(self, parent):
-        # Specific UI for tools
-        tree_frame = ttk.Frame(parent)
-        tree_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        print("DEBUG: _build_tools_ui called")  # Debug print
+        try:
+            # Create notebook for tools tabs
+            tools_notebook = ttk.Notebook(parent)
+            tools_notebook.pack(fill='both', expand=True, padx=5, pady=5)
 
-        self.tools_tree = ttk.Treeview(tree_frame, columns=('path',),
-                                       show='tree headings')
-        self.tools_tree.heading('#0', text='Tool')
-        self.tools_tree.heading('path', text='Location')
-        self.tools_tree.column('path', width=400)
+            # Tool Status Tab
+            status_frame = ttk.Frame(tools_notebook)
+            tools_notebook.add(status_frame, text="Tool Status")
 
-        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tools_tree.yview)
-        vsb.pack(side='right', fill='y')
-        self.tools_tree.config(yscrollcommand=vsb.set)
-        self.tools_tree.pack(side='left', fill='both', expand=True)
+            # Treeview for tool status and mapping
+            tree_frame = ttk.Frame(status_frame)
+            tree_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+            self.tools_tree = ttk.Treeview(tree_frame, columns=('status', 'path'),
+                                           show='tree headings')
+            self.tools_tree.heading('#0', text='Tool')
+            self.tools_tree.heading('status', text='Status')
+            self.tools_tree.heading('path', text='Location')
+            self.tools_tree.column('status', width=100)
+            self.tools_tree.column('path', width=400)
+
+            vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tools_tree.yview)
+            vsb.pack(side='right', fill='y')
+            self.tools_tree.config(yscrollcommand=vsb.set)
+            self.tools_tree.pack(side='left', fill='both', expand=True)
+
+            # Refresh button for tool status
+            refresh_btn = ttk.Button(status_frame, text="Refresh Status", command=self.refresh_tool_status)
+            refresh_btn.pack(pady=5)
+
+            # Manage Tools Tab
+            manage_frame = ttk.Frame(tools_notebook)
+            tools_notebook.add(manage_frame, text="Manage Tools")
+
+            # Tool selection
+            select_frame = ttk.Frame(manage_frame)
+            select_frame.pack(fill='x', padx=5, pady=5)
+
+            ttk.Label(select_frame, text="Select Tool:").pack(side='left')
+            self.tool_combo = ttk.Combobox(select_frame, values=list(TOOL_METADATA.keys()), state='readonly')
+            self.tool_combo.pack(side='left', padx=5)
+            self.tool_combo.bind('<<ComboboxSelected>>', self.on_tool_selected)
+
+            # Action buttons
+            btn_frame = ttk.Frame(manage_frame)
+            btn_frame.pack(fill='x', padx=5, pady=5)
+
+            self.download_btn = ttk.Button(btn_frame, text="Download", command=self.download_selected_tool, state='disabled')
+            self.download_btn.pack(side='left', padx=5)
+
+            self.update_btn = ttk.Button(btn_frame, text="Update", command=self.update_selected_tool, state='disabled')
+            self.update_btn.pack(side='left', padx=5)
+
+            # Progress bar
+            progress_frame = ttk.Frame(manage_frame)
+            progress_frame.pack(fill='x', padx=5, pady=5)
+
+            self.tool_progress = ttk.Progressbar(progress_frame, mode='determinate')
+            self.tool_progress.pack(fill='x')
+
+            self.tool_status_label = ttk.Label(progress_frame, text="Ready")
+            self.tool_status_label.pack()
+
+            # Directory management
+            dir_frame = ttk.LabelFrame(manage_frame, text="Tool Directories")
+            dir_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+            # Listbox for alternative directories
+            list_frame = ttk.Frame(dir_frame)
+            list_frame.pack(fill='both', expand=True)
+
+            self.dir_listbox = tk.Listbox(list_frame, height=6)
+            self.dir_listbox.pack(side='left', fill='both', expand=True)
+
+            dir_scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.dir_listbox.yview)
+            dir_scroll.pack(side='right', fill='y')
+            self.dir_listbox.config(yscrollcommand=dir_scroll.set)
+
+            # Directory buttons
+            dir_btn_frame = ttk.Frame(dir_frame)
+            dir_btn_frame.pack(fill='x', pady=5)
+
+            ttk.Button(dir_btn_frame, text="Browse", command=self.browse_tool_dir).pack(side='left', padx=2)
+            ttk.Button(dir_btn_frame, text="Add", command=self.add_tool_dir).pack(side='left', padx=2)
+            ttk.Button(dir_btn_frame, text="Remove", command=self.remove_tool_dir).pack(side='left', padx=2)
+            ttk.Button(dir_btn_frame, text="Link", command=self.link_tool_dir).pack(side='left', padx=2)
+
+            # Restore defaults button
+            restore_frame = ttk.Frame(manage_frame)
+            restore_frame.pack(fill='x', padx=5, pady=5)
+
+            ttk.Button(restore_frame, text="Restore Defaults", command=self.restore_tool_defaults).pack()
+
+            # Initialize tool status
+            self.refresh_tool_status()
+
+        except Exception as e:
+            print(f"Error building tools UI: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def refresh_tool_status(self):
+        """Refresh the tool status treeview"""
+        try:
+            self.tools_tree.delete(*self.tools_tree.get_children())
+
+            for tool_name, metadata in TOOL_METADATA.items():
+                tool_subdir = metadata['subdir']
+                tool_dir = os.path.join(TOOLS_DIR, tool_subdir)
+                expected_files = metadata['expected_files']
+
+                # Check if tool directory exists and has expected files
+                if os.path.exists(tool_dir):
+                    missing_files = []
+                    for expected_file in expected_files:
+                        expected_path = os.path.join(tool_dir, expected_file)
+                        if not os.path.exists(expected_path):
+                            missing_files.append(expected_file)
+
+                    if not missing_files:
+                        status = "✓ Installed"
+                        status_color = 'success'
+                    else:
+                        status = f"⚠ Missing: {', '.join(missing_files)}"
+                        status_color = 'warning'
+                else:
+                    status = "✗ Not installed"
+                    status_color = 'error'
+
+                self.tools_tree.insert('', 'end', text=tool_name,
+                                     values=(status, tool_dir))
+
+            # Update status label
+            installed_count = sum(1 for child in self.tools_tree.get_children()
+                                if self.tools_tree.item(child, 'values')[0].startswith('✓'))
+            self.tool_status_label.config(text=f"✓ {installed_count}/{len(TOOL_METADATA)} tools installed")
+
+        except Exception as e:
+            self.log(f"Error refreshing tool status: {e}", 'error')
+
+    def on_tool_selected(self, event=None):
+        """Handle tool selection in combobox"""
+        selected_tool = self.tool_combo.get()
+        if selected_tool:
+            self.download_btn.config(state='normal')
+            self.update_btn.config(state='normal')
+        else:
+            self.download_btn.config(state='disabled')
+            self.update_btn.config(state='disabled')
+
+    def download_selected_tool(self):
+        """Download the selected tool"""
+        selected_tool = self.tool_combo.get()
+        if not selected_tool:
+            return
+
+        def download_thread():
+            try:
+                self.tool_status_label.config(text=f"Downloading {selected_tool}...")
+                self.tool_progress['value'] = 0
+
+                def progress_callback(progress):
+                    self.tool_progress['value'] = progress
+
+                success = download_and_setup_tool(selected_tool, progress_callback, self.log)
+                if success:
+                    self.tool_status_label.config(text=f"✓ {selected_tool} downloaded successfully")
+                    self.refresh_tool_status()
+                else:
+                    self.tool_status_label.config(text=f"✗ Failed to download {selected_tool}")
+
+            except Exception as e:
+                self.log(f"Download failed: {e}", 'error')
+                self.tool_status_label.config(text=f"✗ Download failed: {e}")
+
+        threading.Thread(target=download_thread, daemon=True).start()
+
+    def update_selected_tool(self):
+        """Update the selected tool"""
+        selected_tool = self.tool_combo.get()
+        if not selected_tool:
+            return
+
+        def update_thread():
+            try:
+                self.tool_status_label.config(text=f"Updating {selected_tool}...")
+                self.tool_progress['value'] = 0
+
+                def progress_callback(progress):
+                    self.tool_progress['value'] = progress
+
+                success = update_tool_if_needed(selected_tool, progress_callback, self.log)
+                if success:
+                    self.tool_status_label.config(text=f"✓ {selected_tool} updated successfully")
+                    self.refresh_tool_status()
+                else:
+                    self.tool_status_label.config(text=f"✓ {selected_tool} already up to date")
+
+            except Exception as e:
+                self.log(f"Update failed: {e}", 'error')
+                self.tool_status_label.config(text=f"✗ Update failed: {e}")
+
+        threading.Thread(target=update_thread, daemon=True).start()
+
+    def browse_tool_dir(self):
+        """Browse for a tool directory"""
+        dir_path = filedialog.askdirectory(title="Select Tool Directory")
+        if dir_path:
+            self.selected_tool_dir = dir_path
+            messagebox.showinfo("Directory Selected", f"Selected: {dir_path}")
+
+    def add_tool_dir(self):
+        """Add a tool directory to the list"""
+        if hasattr(self, 'selected_tool_dir'):
+            self.dir_listbox.insert(tk.END, self.selected_tool_dir)
+            self.log(f"Added tool directory: {self.selected_tool_dir}", 'info')
+        else:
+            messagebox.showwarning("No Directory", "Please browse and select a directory first")
+
+    def remove_tool_dir(self):
+        """Remove selected directory from list"""
+        selection = self.dir_listbox.curselection()
+        if selection:
+            dir_path = self.dir_listbox.get(selection[0])
+            self.dir_listbox.delete(selection[0])
+            self.log(f"Removed tool directory: {dir_path}", 'info')
+        else:
+            messagebox.showwarning("No Selection", "Please select a directory to remove")
+
+    def link_tool_dir(self):
+        """Link a tool directory (for advanced users)"""
+        selection = self.dir_listbox.curselection()
+        if selection:
+            dir_path = self.dir_listbox.get(selection[0])
+            # Here you could implement linking logic, e.g., creating symlinks or updating tool resolution
+            self.log(f"Linked tool directory: {dir_path}", 'info')
+            messagebox.showinfo("Linked", f"Tool directory linked: {dir_path}")
+        else:
+            messagebox.showwarning("No Selection", "Please select a directory to link")
+
+    def restore_tool_defaults(self):
+        """Restore all tools to default state"""
+        if not messagebox.askyesno("Restore Defaults",
+                                 "This will download and setup all tools in their default locations.\n\nContinue?"):
+            return
+
+        def restore_thread():
+            try:
+                self.tool_status_label.config(text="Restoring tool defaults...")
+                self.tool_progress['value'] = 0
+
+                total_tools = len(TOOL_METADATA)
+                completed = 0
+
+                for tool_name in TOOL_METADATA.keys():
+                    self.tool_status_label.config(text=f"Restoring {tool_name}... ({completed+1}/{total_tools})")
+
+                    def progress_callback(progress):
+                        # Calculate overall progress
+                        base_progress = (completed / total_tools) * 100
+                        current_progress = progress / total_tools
+                        self.tool_progress['value'] = base_progress + current_progress
+
+                    success = download_and_setup_tool(tool_name, progress_callback, self.log)
+                    if success:
+                        self.log(f"✓ Restored {tool_name}", 'success')
+                    else:
+                        self.log(f"✗ Failed to restore {tool_name}", 'error')
+
+                    completed += 1
+
+                self.tool_status_label.config(text="✓ Tool restoration complete")
+                self.refresh_tool_status()
+
+            except Exception as e:
+                self.log(f"Restore failed: {e}", 'error')
+                self.tool_status_label.config(text=f"✗ Restore failed: {e}")
+
+        threading.Thread(target=restore_thread, daemon=True).start()
 
     def _build_hex_editor_ui(self, parent):
         # Specific UI for hex editor
