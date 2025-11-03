@@ -916,17 +916,36 @@ def verify_tar_md5_footer(path: str) -> tuple[bool, str]:
     """Verify .tar.md5 footer (or tar with appended md5). Returns (ok, message)."""
     try:
         with open(path, 'rb') as f:
-            data = f.read()
-        if len(data) < 32:
-            return False, 'file too small for footer'
-        footer = data[-32:]
-        core = data[:-32]
-        import hashlib
-        if any(c not in b"0123456789abcdef" for c in footer.lower()):
-            return False, 'footer not hex'
-        if hashlib.md5(core).hexdigest().encode('ascii') != footer:
-            return False, 'md5 mismatch'
-        return True, 'ok'
+            # Get file size
+            f.seek(0, 2)
+            file_size = f.tell()
+            if file_size < 32:
+                return False, 'file too small for footer'
+
+            # Read footer
+            f.seek(-32, 2)
+            footer = f.read(32)
+
+            # Check if footer is hex
+            if any(c not in b"0123456789abcdefABCDEF" for c in footer):
+                return False, 'footer not hex'
+
+            # Compute MD5 of core (everything except last 32 bytes) in chunks
+            f.seek(0)
+            import hashlib
+            md5 = hashlib.md5()
+            remaining = file_size - 32
+            chunk_size = 8192
+            while remaining > 0:
+                to_read = min(chunk_size, remaining)
+                data = f.read(to_read)
+                md5.update(data)
+                remaining -= to_read
+
+            computed_md5 = md5.hexdigest().encode('ascii')
+            if computed_md5 != footer:
+                return False, 'md5 mismatch'
+            return True, 'ok'
     except Exception as e:
         return False, str(e)
 
@@ -1324,53 +1343,44 @@ def extract_tar_entry(tar_path: str, entry_name: str, out_path: str) -> None:
 # -------------------------
 def strip_md5_footer(md5_path: str, tar_path: str) -> str:
     """
-    Strip MD5 footer from a .tar.md5 file. This is a more robust implementation
-    that reads the file from the end to find the MD5 hash.
+    Strip MD5 footer from a .tar.md5 file.
+    Samsung .tar.md5 files have MD5 hash appended at the end.
+    The format can be: 32 hex chars, or "hash  filename\n" format.
     """
-    md5_hex_str = None
-    tar_size = 0
-
     with open(md5_path, 'rb') as f:
-        # Seek to the end of the file
-        f.seek(0, os.SEEK_END)
+        f.seek(0, 2)
         file_size = f.tell()
-        if file_size < 32:
-            raise ValueError("File is too small to contain an MD5 footer.")
-
-        # Read the file backwards in chunks to find the MD5
-        chunk_size = 128
-        buffer = b''
-        for i in range(1, (file_size // chunk_size) + 2):
-            offset = max(0, file_size - (i * chunk_size))
-            f.seek(offset)
-            chunk = f.read()
-            buffer = chunk + buffer
-
-            # Use regex to find the last 32-character hex string in the buffer
-            matches = list(re.finditer(rb'([a-fA-F0-9]{32})', buffer))
-            if matches:
-                last_match = matches[-1]
-                md5_hex_str = last_match.group(1).decode('ascii').lower()
-                
-                # The position of the MD5 is relative to the start of the buffer,
-                # so we need to calculate its position in the original file.
-                buffer_start_pos = offset
-                md5_start_in_buffer = last_match.start()
-                tar_size = buffer_start_pos + md5_start_in_buffer
-                break
         
-        if not md5_hex_str:
-            raise ValueError("Could not find a valid MD5 footer in the file.")
-
-        # Write the tar data to the output file
+        # Try to find MD5 hash - check last 512 bytes for hash
+        search_size = min(512, file_size)
+        f.seek(-search_size, 2)
+        tail = f.read(search_size)
+        
+        # Look for 32 consecutive hex characters (MD5 hash)
+        import re
+        # Pattern: 32 hex chars possibly followed by spaces and filename
+        matches = list(re.finditer(rb'([0-9a-fA-F]{32})', tail))
+        
+        if not matches:
+            raise ValueError("No MD5 hash found in file footer")
+        
+        # Use the last match (most likely to be the actual hash)
+        last_match = matches[-1]
+        md5_hex_str = last_match.group(1).decode('ascii')
+        
+        # Calculate where the TAR data ends (before the MD5 footer)
+        # The footer starts where we found the hash
+        footer_start = file_size - search_size + last_match.start()
+        
+        # Write the tar data (everything before the MD5 footer)
         f.seek(0)
         with open(tar_path, 'wb') as tar_file:
-            # Read and write in chunks to handle large files
-            remaining = tar_size
+            remaining = footer_start
+            chunk_size = 1024 * 1024
             while remaining > 0:
-                read_size = min(1024 * 1024, remaining)
-                tar_file.write(f.read(read_size))
-                remaining -= read_size
+                to_read = min(chunk_size, remaining)
+                tar_file.write(f.read(to_read))
+                remaining -= to_read
 
     return md5_hex_str
 
@@ -1388,7 +1398,10 @@ def verify_tar_md5(md5_file: str) -> Tuple[bool, str]:
     """Verify MD5"""
     tmp = tempfile.mktemp(suffix=".tar")
     try:
-        footer = strip_md5_footer(md5_file, tmp)
+        try:
+            footer = strip_md5_footer(md5_file, tmp)
+        except ValueError as e:
+            return False, str(e)
         computed = compute_md5(tmp)
         return (computed == footer.lower(), computed)
     finally:
@@ -2070,10 +2083,10 @@ class HexEditorWidget(ttk.Frame):
         bpl_combo.bind("<<ComboboxSelected>>", lambda e: self._set_bpl(self.bpl_var.get()))
         # Group size selector
         ttk.Label(top_frame, text="  Group: ").pack(side=tk.LEFT, padx=(8,2))
-        self.group_var = tk.IntVar(value=8)
-        group_combo = ttk.Combobox(top_frame, textvariable=self.group_var, values=("4", "8", "16"), width=4, takefocus=False)
+        self.group_var = tk.IntVar(value=4)
+        group_combo = ttk.Combobox(top_frame, textvariable=self.group_var, values=("4", "8", "16", "32", "64"), width=4, takefocus=False)
         group_combo.pack(side=tk.LEFT)
-        group_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_view())
+        group_combo.bind("<<ComboboxSelected>>", lambda e: self._on_group_change())
         # Search box
         ttk.Label(top_frame, text="  Find: ").pack(side=tk.LEFT, padx=(12,2))
         self.search_var = tk.StringVar()
@@ -2102,6 +2115,7 @@ class HexEditorWidget(ttk.Frame):
         self.hex_text.bind("<KeyRelease>", self.on_hex_key_release)
         self.hex_text.bind("<FocusOut>", self._on_focus_out)
         self.hex_text.bind("<FocusIn>", self._on_focus_in)
+        self.hex_text.bind("<Button-3>", self._show_context_menu)  # Right-click context menu
         # Configure persistent selection tag for visibility when unfocused
         self.hex_text.tag_config('persistent_sel', background='#4f94cd', foreground='white')
         # Search highlight tag
@@ -2285,6 +2299,246 @@ class HexEditorWidget(ttk.Frame):
         """Toggle toolbar visibility"""
         # Placeholder implementation
         self.log_callback("Toggle toolbar not implemented", 'info')
+    
+    def _show_context_menu(self, event):
+        """Show context menu on right-click"""
+        context_menu = tk.Menu(self, tearoff=0)
+        
+        # File operations
+        context_menu.add_command(label="📁 Open File...", command=self.open_file)
+        context_menu.add_command(label="💾 Save", command=self.save_file, state=tk.NORMAL if self.file_path else tk.DISABLED)
+        context_menu.add_command(label="💾 Save As...", command=self.save_as)
+        context_menu.add_separator()
+        
+        # Edit operations
+        context_menu.add_command(label="↩️ Undo", command=self.undo, state=tk.NORMAL if self.undo_stack else tk.DISABLED)
+        context_menu.add_command(label="↪️ Redo", command=self.redo, state=tk.NORMAL if self.redo_stack else tk.DISABLED)
+        context_menu.add_separator()
+        
+        # Selection operations
+        context_menu.add_command(label="🔍 Select All", command=self.select_all)
+        sel_start, sel_length = self.current_selection
+        has_selection = sel_start is not None
+        context_menu.add_command(label="📋 Copy Hex", command=self.copy_hex_to_clipboard, state=tk.NORMAL if has_selection else tk.DISABLED)
+        context_menu.add_separator()
+        
+        # Search operations
+        context_menu.add_command(label="🔎 Find...", command=self.find_dialog)
+        context_menu.add_command(label="🔄 Replace...", command=self.replace_dialog)
+        context_menu.add_command(label="➡️ Go To...", command=self.goto_dialog)
+        context_menu.add_separator()
+        
+        # View settings submenu
+        view_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="👁️ View Settings", menu=view_menu)
+        
+        # Bytes per line submenu
+        bpl_menu = tk.Menu(view_menu, tearoff=0)
+        view_menu.add_cascade(label="Bytes per Line", menu=bpl_menu)
+        current_bpl = self.bytes_per_line
+        for bpl in [8, 16, 24, 32]:
+            bpl_menu.add_radiobutton(label=str(bpl), command=lambda b=bpl: self._set_bpl(b), 
+                                   variable=tk.IntVar(value=current_bpl), value=bpl)
+        
+        # Group size submenu
+        group_menu = tk.Menu(view_menu, tearoff=0)
+        view_menu.add_cascade(label="Group Size", menu=group_menu)
+        current_group = int(self.group_var.get()) if hasattr(self, 'group_var') else 4
+        for group in [4, 8, 16, 32, 64]:
+            group_menu.add_radiobutton(label=str(group), command=lambda g=group: self._set_group_size(g),
+                                     variable=tk.IntVar(value=current_group), value=group)
+        
+        # Endian submenu
+        endian_menu = tk.Menu(view_menu, tearoff=0)
+        view_menu.add_cascade(label="Endianness", menu=endian_menu)
+        current_endian = self.endian_var.get() if hasattr(self, 'endian_var') else self.endian
+        endian_menu.add_radiobutton(label="Big Endian", command=lambda: self.set_endian("big"),
+                                   variable=tk.StringVar(value=current_endian), value="big")
+        endian_menu.add_radiobutton(label="Little Endian", command=lambda: self.set_endian("little"),
+                                   variable=tk.StringVar(value=current_endian), value="little")
+        
+        context_menu.add_separator()
+        
+        # Analysis tools submenu
+        analysis_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="🔬 Analysis Tools", menu=analysis_menu)
+        analysis_menu.add_command(label="📊 Entropy Analysis", command=self.entropy_analysis)
+        analysis_menu.add_command(label="🔤 Extract Strings", command=self.show_strings)
+        analysis_menu.add_command(label="📈 Byte Histogram", command=self.byte_histogram)
+        
+        # Quick actions for current selection
+        if has_selection:
+            context_menu.add_separator()
+            quick_menu = tk.Menu(context_menu, tearoff=0)
+            context_menu.add_cascade(label="⚡ Quick Actions", menu=quick_menu)
+            
+            # Data interpretation
+            interpret_menu = tk.Menu(quick_menu, tearoff=0)
+            quick_menu.add_cascade(label="Interpret As", menu=interpret_menu)
+            interpret_menu.add_command(label="Integer (Unsigned)", command=lambda: self._quick_interpret("uint"))
+            interpret_menu.add_command(label="Integer (Signed)", command=lambda: self._quick_interpret("int"))
+            interpret_menu.add_command(label="Float32", command=lambda: self._quick_interpret("float32"))
+            interpret_menu.add_command(label="Float64", command=lambda: self._quick_interpret("float64"))
+            interpret_menu.add_command(label="UTF-8 String", command=lambda: self._quick_interpret("utf8"))
+            interpret_menu.add_command(label="UTF-16 String", command=lambda: self._quick_interpret("utf16"))
+            
+            # Quick operations
+            quick_menu.add_command(label="Fill with 0x00", command=lambda: self._quick_fill(0x00))
+            quick_menu.add_command(label="Fill with 0xFF", command=lambda: self._quick_fill(0xFF))
+            quick_menu.add_command(label="Fill with Pattern...", command=self._quick_fill_pattern)
+        
+        # Show context menu at cursor position
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+    
+    def _set_group_size(self, size):
+        """Set group size from context menu"""
+        if hasattr(self, 'group_var'):
+            self.group_var.set(size)
+        self._on_group_change()
+    
+    def _quick_interpret(self, data_type):
+        """Quick interpretation of selected data"""
+        sel_start, sel_length = self.current_selection
+        if sel_start is None:
+            return
+        
+        try:
+            raw = self._get_slice(sel_start, sel_length)
+            endian = self.endian_var.get() if hasattr(self, 'endian_var') else self.endian
+            endian_fixed = endian if endian in ["little", "big"] else "big"
+            
+            result = ""
+            if data_type == "uint" and len(raw) <= 8:
+                byteorder: Literal["little", "big"] = "big" if endian_fixed == "big" else "little"
+                result = str(int.from_bytes(raw, byteorder=byteorder, signed=False))
+            elif data_type == "int" and len(raw) <= 8:
+                byteorder: Literal["little", "big"] = "big" if endian_fixed == "big" else "little"
+                result = str(int.from_bytes(raw, byteorder=byteorder, signed=True))
+            elif data_type == "float32" and len(raw) >= 4:
+                import struct
+                result = str(struct.unpack(">f" if endian_fixed == "big" else "<f", raw[:4])[0])
+            elif data_type == "float64" and len(raw) >= 8:
+                import struct
+                result = str(struct.unpack(">d" if endian_fixed == "big" else "<d", raw[:8])[0])
+            elif data_type == "utf8":
+                result = raw.decode("utf-8", errors="replace")
+            elif data_type == "utf16":
+                result = raw.decode("utf-16le" if endian_fixed == "little" else "utf-16be", errors="replace")
+            
+            if result:
+                self._show_interpret_dialog(f"Interpret as {data_type.upper()}", result)
+        except Exception as e:
+            messagebox.showerror("Interpretation Error", f"Could not interpret as {data_type}: {e}")
+    
+    def _show_interpret_dialog(self, title: str, result: str):
+        """Show a properly sized dialog for interpretation results"""
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.geometry("500x300")  # Wide enough and tall enough
+        dialog.resizable(True, True)
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (300 // 2)
+        dialog.geometry(f"500x300+{x}+{y}")
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Title label
+        title_label = ttk.Label(main_frame, text=title, font=('Segoe UI', 12, 'bold'))
+        title_label.pack(pady=(0, 10))
+        
+        # Result text area with scrollbar
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        result_text = tk.Text(text_frame, wrap=tk.WORD, font=('Consolas', 10),
+                             bg=COLORS['log_bg'], fg=COLORS['log_fg'])
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=result_text.yview)
+        result_text.configure(yscrollcommand=scrollbar.set)
+        
+        result_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Insert the result
+        result_text.insert(tk.END, f"Value: {result}")
+        result_text.config(state=tk.DISABLED)  # Make read-only
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        # Copy button
+        def copy_result():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(result)
+            copy_btn.config(text="Copied!")
+            dialog.after(1000, lambda: copy_btn.config(text="Copy"))
+        
+        copy_btn = ttk.Button(button_frame, text="Copy", command=copy_result)
+        copy_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Close button
+        close_btn = ttk.Button(button_frame, text="Close", command=dialog.destroy)
+        close_btn.pack(side=tk.RIGHT)
+        
+        # Focus the close button
+        close_btn.focus_set()
+        
+        # Bind Escape key to close
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+    
+    def _quick_fill(self, value):
+        """Quick fill selection with a byte value"""
+        sel_start, sel_length = self.current_selection
+        if sel_start is None:
+            return
+        
+        if sel_length is not None:
+            fill_data = bytes([value] * sel_length)
+        else:
+            return
+        self._write_slice(sel_start, fill_data)
+        self.refresh_view()
+        self.set_status(f"Filled {sel_length} bytes with 0x{value:02X}")
+    
+    def _quick_fill_pattern(self):
+        """Quick fill with custom pattern"""
+        sel_start, sel_length = self.current_selection
+        if sel_start is None:
+            return
+        
+        pattern = simpledialog.askstring("Fill Pattern", "Enter hex pattern (e.g., 'DE AD BE EF'):")
+        if not pattern:
+            return
+        
+        try:
+            # Parse hex pattern
+            hex_bytes = bytes.fromhex(pattern.replace(' ', ''))
+            if not hex_bytes:
+                return
+            
+            # Repeat pattern to fill selection
+            if sel_length is not None:
+                fill_data = (hex_bytes * ((sel_length // len(hex_bytes)) + 1))[:sel_length]
+            else:
+                return
+            self._write_slice(sel_start, fill_data)
+            self.refresh_view()
+            self.set_status(f"Filled {sel_length} bytes with pattern {pattern}")
+        except Exception as e:
+            messagebox.showerror("Pattern Error", f"Invalid hex pattern: {e}")
 
     # Shortcuts bindings
     def _bind_shortcuts(self):
@@ -2417,16 +2671,15 @@ class HexEditorWidget(ttk.Frame):
             data = self._get_slice(0, total_len)
             base = 0
         gutter_lines = []
-        group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 8)
+        group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
         for i in range(0, len(data), self.bytes_per_line):
             chunk = data[i:i + self.bytes_per_line]
-            # Group bytes into two blocks (e.g., 8+8) with an extra spacer for RE readability
-            left = " ".join(f"{b:02X}" for b in chunk[:min(group_sz, len(chunk))])
-            right = " ".join(f"{b:02X}" for b in chunk[group_sz:])
-            if right:
-                hex_chunk = f"{left}  {right}"
-            else:
-                hex_chunk = left
+            # Group bytes with proper spacing between groups
+            hex_parts = []
+            for j in range(0, len(chunk), group_sz):
+                group = chunk[j:j + group_sz]
+                hex_parts.append(" ".join(f"{b:02X}" for b in group))
+            hex_chunk = "  ".join(hex_parts)
             # Pad to fixed width: each byte 2 hex + 1 space; plus one extra spacer between groups
             group_spacer = 2 if len(chunk) > group_sz else 0
             expected_chars = self.bytes_per_line * 3 - 1 + group_spacer
@@ -2464,11 +2717,25 @@ class HexEditorWidget(ttk.Frame):
         self.update_selection_info(None, None)
         # Re-apply search highlights if a query exists
         if hasattr(self, 'search_hits') and self.search_hits:
+            # Force refresh of highlights when view changes
             self._apply_search_highlights()
 
     def _set_bpl(self, val: int):
         try:
             self.bytes_per_line = max(4, min(64, int(val)))
+            # Invalidate search cache when bytes per line changes
+            if hasattr(self, '_search_cached_query'):
+                self._search_cached_query = None
+            self.refresh_view()
+        except Exception:
+            pass
+    
+    def _on_group_change(self):
+        """Handle group size changes and invalidate search cache"""
+        try:
+            # Invalidate search cache when group size changes
+            if hasattr(self, '_search_cached_query'):
+                self._search_cached_query = None
             self.refresh_view()
         except Exception:
             pass
@@ -2495,30 +2762,57 @@ class HexEditorWidget(ttk.Frame):
             return
         # Map byte offsets to hex text indices and tag
         for off in self.search_hits:
-            line_idx = (off // self.bytes_per_line) + 1
-            in_line = off % self.bytes_per_line
-            # Compute start column: offset field + two spaces + tokens
+            # Calculate line and position within line
+            line_idx = (off - (self.offset_top if self.windowed else 0)) // self.bytes_per_line + 1
+            in_line = (off - (self.offset_top if self.windowed else 0)) % self.bytes_per_line
+            
+            # Skip if line is not visible in current view
+            if line_idx < 1:
+                continue
+                
+            # Get the actual line text to find hex start position
             text_line = self.hex_text.get(f"{line_idx}.0", f"{line_idx}.end")
+            if not text_line:
+                continue
+                
+            # Find where hex data starts (after offset and spaces)
             space_pos = text_line.find('  ')
             if space_pos == -1:
                 continue
             hex_start = space_pos + 2
-            # Account for grouping spacer
-            group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 8)
-            extra = 2 if in_line >= group_sz else 0
-            start_col = hex_start + in_line * 3 + extra
+            
+            # Calculate position accounting for dynamic group separators
+            group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
+            
+            # Calculate position: each byte is "XX " (3 chars), groups separated by 2 spaces
+            # Within each group: bytes separated by 1 space
+            # Between groups: 2 additional spaces
+            group_num = in_line // group_sz
+            pos_in_group = in_line % group_sz
+            
+            # Position = hex_start + (complete groups * (group_size * 3 + 2)) + (bytes in current group * 3)
+            # But subtract 1 from group spacing since last byte in group doesn't have trailing space
+            start_col = hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
             end_col = start_col + 2
-            self.hex_text.tag_add('search_hit', f"{line_idx}.{start_col}", f"{line_idx}.{end_col}")
-            self.search_hit_indices.append((line_idx, start_col, end_col))
+            
+            # Ensure we don't go beyond the line
+            if start_col < len(text_line) and end_col <= len(text_line):
+                self.hex_text.tag_add('search_hit', f"{line_idx}.{start_col}", f"{line_idx}.{end_col}")
+                self.search_hit_indices.append((line_idx, start_col, end_col))
 
     def _search(self, direction: int = 1):
         pattern = self._parse_search_query(self.search_var.get() if hasattr(self, 'search_var') else '')
         data = self._get_bytes_all()
         if not pattern or not data:
             return
+        
         # Build list of hit offsets once or when query changes
-        if getattr(self, '_search_cached_query', None) != (pattern, len(data), self.bytes_per_line):
-            self._search_cached_query = (pattern, len(data), self.bytes_per_line)
+        # Include group size in cache key to handle dynamic grouping changes
+        group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
+        cache_key = (pattern, len(data), self.bytes_per_line, group_sz)
+        
+        if getattr(self, '_search_cached_query', None) != cache_key:
+            self._search_cached_query = cache_key
             hits = []
             i = 0
             while True:
@@ -2530,27 +2824,38 @@ class HexEditorWidget(ttk.Frame):
             self.search_hits = hits
             self._apply_search_highlights()
             self._search_index = -1
+            
         if not self.search_hits:
             return
+            
         # Move selection to next/prev hit
         self._search_index = (self._search_index + direction) % len(self.search_hits)
         off = self.search_hits[self._search_index]
+        
         # Scroll into view if windowed
         if self.windowed and not (self.offset_top <= off < self.offset_top + 1024 * 256):
             self.offset_top = (off // (self.bytes_per_line * 256)) * (self.bytes_per_line * 256)
             self.refresh_view()
-        # Place cursor roughly at hit
-        line_idx = (off // self.bytes_per_line) + 1
-        in_line = off % self.bytes_per_line
+            
+        # Calculate line position accounting for windowed view
+        line_idx = (off - (self.offset_top if self.windowed else 0)) // self.bytes_per_line + 1
+        in_line = (off - (self.offset_top if self.windowed else 0)) % self.bytes_per_line
+        
+        # Get the actual line text and find hex start position
         text_line = self.hex_text.get(f"{line_idx}.0", f"{line_idx}.end")
         space_pos = text_line.find('  ')
         if space_pos != -1:
             hex_start = space_pos + 2
-            group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 8)
-            extra = 2 if in_line >= group_sz else 0
-            col = hex_start + in_line * 3 + extra
+            
+            # Calculate position accounting for dynamic group separators
+            group_num = in_line // group_sz
+            pos_in_group = in_line % group_sz
+            col = hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
+            
+            # Set cursor and scroll to position
             self.hex_text.mark_set(tk.INSERT, f"{line_idx}.{col}")
             self.hex_text.see(f"{line_idx}.0")
+            
         self.update_selection_info(off, len(pattern))
 
     # Selection / mapping: map mouse click in Text to byte offset
@@ -3128,30 +3433,61 @@ class HexEditorWidget(ttk.Frame):
         # Clear previous highlights
         self.hex_text.tag_remove("find_highlight", "1.0", tk.END)
 
-        # Calculate which lines contain this occurrence
+        # Calculate which lines contain this occurrence, accounting for windowed view
+        base_offset = self.offset_top if self.windowed else 0
         bytes_per_line = self.bytes_per_line
-        start_line = offset // bytes_per_line
-        end_line = (offset + length - 1) // bytes_per_line
+        
+        # Calculate relative positions within the current view
+        rel_start = offset - base_offset
+        rel_end = offset + length - base_offset
+        
+        # Skip if occurrence is not in current view
+        if rel_start < 0 or rel_start >= (1024 * 256 if self.windowed else self._get_len()):
+            return
+            
+        start_line = rel_start // bytes_per_line
+        end_line = (rel_end - 1) // bytes_per_line
 
         for line_idx in range(start_line, end_line + 1):
             line_start_offset = line_idx * bytes_per_line
-            line_end_offset = min(line_start_offset + bytes_per_line, self._get_len())
+            line_end_offset = min(line_start_offset + bytes_per_line, 
+                                 (1024 * 256 if self.windowed else self._get_len() - base_offset))
 
             # Find the range within this line
-            occ_start = max(offset, line_start_offset)
-            occ_end = min(offset + length, line_end_offset)
+            occ_start = max(rel_start, line_start_offset)
+            occ_end = min(rel_end, line_end_offset)
 
             if occ_start < occ_end:
                 # Get the actual line text to find hex start position
-                text_line = self.hex_text.get(f"{line_idx + 1}.0", f"{line_idx + 1}.end")
+                text_line_idx = line_idx + 1  # Text widget lines are 1-based
+                text_line = self.hex_text.get(f"{text_line_idx}.0", f"{text_line_idx}.end")
+                
+                if not text_line:
+                    continue
+                    
                 space_pos = text_line.find('  ')
-                hex_start = space_pos + 2 if space_pos != -1 else 10  # fallback to old position
+                if space_pos == -1:
+                    continue
+                    
+                hex_start = space_pos + 2
 
-                # Convert to text positions
-                char_start = hex_start + (occ_start - line_start_offset) * 3  # 3 chars per byte (XX + space)
-                char_end = hex_start + (occ_end - line_start_offset) * 3 - 1  # -1 to exclude trailing space
+                # Convert to text positions - account for dynamic group separators
+                group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
+                start_in_line = occ_start - line_start_offset
+                end_in_line = occ_end - line_start_offset
+                
+                # Calculate position accounting for group separators
+                start_group_num = start_in_line // group_sz
+                start_pos_in_group = start_in_line % group_sz
+                end_group_num = (end_in_line - 1) // group_sz
+                end_pos_in_group = (end_in_line - 1) % group_sz
+                
+                char_start = hex_start + (start_group_num * (group_sz * 3 + 1)) + (start_pos_in_group * 3)
+                char_end = hex_start + (end_group_num * (group_sz * 3 + 1)) + (end_pos_in_group * 3) + 2
 
-                self.hex_text.tag_add("find_highlight", f"{line_idx + 1}.{char_start}", f"{line_idx + 1}.{char_end}")
+                # Ensure we don't go beyond the line
+                if char_start < len(text_line) and char_end <= len(text_line):
+                    self.hex_text.tag_add("find_highlight", f"{text_line_idx}.{char_start}", f"{text_line_idx}.{char_end}")
 
         # Configure highlight tag
         self.hex_text.tag_config("find_highlight", background="yellow", foreground="black")
@@ -3257,23 +3593,33 @@ class HexEditorWidget(ttk.Frame):
         sel = self.current_selection
         if sel[0] is None:
             data = self._get_slice(0, self._get_len())
+            base_offset = 0
         else:
             data = self._get_slice(sel[0], sel[1])
+            base_offset = sel[0]
         ent = self.calc_entropy(data)
         if MATPLOTLIB:
             # plot sliding window entropy
-            window = 4096
+            window = min(4096, len(data) // 4) if len(data) > 16 else len(data)
             ent_vals = []
             xs = []
-            for i in range(0, max(1, len(data) - window), window):
-                ent_vals.append(self.calc_entropy(data[i:i + window]))
-                xs.append(i)
+            if len(data) <= window:
+                # For small data, just show overall entropy
+                ent_vals = [ent]
+                xs = [base_offset]
+            else:
+                for i in range(0, len(data) - window + 1, window // 2):
+                    ent_vals.append(self.calc_entropy(data[i:i + window]))
+                    xs.append(base_offset + i)
             import matplotlib.pyplot as plt
-            plt.figure(figsize=(8, 3))
-            plt.plot(xs, ent_vals)
-            plt.title(f"Entropy (selection/file) — {ent:.4f}")
-            plt.xlabel("Offset")
-            plt.ylabel("Entropy")
+            fig = plt.figure(figsize=(8, 5))
+            if fig.canvas.manager:
+                fig.canvas.manager.set_window_title("Data Entropy Analysis")
+            plt.plot(xs, ent_vals, 'b-', linewidth=2)
+            plt.title(f"Data Entropy Analysis - Overall: {ent:.4f} bits/byte ({len(data):,} bytes)")
+            plt.xlabel("File Offset (bytes)")
+            plt.ylabel("Shannon Entropy (bits/byte)")
+            plt.grid(True, alpha=0.3)
             plt.show()
         else:
             # fallback: text summary
@@ -3344,8 +3690,13 @@ class HexEditorWidget(ttk.Frame):
             freq[b] += 1
         if MATPLOTLIB:
             import matplotlib.pyplot as plt
+            fig = plt.figure(figsize=(10, 6))
+            if fig.canvas.manager:
+                fig.canvas.manager.set_window_title("Byte Frequency Distribution")
             plt.bar(range(256), freq, width=1.0)
-            plt.title("Byte histogram")
+            plt.title(f"Byte Frequency Distribution - {len(data):,} bytes analyzed")
+            plt.xlabel("Byte Value (0-255)")
+            plt.ylabel("Frequency Count")
             plt.show()
         else:
             # textual top 16
@@ -3383,14 +3734,15 @@ class HexEditorWidget(ttk.Frame):
     def calc_entropy(self, data: bytes):
         if not data:
             return 0.0
-        freq = {}
+        freq = [0] * 256
         for b in data:
-            freq[b] = freq.get(b, 0) + 1
+            freq[b] += 1
         ent = 0.0
         length = len(data)
-        for v in freq.values():
-            p = v / length
-            ent -= p * math.log2(p)
+        for count in freq:
+            if count > 0:
+                p = count / length
+                ent -= p * math.log2(p)
         return ent
 
     def to_int(self, data_bytes: bytes, signed=False, byteorder="big"):
@@ -3673,6 +4025,12 @@ class EnhancedStringsDialog(tk.Toplevel):
         self.strings_tree.focus(next_item)
         self.strings_tree.see(next_item)
         self.current_index = next_idx
+        
+        # Jump to the selected offset in hex editor
+        values = self.strings_tree.item(next_item, 'values')
+        offset = int(values[0])
+        length = int(values[2])
+        self._jump_to_offset(offset, length)
 
     def _goto_previous(self, event=None):
         """Go to previous match"""
@@ -3697,6 +4055,12 @@ class EnhancedStringsDialog(tk.Toplevel):
         self.strings_tree.focus(prev_item)
         self.strings_tree.see(prev_item)
         self.current_index = prev_idx
+        
+        # Jump to the selected offset in hex editor
+        values = self.strings_tree.item(prev_item, 'values')
+        offset = int(values[0])
+        length = int(values[2])
+        self._jump_to_offset(offset, length)
 
     def _on_string_double_click(self, event):
         """Handle double-click on string"""
@@ -3707,13 +4071,7 @@ class EnhancedStringsDialog(tk.Toplevel):
             offset = int(values[0])
             length = int(values[2])
             # Jump to offset in hex editor and highlight it
-            if self.hex_editor and self.hex_editor.file_path:  # Use the passed hex_editor reference
-                self.hex_editor.offset_top = max(0, offset - 32)  # Show some context before
-                self.hex_editor.refresh_view()
-                self.hex_editor.update_selection_info(offset, length)  # Select the full string length
-                # Update status with formatted offset
-                formatted_offset = format_offset(offset, self.hex_editor._get_len(), base=16, clamp_profile="firmware")
-                self.hex_editor.set_status(f"Jumped to string at 0x{formatted_offset}")
+            self._jump_to_offset(offset, length)
 
     def _on_string_select(self, event):
         """Handle Enter key on selected string"""
@@ -3852,6 +4210,116 @@ class EnhancedStringsDialog(tk.Toplevel):
             self.search_entry.focus_set()
             self.search_entry.icursor(tk.END)  # Move cursor to end
 
+    def _jump_to_offset(self, offset, length):
+        """Jump to offset in hex editor and highlight it"""
+        if self.hex_editor and self.hex_editor.file_path:
+            # Adjust windowed view if necessary
+            if self.hex_editor.windowed:
+                # Check if offset is outside current view
+                view_start = self.hex_editor.offset_top
+                view_end = view_start + (1024 * 256)
+                if not (view_start <= offset < view_end):
+                    # Center the offset in the view
+                    self.hex_editor.offset_top = max(0, offset - (128 * 1024))
+            else:
+                # For non-windowed view, just ensure we're at the top
+                self.hex_editor.offset_top = 0
+            
+            # Refresh the view to show the new position
+            self.hex_editor.refresh_view()
+            
+            # Update selection info to highlight the string
+            self.hex_editor.update_selection_info(offset, length)
+            
+            # Calculate line and position for scrolling and highlighting
+            bytes_per_line = self.hex_editor.bytes_per_line
+            base_offset = self.hex_editor.offset_top if self.hex_editor.windowed else 0
+            rel_offset = offset - base_offset
+            
+            # Clear any existing string highlights
+            self.hex_editor.hex_text.tag_remove('string_highlight', '1.0', tk.END)
+            
+            # Highlight the string bytes in the hex editor
+            self._highlight_string_in_hex(offset, length)
+            
+            # Scroll to the line containing the string
+            line_idx = rel_offset // bytes_per_line + 1
+            try:
+                self.hex_editor.hex_text.see(f"{line_idx}.0")
+                # Also set the cursor position for better visibility
+                in_line = rel_offset % bytes_per_line
+                text_line = self.hex_editor.hex_text.get(f"{line_idx}.0", f"{line_idx}.end")
+                space_pos = text_line.find('  ')
+                if space_pos != -1:
+                    hex_start = space_pos + 2
+                    group_sz = max(1, int(self.hex_editor.group_var.get()) if hasattr(self.hex_editor, 'group_var') else 4)
+                    group_num = in_line // group_sz
+                    pos_in_group = in_line % group_sz
+                    col = hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
+                    self.hex_editor.hex_text.mark_set(tk.INSERT, f"{line_idx}.{col}")
+            except Exception:
+                # If scrolling fails, at least the selection info is updated
+                pass
+            
+            # Update status with formatted offset
+            if self.firmware_type:
+                formatted_offset = format_offset(offset, self.hex_editor._get_len(), base=16,
+                                               min_width=self.firmware_type['width'],
+                                               max_width=self.firmware_type['width'],
+                                               clamp_profile="none")
+            else:
+                formatted_offset = format_offset(offset, self.hex_editor._get_len(), base=16, clamp_profile="firmware")
+            self.hex_editor.set_status(f"Jumped to string at 0x{formatted_offset}")
+    
+    def _highlight_string_in_hex(self, offset, length):
+        """Highlight the string bytes in the hex editor"""
+        if not self.hex_editor:
+            return
+            
+        # Configure highlight tag if not already done
+        self.hex_editor.hex_text.tag_config('string_highlight', background='#FF6B35', foreground='white')
+        
+        bytes_per_line = self.hex_editor.bytes_per_line
+        base_offset = self.hex_editor.offset_top if self.hex_editor.windowed else 0
+        group_sz = max(1, int(self.hex_editor.group_var.get()) if hasattr(self.hex_editor, 'group_var') else 4)
+        
+        # Highlight each byte of the string
+        for i in range(length):
+            byte_offset = offset + i
+            rel_offset = byte_offset - base_offset
+            
+            # Skip if byte is not in current view
+            if rel_offset < 0 or (self.hex_editor.windowed and rel_offset >= (1024 * 256)):
+                continue
+                
+            line_idx = rel_offset // bytes_per_line + 1
+            in_line = rel_offset % bytes_per_line
+            
+            # Get the actual line text to find hex start position
+            try:
+                text_line = self.hex_editor.hex_text.get(f"{line_idx}.0", f"{line_idx}.end")
+                if not text_line:
+                    continue
+                    
+                space_pos = text_line.find('  ')
+                if space_pos == -1:
+                    continue
+                    
+                hex_start = space_pos + 2
+                
+                # Calculate position accounting for group separators
+                group_num = in_line // group_sz
+                pos_in_group = in_line % group_sz
+                
+                start_col = hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
+                end_col = start_col + 2
+                
+                # Ensure we don't go beyond the line
+                if start_col < len(text_line) and end_col <= len(text_line):
+                    self.hex_editor.hex_text.tag_add('string_highlight', f"{line_idx}.{start_col}", f"{line_idx}.{end_col}")
+            except Exception:
+                continue
+    
     def _export_to_file(self):
         """Export strings to file"""
         from tkinter import filedialog
@@ -4155,6 +4623,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.hex_editor_widget_ref: Optional['HexEditorWidget'] = None # Added type hint for Pylance
         # Initialize a placeholder progress bar so type checkers know it's always set
         self.progress: ttk.Progressbar = ttk.Progressbar(self, length=200, mode='indeterminate')
+        # Initialize main_pane to None, will be set in _build_workspace
+        self.main_pane = None
 
         startup_logger.info("SmartphoneFirmwareScrews: Calling _setup_style.")
         self._setup_style()
@@ -4200,6 +4670,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         borderwidth=1,
                         lightcolor=COLORS['accent_blue'],
                         darkcolor=COLORS['accent_blue'])
+        
+        # Colored split handle for PanedWindow
+        style.configure('Colored.TPanedwindow',
+                        background=COLORS['accent_orange'],
+                        sashwidth=4,
+                        sashrelief='raised')
         startup_logger.debug("SmartphoneFirmwareScrews: _setup_style finished.")
     
     def _build_menu(self):
@@ -4311,6 +4787,17 @@ class SmartphoneFirmwareScrews(tk.Tk):
         view_menu.add_command(label="Split Horizontal", command=self.split_horizontal, accelerator="Ctrl+H")
         view_menu.add_command(label="Split Vertical", command=self.split_vertical, accelerator="Ctrl+V")
         view_menu.add_command(label="Close Pane", command=self.close_pane, accelerator="Ctrl+W")
+        
+        # Open Tab cascading menu
+        open_tab_menu = tk.Menu(view_menu, tearoff=0)
+        view_menu.add_cascade(label="Open Tab", menu=open_tab_menu)
+        open_tab_menu.add_command(label="Firmware", command=lambda: self.open_tab("Firmware"))
+        open_tab_menu.add_command(label="ROM Building", command=lambda: self.open_tab("ROM Building"))
+        open_tab_menu.add_command(label="Hex Editor", command=lambda: self.open_tab("Hex Editor"))
+        open_tab_menu.add_command(label="File Editor", command=lambda: self.open_tab("File Editor"))
+        open_tab_menu.add_command(label="Port ROM", command=lambda: self.open_tab("Port ROM"))
+        open_tab_menu.add_command(label="Tools", command=lambda: self.open_tab("Tools"))
+        
         view_menu.add_separator()
         view_menu.add_command(label="Zoom In", command=self.zoom_in, accelerator="Ctrl+=")
         view_menu.add_command(label="Zoom Out", command=self.zoom_out, accelerator="Ctrl+-")
@@ -4356,27 +4843,27 @@ class SmartphoneFirmwareScrews(tk.Tk):
     
     def _build_workspace(self):
         startup_logger.debug("SmartphoneFirmwareScrews: _build_workspace started.")
-        self.workspace = ttk.PanedWindow(self, orient='vertical')
-        self.workspace.pack(fill='both', expand=True, padx=5, pady=5)
-
-        # Initial split: workspace and log
-        self.main_pane = ttk.Notebook(self.workspace)
-        self.workspace.add(self.main_pane, weight=3)
-
-        # Log at bottom
-        log_frame = ttk.LabelFrame(self.workspace, text="Activity Log", padding=5)
-        self.workspace.add(log_frame, weight=1)
-
-        # Set minimum height for log frame to prevent squishing
-        log_frame.configure(height=200)  # Minimum height of 300 pixels
-        log_frame.pack_propagate(False)  # Prevent the frame from shrinking below its configured size
+        
+        # Log at bottom (pack first to ensure it stays at bottom)
+        log_frame = ttk.LabelFrame(self, text="Activity Log", padding=5)
+        log_frame.pack(side='bottom', fill='x', padx=5, pady=5)
+        log_frame.configure(height=200)
+        self.log_frame = log_frame
 
         self.log_console = LogConsole(log_frame)
         self.log_console.pack(fill='both', expand=True)
+        
+        # Create container frame for main content
+        self.content_frame = ttk.Frame(self)
+        self.content_frame.pack(fill='both', expand=True, padx=5, pady=(5,0))
+        
+        # Main notebook
+        self.main_notebook = ttk.Notebook(self.content_frame)
+        self.main_notebook.pack(fill='both', expand=True)
         startup_logger.debug("SmartphoneFirmwareScrews: _build_workspace finished.")
         
         # Initial content in main pane
-        self._add_notebook_to_pane(self.main_pane)
+        self._add_notebook_to_pane(self.main_notebook)
     
     def _add_notebook_to_pane(self, pane):
         startup_logger.debug("SmartphoneFirmwareScrews: _add_notebook_to_pane started.")
@@ -4386,7 +4873,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             notebook = pane
         else:
             notebook = ttk.Notebook(pane)
-            pane.add(notebook)
+            pane.add(notebook, weight=1)
         
         # Firmware tab
         fw_frame = ttk.Frame(notebook)
@@ -4398,15 +4885,15 @@ class SmartphoneFirmwareScrews(tk.Tk):
         notebook.add(rom_frame, text="ROM Building")
         self._build_rom_ui(rom_frame)
 
-        # File Editor tab
-        file_editor_frame = ttk.Frame(notebook)
-        notebook.add(file_editor_frame, text="File Editor")
-        self._build_file_editor_ui(file_editor_frame)
-
         # Hex Editor tab
         hex_editor_frame = ttk.Frame(notebook)
         notebook.add(hex_editor_frame, text="Hex Editor")
         self._build_hex_editor_ui(hex_editor_frame)
+
+        # File Editor tab
+        file_editor_frame = ttk.Frame(notebook)
+        notebook.add(file_editor_frame, text="File Editor")
+        self._build_file_editor_ui(file_editor_frame)
 
         # Store progress bar reference for hex editor
         self.hex_editor_progress = self.progress
@@ -4424,81 +4911,375 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self._enable_tab_dnd(notebook)
     
     def _get_current_notebook(self):
-        widget = self.focus_get() or self.main_pane
-        while widget and not isinstance(widget, ttk.Notebook):
-            widget = widget.master
-        return widget if isinstance(widget, ttk.Notebook) else None
+        """Get the currently focused notebook"""
+        # Find the notebook that currently has focus
+        focused_widget = self.focus_get()
+        if focused_widget:
+            # Walk up the widget hierarchy to find a notebook
+            current = focused_widget
+            while current and current != self:
+                if isinstance(current, ttk.Notebook):
+                    return current
+                try:
+                    current = current.master
+                except:
+                    break
+        
+        # If no focused notebook found, try to find any notebook with selected tabs
+        def find_notebook_with_selection(widget):
+            if isinstance(widget, ttk.Notebook) and widget.tabs():
+                try:
+                    if widget.select():  # Has a selected tab
+                        return widget
+                except:
+                    pass
+            
+            # Recursively search children
+            try:
+                for child in widget.winfo_children():
+                    result = find_notebook_with_selection(child)
+                    if result:
+                        return result
+            except:
+                pass
+            return None
+        
+        notebook = find_notebook_with_selection(self.content_frame)
+        if notebook:
+            return notebook
+        
+        # Fallback to main notebook
+        return self.main_notebook if hasattr(self, 'main_notebook') else None
+    
+
 
     def _replace_with_split(self, notebook: ttk.Notebook, orientation: str):
+        """Replace notebook with a split pane containing the notebook and a new notebook"""
+        if not notebook:
+            return
+        
+        # Get all tabs from the notebook being split
+        all_tabs = notebook.tabs()
+        if not all_tabs:
+            return
+        
+        # Get tab info before moving
+        tab_info = []
+        selected_tab_index = 0
+        for i, tab_id in enumerate(all_tabs):
+            tab_widget = self.nametowidget(tab_id)
+            tab_text = notebook.tab(tab_id, 'text')
+            tab_info.append((tab_widget, tab_text))
+            if tab_id == notebook.select():
+                selected_tab_index = i
+        
+        # Split tabs: selected and left tabs stay, right tabs move
+        left_tabs = tab_info[:selected_tab_index + 1]  # Include selected tab
+        right_tabs = tab_info[selected_tab_index + 1:]  # Tabs to the right
+        
+        # Fix orientation
+        orient_fixed: Literal["vertical", "horizontal"] = "horizontal" if orientation == "vertical" else "vertical"
+        
+        # Get the parent of the notebook being split
         parent = notebook.master
-        if not isinstance(parent, ttk.PanedWindow):
-            # If parent isn't a PanedWindow, wrap it with one in the main workspace
-            container = self.workspace
-        else:
-            container = parent
-
-        # Create a new PanedWindow with requested orientation
-        orientation_fixed: Literal["vertical", "horizontal"] = orientation if isinstance(orientation, str) and orientation in ("vertical", "horizontal") else "horizontal"
-        new_container = ttk.PanedWindow(container, orient=orientation_fixed)
-        # Add new container and remove the existing notebook from its old parent
-        container.add(new_container)
+        
+        # Store geometry info before removing notebook
+        pack_info = None
+        grid_info = None
+        pane_info = None
+        
+        try:
+            pack_info = notebook.pack_info()
+        except:
+            pass
+        try:
+            grid_info = notebook.grid_info()
+        except:
+            pass
+        
+        # Create new pane
+        new_pane = ttk.PanedWindow(parent, orient=orient_fixed)
+        
+        # Handle different parent types
         if isinstance(parent, ttk.PanedWindow):
+            # Store pane position and weight
+            panes = parent.panes()
+            pane_index = None
+            for i, pane_id in enumerate(panes):
+                if self.nametowidget(pane_id) == notebook:
+                    pane_index = i
+                    break
+            
             parent.forget(notebook)
-        # Left/Top pane: existing notebook
-        new_container.add(notebook, weight=1)
-        # Right/Bottom pane: new notebook
-        new_notebook = ttk.Notebook(new_container)
-        new_container.add(new_notebook, weight=1)
-        self._enable_tab_dnd(new_notebook)
+            if pane_index is not None:
+                parent.insert(pane_index, new_pane, weight=1)
+            else:
+                parent.add(new_pane, weight=1)
+        else:
+            # Use same geometry manager as original notebook
+            if pack_info:
+                notebook.pack_forget()
+                new_pane.pack(**pack_info)
+            elif grid_info:
+                notebook.grid_forget()
+                new_pane.grid(**grid_info)
+            else:
+                notebook.pack_forget()
+                new_pane.pack(fill='both', expand=True)
+        
+        # Style the split handle
+        new_pane.configure(style='Colored.TPanedwindow')
+        
+        # Create left notebook with selected tab and tabs to its left
+        left_notebook = ttk.Notebook(new_pane)
+        new_pane.add(left_notebook, weight=1)
+        self._enable_tab_dnd(left_notebook)
+        
+        for tab_widget, tab_text in left_tabs:
+            new_frame = ttk.Frame(left_notebook)
+            left_notebook.add(new_frame, text=tab_text)
+            
+            if tab_text == "Firmware":
+                self._build_firmware_ui(new_frame)
+            elif tab_text == "ROM Building":
+                self._build_rom_ui(new_frame)
+            elif tab_text == "Hex Editor":
+                self._build_hex_editor_ui(new_frame)
+            elif tab_text == "File Editor":
+                self._build_file_editor_ui(new_frame)
+            elif tab_text == "Port ROM":
+                self._build_port_rom_ui(new_frame)
+            elif tab_text == "Tools":
+                self._build_tools_ui(new_frame)
+        
+        # Create right notebook
+        right_notebook = ttk.Notebook(new_pane)
+        new_pane.add(right_notebook, weight=1)
+        self._enable_tab_dnd(right_notebook)
+        
+        # Add tabs to the right of selected tab to right notebook
+        if right_tabs:
+            for tab_widget, tab_text in right_tabs:
+                new_frame = ttk.Frame(right_notebook)
+                right_notebook.add(new_frame, text=tab_text)
+                
+                if tab_text == "Firmware":
+                    self._build_firmware_ui(new_frame)
+                elif tab_text == "ROM Building":
+                    self._build_rom_ui(new_frame)
+                elif tab_text == "Hex Editor":
+                    self._build_hex_editor_ui(new_frame)
+                elif tab_text == "File Editor":
+                    self._build_file_editor_ui(new_frame)
+                elif tab_text == "Port ROM":
+                    self._build_port_rom_ui(new_frame)
+                elif tab_text == "Tools":
+                    self._build_tools_ui(new_frame)
+            # Select first tab in right notebook
+            if right_notebook.tabs():
+                right_notebook.select(0)
+        else:
+            # Add empty placeholder if no tabs to move
+            placeholder = ttk.Frame(right_notebook)
+            right_notebook.add(placeholder, text="Empty")
+            ttk.Label(placeholder, text="← Drag tabs here", font=('Segoe UI', 11)).pack(expand=True)
+        
+        # Select the originally selected tab (now last in left notebook)
+        if left_notebook.tabs():
+            left_notebook.select(len(left_notebook.tabs()) - 1)
+        
+        # Update main_notebook reference if this was the main notebook
+        if hasattr(self, 'main_notebook') and notebook == self.main_notebook:
+            self.main_notebook = left_notebook
+        
+        # Destroy old tab frames and then the notebook
+        for tab_widget, _ in tab_info:
+            tab_widget.destroy()
+        notebook.destroy()
 
     def split_horizontal(self):
+        """Split current view horizontally"""
         notebook = self._get_current_notebook()
-        if not notebook:
-            return
-        self._replace_with_split(notebook, 'horizontal')
+        if notebook:
+            self._replace_with_split(notebook, 'horizontal')
+            self.log("Split view horizontally", 'info')
     
     def split_vertical(self):
+        """Split current view vertically"""
         notebook = self._get_current_notebook()
-        if not notebook:
-            return
-        self._replace_with_split(notebook, 'vertical')
+        if notebook:
+            self._replace_with_split(notebook, 'vertical')
+            self.log("Split view vertically", 'info')
     
     def close_pane(self):
+        """Close the current pane and collapse split if needed"""
         notebook = self._get_current_notebook()
         if not notebook:
+            self.log("No notebook to close", 'warning')
             return
-        parent = notebook.master
-        if isinstance(parent, ttk.PanedWindow):
-            panes = parent.panes()
-            if len(panes) <= 1:
+        
+        try:
+            parent = notebook.master
+        except:
+            self.log("Notebook parent no longer exists", 'warning')
+            return
+        
+        # Don't allow closing if not in a split pane
+        if not isinstance(parent, ttk.PanedWindow):
+            self.log("Cannot close main notebook", 'warning')
+            messagebox.showwarning("Cannot Close", "Cannot close the main notebook. Split the view first.")
+            return
+        
+        try:
+            panes = list(parent.panes())
+        except:
+            self.log("Parent pane no longer exists", 'warning')
+            return
+            
+        notebook_path = str(notebook)
+        
+        # Check if notebook is actually in this pane
+        if notebook_path not in panes:
+            self.log("Notebook not in pane", 'warning')
+            return
+        
+        # Don't close if it's the only pane
+        if len(panes) <= 1:
+            self.log("Cannot close - only pane remaining", 'warning')
+            return
+        
+        # Get the other pane
+        other_paths = [p for p in panes if p != notebook_path]
+        if not other_paths:
+            return
+        
+        try:
+            other_widget = self.nametowidget(other_paths[0])
+            grandparent = parent.master
+        except:
+            self.log("Cannot access other widgets", 'warning')
+            return
+        
+        try:
+            # Remove both widgets from parent
+            parent.forget(notebook)
+            parent.forget(other_widget)
+            
+            # Replace parent with remaining widget
+            if isinstance(grandparent, ttk.PanedWindow):
+                try:
+                    pane_config = grandparent.pane(parent)
+                    weight = pane_config.get('weight', 1)
+                except:
+                    weight = 1
+                
+                grandparent.forget(parent)
+                grandparent.add(other_widget, weight=weight)
+            
+            # Destroy the closed notebook and parent pane
+            notebook.destroy()
+            parent.destroy()
+            
+            self.log("Pane closed successfully", 'success')
+        except Exception as e:
+            self.log(f"Error closing pane: {e}", 'error')
+    
+    def open_tab(self, tab_name: str):
+        """Open a tab in the current notebook"""
+        notebook = self._get_current_notebook()
+        if not notebook:
+            # Recreate the main view if no notebook exists
+            self._recreate_main_view()
+            notebook = self._get_current_notebook()
+            if not notebook:
+                self.log("Failed to recreate main view", 'error')
                 return
-            # If exactly two panes remain, collapse the split by lifting the other child up
-            if len(panes) == 2:
-                other_path = panes[0] if self.nametowidget(panes[1]) is notebook else panes[1]
-                other_widget = self.nametowidget(other_path)
-                grandparent = parent.master
-                parent.forget(notebook)
-                parent.forget(other_widget)
-                if isinstance(grandparent, ttk.PanedWindow):
-                    grandparent.add(other_widget)
-                else:
-                    # If grandparent isn't a PanedWindow, pack the remaining widget appropriately
-                    other_widget.pack(fill='both', expand=True)
-                parent.destroy()
+        
+        try:
+            # Check if tab already exists
+            for tab_id in notebook.tabs():
+                if notebook.tab(tab_id, 'text') == tab_name:
+                    notebook.select(tab_id)
+                    self.log(f"{tab_name} tab already open", 'info')
+                    return
+            
+            # Remove empty placeholder if it exists
+            for tab_id in notebook.tabs():
+                if notebook.tab(tab_id, 'text') == 'Empty':
+                    placeholder_widget = self.nametowidget(tab_id)
+                    notebook.forget(tab_id)
+                    placeholder_widget.destroy()
+                    break
+            
+            # Create new tab
+            new_frame = ttk.Frame(notebook)
+            if tab_name == "Firmware":
+                notebook.add(new_frame, text="Firmware")
+                self._build_firmware_ui(new_frame)
+            elif tab_name == "ROM Building":
+                notebook.add(new_frame, text="ROM Building")
+                self._build_rom_ui(new_frame)
+            elif tab_name == "Hex Editor":
+                notebook.add(new_frame, text="Hex Editor")
+                self._build_hex_editor_ui(new_frame)
+            elif tab_name == "File Editor":
+                notebook.add(new_frame, text="File Editor")
+                self._build_file_editor_ui(new_frame)
+            elif tab_name == "Port ROM":
+                notebook.add(new_frame, text="Port ROM")
+                self._build_port_rom_ui(new_frame)
+            elif tab_name == "Tools":
+                notebook.add(new_frame, text="Tools")
+                self._build_tools_ui(new_frame)
             else:
-                parent.forget(notebook)
+                new_frame.destroy()
+                return
+            
+            notebook.select(new_frame)
+            self.log(f"Opened {tab_name} tab", 'success')
+        except Exception as e:
+            self.log(f"Error opening {tab_name} tab: {e}", 'error')
+    
+    def _recreate_main_view(self):
+        """Recreate the main view when all notebooks are destroyed"""
+        try:
+            # Clear content frame
+            for widget in self.content_frame.winfo_children():
+                widget.destroy()
+            
+            # Recreate main notebook
+            self.main_notebook = ttk.Notebook(self.content_frame)
+            self.main_notebook.pack(fill='both', expand=True)
+            self._enable_tab_dnd(self.main_notebook)
+            
+            self.log("Recreated main view", 'success')
+        except Exception as e:
+            self.log(f"Error recreating main view: {e}", 'error')
 
     # --- Tab drag & drop across notebooks ---
     def _enable_tab_dnd(self, notebook: ttk.Notebook):
         notebook.bind('<ButtonPress-1>', lambda e, nb=notebook: self._on_tab_press(e, nb), add='+')
         notebook.bind('<B1-Motion>', lambda e, nb=notebook: self._on_tab_motion(e, nb), add='+')
         notebook.bind('<ButtonRelease-1>', lambda e, nb=notebook: self._on_tab_release(e, nb), add='+')
+        notebook.bind('<Button-3>', lambda e, nb=notebook: self._on_tab_right_click(e, nb), add='+')
 
     def _on_tab_press(self, event, notebook: ttk.Notebook):
+        index = None
         try:
-            index = notebook.index('@%d,%d' % (event.x, event.y))
-        except Exception:
-            index = None
+            # Validate coordinates before using them
+            if hasattr(event, 'x') and hasattr(event, 'y') and event.x != '' and event.y != '':
+                x_coord = int(event.x) if str(event.x).isdigit() or (str(event.x).startswith('-') and str(event.x)[1:].isdigit()) else 0
+                y_coord = int(event.y) if str(event.y).isdigit() or (str(event.y).startswith('-') and str(event.y)[1:].isdigit()) else 0
+                index = notebook.index(f'@{x_coord},{y_coord}')
+        except:
+            # If that fails, try to get the currently selected tab
+            try:
+                selected = notebook.select()
+                if selected:
+                    tabs = notebook.tabs()
+                    index = tabs.index(selected)
+            except:
+                index = None
         self._drag_data = {
             'source_nb': notebook,
             'tab_index': index,
@@ -4520,41 +5301,223 @@ class SmartphoneFirmwareScrews(tk.Tk):
         source_nb: ttk.Notebook = data['source_nb']
         tab_widget = data['tab_widget']
 
-        # Identify target notebook under the cursor
+        # Find target notebook under cursor
         target_widget = self.winfo_containing(event.x_root, event.y_root)
         while target_widget and not isinstance(target_widget, ttk.Notebook):
             target_widget = target_widget.master
-        target_nb = target_widget if isinstance(target_widget, ttk.Notebook) else source_nb
-
-        # Compute target index within target notebook
-        try:
-            target_index = target_nb.index('@%d,%d' % (event.x_root - target_nb.winfo_rootx(),
-                                                      event.y_root - target_nb.winfo_rooty()))
-        except Exception:
-            target_index = 'end'
-
-        # Move or reorder tab
-        if target_nb is source_nb:
+        
+        if not isinstance(target_widget, ttk.Notebook):
+            return
+        
+        target_nb = target_widget
+        
+        # Don't move if source has only one tab
+        if len(source_nb.tabs()) <= 1 and source_nb != target_nb:
+            return
+        
+        # Handle reordering within same notebook
+        if source_nb == target_nb:
             try:
-                target_nb.insert(target_index, tab_widget)
+                # Get target position
+                target_x = getattr(event, 'x', None)
+                target_y = getattr(event, 'y', None)
+                target_index = None
+                
+                # Try to get target index
+                try:
+                    if (target_x is not None and target_y is not None and 
+                        str(target_x) != '' and str(target_y) != ''):
+                        x_int = int(target_x) if str(target_x).isdigit() or (str(target_x).startswith('-') and str(target_x)[1:].isdigit()) else 0
+                        y_int = int(target_y) if str(target_y).isdigit() or (str(target_y).startswith('-') and str(target_y)[1:].isdigit()) else 0
+                        target_index = target_nb.index('@%d,%d' % (x_int, y_int))
+                except:
+                    # If coordinates fail, move to end (+1 fix)
+                    target_index = len(target_nb.tabs())
+                
+                current_index = data['tab_index']
+                if target_index is not None and target_index != current_index:
+                    # Move tab to new position
+                    tab_text = source_nb.tab(tab_widget, 'text')
+                    source_nb.forget(tab_widget)
+                    if target_index >= len(source_nb.tabs()):
+                        source_nb.add(tab_widget, text=tab_text)
+                    else:
+                        source_nb.insert(target_index, tab_widget, text=tab_text)
+                    source_nb.select(tab_widget)
             except Exception:
                 pass
+            return
+
+        # Get tab info before moving
+        try:
+            tab_text = source_nb.tab(tab_widget, 'text')
+        except:
+            return
+
+        # Remove placeholder if exists in target
+        for tab_id in target_nb.tabs():
+            if target_nb.tab(tab_id, 'text') == 'Empty':
+                placeholder_widget = self.nametowidget(tab_id)
+                target_nb.forget(tab_id)
+                placeholder_widget.destroy()
+                break
+        
+        # Remove tab from source
+        source_nb.forget(tab_widget)
+        tab_widget.destroy()
+        
+        # Recreate tab in target notebook
+        new_frame = ttk.Frame(target_nb)
+        if tab_text == "Firmware":
+            target_nb.add(new_frame, text="Firmware")
+            self._build_firmware_ui(new_frame)
+        elif tab_text == "ROM Building":
+            target_nb.add(new_frame, text="ROM Building")
+            self._build_rom_ui(new_frame)
+        elif tab_text == "Hex Editor":
+            target_nb.add(new_frame, text="Hex Editor")
+            self._build_hex_editor_ui(new_frame)
+        elif tab_text == "File Editor":
+            target_nb.add(new_frame, text="File Editor")
+            self._build_file_editor_ui(new_frame)
+        elif tab_text == "Port ROM":
+            target_nb.add(new_frame, text="Port ROM")
+            self._build_port_rom_ui(new_frame)
+        elif tab_text == "Tools":
+            target_nb.add(new_frame, text="Tools")
+            self._build_tools_ui(new_frame)
         else:
-            try:
-                text = source_nb.tab(tab_widget, 'text')
-                source_nb.forget(tab_widget)
-                target_nb.insert(target_index, tab_widget)
-                target_nb.tab(tab_widget, text=text)
-                target_nb.select(tab_widget)
-            except Exception:
-                # If insert fails, add at end
-                try:
-                    text = source_nb.tab(tab_widget, 'text')
-                    source_nb.forget(tab_widget)
-                    target_nb.add(tab_widget, text=text)
-                    target_nb.select(tab_widget)
-                except Exception:
-                    pass
+            # Unknown tab type, don't add it
+            new_frame.destroy()
+            return
+        
+        # Select the new tab
+        target_nb.select(new_frame)
+        
+        # Add placeholder to source if it becomes empty
+        if len(source_nb.tabs()) == 0:
+            placeholder = ttk.Frame(source_nb)
+            source_nb.add(placeholder, text="Empty")
+            ttk.Label(placeholder, text="← Drag tabs here", font=('Segoe UI', 11)).pack(expand=True)
+    
+    def _on_tab_right_click(self, event, notebook: ttk.Notebook):
+        """Handle right-click on tab to show context menu"""
+        try:
+            x = getattr(event, 'x', None)
+            y = getattr(event, 'y', None)
+            if x is not None and y is not None and str(x).isdigit() and str(y).isdigit():
+                index = notebook.index('@%d,%d' % (int(x), int(y)))
+                if index is not None:
+                    tabs = notebook.tabs()
+                    if 0 <= index < len(tabs):
+                        tab_widget = self.nametowidget(tabs[index])
+                        tab_text = notebook.tab(tab_widget, 'text')
+                        self._show_tab_context_menu(event, notebook, tab_widget, tab_text)
+        except Exception:
+            pass
+    
+    def _show_tab_context_menu(self, event, notebook: ttk.Notebook, tab_widget, tab_text: str):
+        """Show context menu for tab"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label=f"Close '{tab_text}'", command=lambda: self._close_tab(notebook, tab_widget))
+        menu.post(event.x_root, event.y_root)
+    
+    def _close_tab(self, notebook: ttk.Notebook, tab_widget):
+        """Close a specific tab"""
+        try:
+            tab_text = notebook.tab(tab_widget, 'text')
+            notebook.forget(tab_widget)
+            tab_widget.destroy()
+            
+            # If closing an Empty tab, check if we should undo the split
+            if tab_text == "Empty" and len(notebook.tabs()) == 0:
+                self._try_undo_split(notebook)
+            elif len(notebook.tabs()) == 0:
+                # Add placeholder if notebook becomes empty
+                placeholder = ttk.Frame(notebook)
+                notebook.add(placeholder, text="Empty")
+                ttk.Label(placeholder, text="← Drag tabs here", font=('Segoe UI', 11)).pack(expand=True)
+            
+            self.log("Tab closed", 'success')
+        except Exception as e:
+            self.log(f"Error closing tab: {e}", 'error')
+    
+    def _try_undo_split(self, empty_notebook: ttk.Notebook):
+        """Try to undo split if the other half only has Empty tab"""
+        try:
+            parent = empty_notebook.master
+            if not isinstance(parent, ttk.PanedWindow):
+                return
+            
+            panes = list(parent.panes())
+            if len(panes) != 2:
+                return
+            
+            # Find the other notebook
+            empty_path = str(empty_notebook)
+            other_path = next((p for p in panes if p != empty_path), None)
+            if not other_path:
+                return
+            
+            other_notebook = self.nametowidget(other_path)
+            if not isinstance(other_notebook, ttk.Notebook):
+                return
+            
+            # Check if other notebook only has Empty tab
+            other_tabs = other_notebook.tabs()
+            if len(other_tabs) == 1:
+                tab_text = other_notebook.tab(other_tabs[0], 'text')
+                if tab_text == "Empty":
+                    # Both sides are empty, collapse the split
+                    grandparent = parent.master
+                    
+                    # Remove both notebooks from parent
+                    parent.forget(empty_notebook)
+                    parent.forget(other_notebook)
+                    
+                    # Destroy the empty notebook and its Empty tab
+                    empty_notebook.destroy()
+                    
+                    # Replace parent with the other notebook
+                    if isinstance(grandparent, ttk.PanedWindow):
+                        grandparent.forget(parent)
+                        grandparent.add(other_notebook, weight=1)
+                    else:
+                        parent.pack_forget()
+                        other_notebook.pack(fill='both', expand=True)
+                    
+                    parent.destroy()
+                    
+                    # Update main_notebook reference if needed
+                    if empty_notebook == self.main_notebook:
+                        self.main_notebook = other_notebook
+                    
+                    self.log("Split undone - both sides were empty", 'info')
+                    return
+            
+            # Other side has real tabs, just destroy the empty notebook
+            parent.forget(empty_notebook)
+            empty_notebook.destroy()
+            
+            # Replace parent with the other notebook that has content
+            grandparent = parent.master
+            if isinstance(grandparent, ttk.PanedWindow):
+                grandparent.forget(parent)
+                grandparent.add(other_notebook, weight=1)
+            else:
+                parent.pack_forget()
+                other_notebook.pack(fill='both', expand=True)
+            
+            parent.destroy()
+            
+            # Update main_notebook reference if needed
+            if empty_notebook == self.main_notebook:
+                self.main_notebook = other_notebook
+            
+            self.log("Split undone - empty side removed", 'info')
+            
+        except Exception as e:
+            self.log(f"Error undoing split: {e}", 'error')
     
     def _build_firmware_ui(self, parent):
         # Specific UI for firmware
@@ -5877,15 +6840,18 @@ class SmartphoneFirmwareScrews(tk.Tk):
     def switch_to_port_rom_tab(self, step: int = 1):
         """Switch to the Port ROM tab and optionally set initial step focus"""
         self._port_rom_initial_step = step # Store the desired step
-        for pane_child in self.main_pane.winfo_children():
-            if isinstance(pane_child, ttk.Notebook):
-                notebook = pane_child
-                for i, tab_id in enumerate(notebook.tabs()):
-                    if notebook.tab(tab_id, "text") == "Port ROM":
-                        notebook.select(i)
-                        # Rebuild UI to apply step focus logic
-                        self._build_port_rom_ui(notebook.nametowidget(tab_id), step=self._port_rom_initial_step)
-                        return
+        # Find the main notebook
+        notebook = self.main_notebook if hasattr(self, 'main_notebook') else None
+        if not notebook:
+            return
+        
+        # Find and select the Port ROM tab
+        for i, tab_id in enumerate(notebook.tabs()):
+            if notebook.tab(tab_id, "text") == "Port ROM":
+                notebook.select(i)
+                # Rebuild UI to apply step focus logic
+                self._build_port_rom_ui(notebook.nametowidget(tab_id), step=self._port_rom_initial_step)
+                return
 
     def _build_port_rom_ui(self, parent, step: int = 1):
         # Clear existing widgets in the tab before rebuilding
@@ -6134,7 +7100,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def _extract_tar_md5_for_porting(self, tar_md5_path: str, extract_to_dir: str):
         self.log(f"[*] Extracting {os.path.basename(tar_md5_path)}")
-        tmp_tar = tempfile.mktemp(suffix=".tar")
+        tmp_tar = tempfile.mkstemp(suffix=".tar")[1]
         try:
             # Validate MD5 footer before stripping
             ok, msg = verify_tar_md5_footer(tar_md5_path)
@@ -6151,7 +7117,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             # Fallback to 7z
             seven_z = tool_resolve("7z")
             if seven_z:
-                result = run_cmd([seven_z, "x", tmp_tar, f"-o{extract_to_dir}"])
+                result = run_cmd([seven_z, "x", tmp_tar[1], f"-o{extract_to_dir}"])
                 if result.returncode == 0 and any(True for _ in os.scandir(extract_to_dir)):
                     return
             raise RuntimeError("Could not extract tar archive")
@@ -9291,13 +10257,11 @@ FLASH AT YOUR OWN RISK!
             messagebox.showinfo("Success", "APK decompiled!")
             self._populate_file_editor_tree(out_dir) # Populate the treeview with decompiled files
             # Switch to the File Editor tab
-            for tab_id in self.main_pane.winfo_children():
-                notebook = self.nametowidget(tab_id)
-                if isinstance(notebook, ttk.Notebook):
-                    for i, tab_text in enumerate(notebook.tab(tab_id, "text") for tab_id in notebook.tabs()):
-                        if tab_text == "File Editor":
-                            notebook.select(i)
-                            break
+            if hasattr(self, 'main_notebook') and self.main_notebook:
+                for i, tab_id in enumerate(self.main_notebook.tabs()):
+                    if self.main_notebook.tab(tab_id, "text") == "File Editor":
+                        self.main_notebook.select(i)
+                        break
                     break
         except RuntimeError as e:
             self.log(f"Decompile failed: {e}", 'error')
@@ -10021,75 +10985,61 @@ Author: Isaki Dube | License: Dual
     # View menu methods
     def zoom_in(self):
         """Zoom in on the current view"""
-        # Implementation depends on current tab
-        current_tab = self.main_pane.index(self.main_pane.select())
-        if current_tab == 0:  # Firmware tab
-            # Zoom in firmware tree
-            pass
-        elif current_tab == 1:  # ROM tab
-            # Zoom in ROM tree
-            pass
-        elif current_tab == 2:  # File Editor tab
-            # Zoom in text editor
-            pass
-        elif current_tab == 3:  # Hex Editor tab
-            if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
-                self.hex_editor_widget_ref.zoom_in()
-        messagebox.showinfo("Zoom In", "Zoom in functionality not fully implemented yet.")
+        # Check if main_pane is a Notebook (has tabs)
+        if isinstance(self.main_pane, ttk.Notebook):
+            try:
+                current_tab = self.main_notebook.index(self.main_notebook.select())
+            except:
+                current_tab = -1
+        else:
+            current_tab = -1
+        
+        # Adjust font size for file editor
+        current_font_size = int(self.font_size_var.get()) if hasattr(self, 'font_size_var') else 10
+        new_size = min(current_font_size + 2, 24)
+        if hasattr(self, 'font_size_var'):
+            self.font_size_var.set(str(new_size))
+            self._change_font_size()
+        self.log(f"Zoomed in to {new_size}pt", 'info')
 
     def zoom_out(self):
         """Zoom out on the current view"""
-        # Implementation depends on current tab
-        current_tab = self.main_pane.index(self.main_pane.select())
-        if current_tab == 0:  # Firmware tab
-            # Zoom out firmware tree
-            pass
-        elif current_tab == 1:  # ROM tab
-            # Zoom out ROM tree
-            pass
-        elif current_tab == 2:  # File Editor tab
-            # Zoom out text editor
-            pass
-        elif current_tab == 3:  # Hex Editor tab
-            if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
-                self.hex_editor_widget_ref.zoom_out()
-        messagebox.showinfo("Zoom Out", "Zoom out functionality not fully implemented yet.")
+        # Check if main_pane is a Notebook (has tabs)
+        if isinstance(self.main_pane, ttk.Notebook):
+            try:
+                current_tab = self.main_notebook.index(self.main_notebook.select())
+            except:
+                current_tab = -1
+        else:
+            current_tab = -1
+        
+        # Adjust font size for file editor
+        current_font_size = int(self.font_size_var.get()) if hasattr(self, 'font_size_var') else 10
+        new_size = max(current_font_size - 2, 6)
+        if hasattr(self, 'font_size_var'):
+            self.font_size_var.set(str(new_size))
+            self._change_font_size()
+        self.log(f"Zoomed out to {new_size}pt", 'info')
 
     def reset_zoom(self):
         """Reset zoom to default"""
-        # Implementation depends on current tab
-        current_tab = self.main_pane.index(self.main_pane.select())
-        if current_tab == 0:  # Firmware tab
-            # Reset firmware tree zoom
-            pass
-        elif current_tab == 1:  # ROM tab
-            # Reset ROM tree zoom
-            pass
-        elif current_tab == 2:  # File Editor tab
-            # Reset text editor zoom
-            pass
-        elif current_tab == 3:  # Hex Editor tab
-            if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
-                self.hex_editor_widget_ref.reset_zoom()
-        messagebox.showinfo("Reset Zoom", "Reset zoom functionality not fully implemented yet.")
+        if hasattr(self, 'font_size_var'):
+            self.font_size_var.set("10")
+            self._change_font_size()
+        self.log("Reset zoom to default", 'info')
 
     def toggle_toolbar(self):
         """Toggle toolbar visibility"""
-        # Implementation depends on current tab
-        current_tab = self.main_pane.index(self.main_pane.select())
-        if current_tab == 0:  # Firmware tab
-            # Toggle firmware toolbar
-            pass
-        elif current_tab == 1:  # ROM tab
-            # Toggle ROM toolbar
-            pass
-        elif current_tab == 2:  # File Editor tab
-            # Toggle file editor toolbar
-            pass
-        elif current_tab == 3:  # Hex Editor tab
-            if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
-                self.hex_editor_widget_ref.toggle_toolbar()
-        messagebox.showinfo("Toggle Toolbar", "Toolbar toggle not fully implemented yet.")
+        # Find toolbar frame
+        for widget in self.winfo_children():
+            if isinstance(widget, ttk.Frame) and any(isinstance(child, ttk.Button) for child in widget.winfo_children()):
+                if widget.winfo_ismapped():
+                    widget.pack_forget()
+                    self.log("Toolbar hidden", 'info')
+                else:
+                    widget.pack(fill='x', padx=5, pady=5, before=self.content_frame)
+                    self.log("Toolbar shown", 'info')
+                break
 
     def toggle_status_bar(self):
         """Toggle status bar visibility"""
@@ -10126,14 +11076,14 @@ Author: Isaki Dube | License: Dual
     # Context menu methods for different tabs
     def view_hex_selected(self):
         """View selected item in hex editor"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
                 name = self.fw_tree.item(selected[0], 'text')
                 self.log(f"Viewing {name} in hex editor", 'info')
                 # Switch to hex editor tab and load file
-                self.main_pane.select(3)  # Hex Editor tab
+                self.main_notebook.select(3)  # Hex Editor tab
                 if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
                     # Load the selected firmware entry
                     pass
@@ -10145,13 +11095,13 @@ Author: Isaki Dube | License: Dual
             if hasattr(self, 'file_editor_widget_ref'):
                 current_file = getattr(self.file_editor_widget_ref, 'current_file', None)
                 if current_file:
-                    self.main_pane.select(3)  # Hex Editor tab
+                    self.main_notebook.select(3)  # Hex Editor tab
                     if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
                         self.hex_editor_widget_ref.load_file(current_file)
 
     def view_entropy_selected(self):
         """View entropy analysis of selected item"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 3:  # Hex Editor tab
             if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
                 self.hex_editor_widget_ref.entropy_analysis()
@@ -10160,7 +11110,7 @@ Author: Isaki Dube | License: Dual
 
     def extract_strings_selected(self):
         """Extract strings from selected item"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 3:  # Hex Editor tab
             if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
                 self.hex_editor_widget_ref.show_strings()
@@ -10169,7 +11119,7 @@ Author: Isaki Dube | License: Dual
 
     def decompress_selected(self):
         """Decompress selected compressed file"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10181,7 +11131,7 @@ Author: Isaki Dube | License: Dual
 
     def unpack_boot_selected(self):
         """Unpack selected boot image"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10193,7 +11143,7 @@ Author: Isaki Dube | License: Dual
 
     def extract_system_selected(self):
         """Extract selected system image"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10205,7 +11155,7 @@ Author: Isaki Dube | License: Dual
 
     def verify_md5_selected(self):
         """Verify MD5 of selected item"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10217,7 +11167,7 @@ Author: Isaki Dube | License: Dual
 
     def compute_hash_selected(self):
         """Compute hash of selected item"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10226,7 +11176,7 @@ Author: Isaki Dube | License: Dual
 
     def copy_entry_name(self):
         """Copy entry name to clipboard"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10237,7 +11187,7 @@ Author: Isaki Dube | License: Dual
 
     def copy_entry_path(self):
         """Copy entry path to clipboard"""
-        current_tab = self.main_pane.index(self.main_pane.select())
+        current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
@@ -10275,7 +11225,7 @@ Author: Isaki Dube | License: Dual
     # File Editor context menu methods
     def view_file_hex(self, file_path=None):
         """View file in hex editor"""
-        self.main_pane.select(3)  # Switch to hex editor
+        self.main_notebook.select(3)  # Switch to hex editor
         if self.hex_editor_widget_ref:
             if file_path:
                 self.hex_editor_widget_ref.load_file(file_path)
@@ -10289,7 +11239,7 @@ Author: Isaki Dube | License: Dual
 
     def view_file_entropy(self):
         """View entropy of current file"""
-        self.main_pane.select(3)  # Switch to hex editor
+        self.main_notebook.select(3)  # Switch to hex editor
         if self.hex_editor_widget_ref:
             if hasattr(self, 'file_editor_widget_ref') and self.file_editor_widget_ref:
                 current_file = getattr(self.file_editor_widget_ref, 'current_file', None)
@@ -10301,7 +11251,7 @@ Author: Isaki Dube | License: Dual
 
     def extract_file_strings(self):
         """Extract strings from current file"""
-        self.main_pane.select(3)  # Switch to hex editor
+        self.main_notebook.select(3)  # Switch to hex editor
         if self.hex_editor_widget_ref:
             if hasattr(self, 'file_editor_widget_ref') and self.file_editor_widget_ref:
                 current_file = getattr(self.file_editor_widget_ref, 'current_file', None)
