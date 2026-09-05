@@ -3301,31 +3301,47 @@ class HexEditorWidget(ttk.Frame):
 
     def load_file(self, file_path: str):
         """Load a file into the hex editor"""
+        if getattr(self, '_loading_file', False):
+            return
+        self._loading_file = True
+        threading.Thread(target=self._load_file_worker, args=(file_path,), daemon=True, name="HexFileLoad").start()
+
+    def _load_file_worker(self, file_path: str):
         try:
             with open(file_path, 'rb') as f:
-                self.data = bytearray(f.read())
-            self.file_path = file_path
-            self.modified = False
-            self.undo_stack.clear()
-            self.redo_stack.clear()
-            self.search_hits.clear()
-            self._search_cached_query = None
-            self._search_pattern = None
-            self.find_occurrences.clear()
-            self.preserved_selection = None
-            self.current_selection = (None, None)
-            self._edit_generation += 1
-            self.offset_top = 0
-            data_len = len(self.data)
-            self.windowed = data_len > 1024 * 256
-            self.firmware_type = detect_firmware_file_type(os.path.basename(file_path))
-            # Use the unified render path so the line format matches every other
-            # consumer (selection / highlight / goto / on_click all parse the
-            # same "OFFSET  HEX  ASCII" layout produced by refresh_view).
-            self.refresh_view()
-            self.status_callback(f"Loaded: {os.path.basename(file_path)}")
+                data = bytearray()
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    data.extend(chunk)
+            self.after(0, self._finish_hex_load, file_path, data)
         except Exception as e:
-            self.log_callback(f"Failed to load file: {e}", 'error')
+            self.after(0, self.log_callback, f"Failed to load file: {e}", 'error')
+            self.after(0, self._finish_hex_load_error)
+
+    def _finish_hex_load_error(self):
+        self._loading_file = False
+
+    def _finish_hex_load(self, file_path: str, data: bytearray):
+        self.data = data
+        self.file_path = file_path
+        self.modified = False
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.search_hits.clear()
+        self._search_cached_query = None
+        self._search_pattern = None
+        self.find_occurrences.clear()
+        self.preserved_selection = None
+        self.current_selection = (None, None)
+        self._edit_generation += 1
+        self.offset_top = 0
+        self.windowed = len(self.data) > 1024 * 256
+        self.firmware_type = detect_firmware_file_type(os.path.basename(file_path))
+        self.refresh_view()
+        self.status_callback(f"Loaded: {os.path.basename(file_path)}")
+        self._loading_file = False
 
     # Backwards-compat alias – some external callers used this name. The
     # canonical renderer is refresh_view() so all line-format assumptions
@@ -3683,6 +3699,10 @@ MD5: {md5_hash}
     def open_file(self, mmap_ok=False):
         path = filedialog.askopenfilename(title="Open file", filetypes=[("All files", "*.*")])
         if not path:
+            return
+        if not mmap_ok:
+            self.close_file()
+            self.load_file(path)
             return
         self.close_file()
         try:
@@ -5521,40 +5541,39 @@ MD5: {md5_hash}
     # Analysis tools
     def entropy_analysis(self):
         sel = self.current_selection
-        if sel[0] is None:
-            data = self._get_slice(0, self._get_len())
-            base_offset = 0
-        else:
-            data = self._get_slice(sel[0], sel[1])
-            base_offset = sel[0]
-        ent = self.calc_entropy(data)
-        if MATPLOTLIB:
-            # plot sliding window entropy
+        data = self._get_slice(0, self._get_len()) if sel[0] is None else self._get_slice(sel[0], sel[1])
+        base_offset = 0 if sel[0] is None else sel[0]
+        self.set_status("Calculating entropy...")
+
+        def calculate():
+            ent = self.calc_entropy(data)
             window = min(4096, len(data) // 4) if len(data) > 16 else len(data)
-            ent_vals = []
-            xs = []
-            if len(data) <= window:
-                # For small data, just show overall entropy
-                ent_vals = [ent]
-                xs = [base_offset]
-            else:
-                for i in range(0, len(data) - window + 1, window // 2):
-                    ent_vals.append(self.calc_entropy(data[i:i + window]))
-                    xs.append(base_offset + i)
-            import matplotlib.pyplot as plt
-            fig = plt.figure(figsize=(8, 5))
-            manager = getattr(fig.canvas, 'manager', None)
-            if manager is not None:
-                manager.set_window_title("Data Entropy Analysis")
-            plt.plot(xs, ent_vals, 'b-', linewidth=2)
-            plt.title(f"Data Entropy Analysis - Overall: {ent:.4f} bits/byte ({len(data):,} bytes)")
-            plt.xlabel("File Offset (bytes)")
-            plt.ylabel("Shannon Entropy (bits/byte)")
-            plt.grid(True, alpha=0.3)
-            plt.show()
-        else:
-            # fallback: text summary
+            ent_vals = [ent]
+            offsets = [base_offset]
+            if window and len(data) > window:
+                stride = max(1, window // 2)
+                ent_vals = [self.calc_entropy(data[i:i + window]) for i in range(0, len(data) - window + 1, stride)]
+                offsets = [base_offset + i for i in range(0, len(data) - window + 1, stride)]
+            self.after(0, lambda: self._show_entropy_result(ent, ent_vals, offsets, len(data)))
+
+        threading.Thread(target=calculate, daemon=True, name="HexEntropy").start()
+
+    def _show_entropy_result(self, ent, ent_vals, offsets, data_length):
+        self.set_status("Ready")
+        if not MATPLOTLIB:
             messagebox.showinfo("Entropy", f"Entropy: {ent:.6f}")
+            return
+        import matplotlib.pyplot as plt
+        fig, axis = plt.subplots(figsize=(8, 5))
+        manager = getattr(fig.canvas, 'manager', None)
+        if manager is not None:
+            manager.set_window_title("Data Entropy Analysis")
+        axis.plot(offsets, ent_vals, 'b-', linewidth=2)
+        axis.set_title(f"Data Entropy Analysis - Overall: {ent:.4f} bits/byte ({data_length:,} bytes)")
+        axis.set_xlabel("File Offset (bytes)")
+        axis.set_ylabel("Shannon Entropy (bits/byte)")
+        axis.grid(True, alpha=0.3)
+        fig.show()
 
     def show_strings(self):
         """Show enhanced strings dialog with search capabilities"""
@@ -5569,9 +5588,7 @@ MD5: {md5_hash}
         # Use threading to prevent UI freeze during string extraction
         def extract_strings_thread():
             try:
-                self.set_status("Extracting strings...")
-                if self.progress_callback:
-                    self.progress_callback.start()
+                self.after(0, lambda: self.set_status("Extracting strings..."))
 
                 strings_with_offsets = []
                 strings = self.extract_strings(data, min_len=4)
@@ -5603,10 +5620,10 @@ MD5: {md5_hash}
 
             except Exception as e:
                 self.log_callback(f"String extraction failed: {e}", 'error')
-                self.set_status("Ready")
+                self.after(0, lambda: self.set_status("Ready"))
             finally:
                 if self.progress_callback:
-                    self.progress_callback.stop()
+                    self.after(0, self.progress_callback.stop)
 
         threading.Thread(target=extract_strings_thread, daemon=True).start()
 
@@ -5616,26 +5633,33 @@ MD5: {md5_hash}
             data = self._get_slice(0, self._get_len())
         else:
             data = self._get_slice(sel[0], sel[1])
-        freq = [0] * 256
-        for b in data:
-            freq[b] += 1
+        self.set_status("Calculating byte histogram...")
+
+        def calculate():
+            freq = [0] * 256
+            for byte in data:
+                freq[byte] += 1
+            self.after(0, lambda: self._show_histogram_result(freq, len(data)))
+
+        threading.Thread(target=calculate, daemon=True, name="HexHistogram").start()
+
+    def _show_histogram_result(self, freq, data_length):
+        self.set_status("Ready")
         if MATPLOTLIB:
             import matplotlib.pyplot as plt
-            fig = plt.figure(figsize=(10, 6))
+            fig, axis = plt.subplots(figsize=(10, 6))
             manager = getattr(fig.canvas, 'manager', None)
             if manager is not None:
                 manager.set_window_title("Byte Frequency Distribution")
-            plt.bar(range(256), freq, width=1.0)
-            plt.title(f"Byte Frequency Distribution - {len(data):,} bytes analyzed")
-            plt.xlabel("Byte Value (0-255)")
-            plt.ylabel("Frequency Count")
-            plt.show()
+            axis.bar(range(256), freq, width=1.0)
+            axis.set_title(f"Byte Frequency Distribution - {data_length:,} bytes analyzed")
+            axis.set_xlabel("Byte Value (0-255)")
+            axis.set_ylabel("Frequency Count")
+            fig.show()
         else:
-            # textual top 16
             items = sorted(((i, freq[i]) for i in range(256)), key=lambda x: -x[1])[:20]
             text = "\n".join(f"{i:02X}: {c}" for i, c in items)
-            dlg = TextOutputDialog(self.winfo_toplevel(), "Byte histogram (top 20)", text)
-            self.wait_window(dlg)
+            TextOutputDialog(self.winfo_toplevel(), "Byte histogram (top 20)", text)
 
     # Utility
     def set_status(self, text):
@@ -9731,8 +9755,6 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if not self.syntax_highlight_var.get():
             return
         content = self.file_editor.get('1.0', tk.END)
-        if len(content) > 1000000:
-            return
 
         for tag in self.file_editor.tag_names():
             if tag != 'sel':
@@ -10673,19 +10695,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self._worker_set_status(f"Loading {os.path.basename(file_path)}...")
             self._worker_progress_start()
 
-            # Check file size and handle large files differently
-            if file_size > 50 * 1024 * 1024:  # 50MB limit
-                self._worker_showwarning(
-                    "Large File Warning",
-                    f"File is {file_size / (1024*1024):.1f} MB. Loading may be slow.\n\n"
-                    "Consider using an external editor for files larger than 50MB.",
-                )
-                return
-
-            # Read file in chunks to avoid UI freezing on large files
-            content = ""
+            content_parts = []
             chunk_size = 16384  # 16KB chunks for better performance
-            max_content_size = 10 * 1024 * 1024  # 10MB max content to display
 
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 bytes_read = 0
@@ -10693,14 +10704,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     chunk = f.read(chunk_size)
                     if not chunk:
                         break
-                    content += chunk
+                    content_parts.append(chunk)
                     bytes_read += len(chunk)
-
-                    # Limit content size to prevent memory issues
-                    if len(content) > max_content_size:
-                        content = content[:max_content_size] + "\n\n[FILE TRUNCATED - Content too large to display fully]"
-                        self._call_on_ui(self.log, f"File truncated at {max_content_size} characters", 'warning')
-                        break
 
                     # Update progress for large files (>1MB)
                     if file_size > 1024 * 1024:
@@ -10713,6 +10718,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     else:
                         time.sleep(0.001)
 
+            content = ''.join(content_parts)
             self._call_on_ui(self._display_file_content, file_path, content)
             self._call_on_ui(self.log, f"Opened file: {os.path.basename(file_path)} ({len(content)} chars)", 'info')
         except Exception as e:
@@ -10721,12 +10727,18 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self._worker_set_status("Ready")
             self._worker_progress_stop()
 
-    def _display_file_content(self, file_path: str, content: str):
+    def _display_file_content(self, file_path: str, content: str, content_loaded: bool = False):
         """Display file content in the editor."""
-        # Disable updates during content insertion for better performance
-        self.file_editor.config(state=tk.NORMAL)
-        self.file_editor.delete('1.0', tk.END)
-        self.file_editor.insert('1.0', content)
+        if not content_loaded and len(content) > 65536:
+            self.file_editor.config(state=tk.NORMAL)
+            self.file_editor.delete('1.0', tk.END)
+            self.current_file = file_path
+            self._insert_file_editor_chunks(file_path, content, 0)
+            return
+        if not content_loaded:
+            self.file_editor.config(state=tk.NORMAL)
+            self.file_editor.delete('1.0', tk.END)
+            self.file_editor.insert('1.0', content)
         self.current_file = file_path
 
         # Detect language from filename
@@ -10780,14 +10792,24 @@ class SmartphoneFirmwareScrews(tk.Tk):
         # Update line numbers after a small delay to ensure widget is rendered
         self.after(10, lambda: self._update_line_numbers())
 
-        # Only apply syntax highlighting for smaller files
-        if len(content) <= 1000000 and self.syntax_highlight_var.get():  # 1MB limit
-            self._apply_syntax_highlighting()
+        # Regex-based highlighting performs many Tk tag operations. Avoid
+        # blocking the event loop on large files; the editor remains usable.
+        if self.syntax_highlight_var.get():
+            self.after_idle(self._apply_syntax_highlighting)
         # Ensure the editor remains editable and focused
         self.file_editor.config(state=tk.NORMAL)
         self.file_editor.focus_set()
         self.file_editor.mark_set(tk.INSERT, '1.0')
         self.log(f"File loaded: {os.path.basename(file_path)}", 'success')
+
+    def _insert_file_editor_chunks(self, file_path: str, content: str, offset: int):
+        """Insert the complete editor buffer in bounded Tk event-loop chunks."""
+        chunk_end = min(len(content), offset + 65536)
+        self.file_editor.insert(tk.END, content[offset:chunk_end])
+        if chunk_end < len(content):
+            self.after_idle(self._insert_file_editor_chunks, file_path, content, chunk_end)
+        else:
+            self._display_file_content(file_path, content, content_loaded=True)
 
     def _open_file_editor_and_load_file(self, file_path: str):
         """Switch to File Editor tab and load a file for editing."""
@@ -10803,26 +10825,20 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     nb.select(i)
                     break
 
-        # Check file size
-        file_size = os.path.getsize(file_path)
-        if file_size > 10 * 1024 * 1024:  # 10MB warning
-            if not messagebox.askyesno("Large File Warning",
-                f"File is {file_size / (1024*1024):.1f} MB. Continue?"):
-                return
-
-        # Load the file
-        self._open_file_editor_file_thread(file_path)
+        # Load the file off the Tk event loop. The worker marshals the final
+        # text insertion back to Tk once disk I/O is complete.
+        if getattr(self, '_loading_file', False):
+            return
+        self._loading_file = True
+        threading.Thread(
+            target=self._open_file_editor_path_with_lock,
+            args=(file_path,),
+            daemon=True,
+        ).start()
 
     def _open_file_editor_entry(self, item_id):
         file_path = self.file_editor_tree.item(item_id, "values")[0]
         if os.path.isfile(file_path):
-            # Check file size and warn for large files
-            file_size = os.path.getsize(file_path)
-            if file_size > 10 * 1024 * 1024:  # 10MB warning
-                if not messagebox.askyesno("Large File Warning",
-                    f"File is {file_size / (1024*1024):.1f} MB. Opening large files may be slow.\n\nContinue?"):
-                    return
-
             # File opening is already threaded in the double-click handler
             self._open_file_editor_file_thread(file_path)
         else:
@@ -10832,6 +10848,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
         """Wrapper to handle loading lock"""
         try:
             self._open_file_editor_entry(item)
+        finally:
+            self._loading_file = False
+
+    def _open_file_editor_path_with_lock(self, file_path):
+        """Load a known path in the worker and release the loading guard."""
+        try:
+            self._open_file_editor_file_thread(file_path)
         finally:
             self._loading_file = False
 
@@ -10968,36 +10991,14 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showwarning("Warning", "No file is currently open")
             return
 
-        try:
-            self.status_label.config(text=f"Reloading {os.path.basename(self.current_file)}...")
-            self.progress.start()
-
-            # Check file size before reloading
-            file_size = os.path.getsize(self.current_file)
-            if file_size > 50 * 1024 * 1024:  # 50MB limit
-                messagebox.showwarning("Large File Warning",
-                    f"File is {file_size / (1024*1024):.1f} MB. Reload may be slow.")
-                return
-
-            with open(self.current_file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(10 * 1024 * 1024)  # Limit to 10MB for display
-                if len(content) == 10 * 1024 * 1024 and f.read(1):  # Check if more content exists
-                    content += "\n\n[FILE TRUNCATED - Content too large to display fully]"
-
-            self.file_editor.config(state=tk.NORMAL)
-            self.file_editor.delete('1.0', tk.END)
-            self.file_editor.insert('1.0', content)
-            # Only apply syntax highlighting for smaller files
-            if len(content) <= 1000000:
-                self._apply_syntax_highlighting()
-            self.file_editor.focus_set()
-            self.file_editor.mark_set(tk.INSERT, '1.0')
-            self.log(f"Reloaded: {os.path.basename(self.current_file)}", 'info')
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to reload file: {e}")
-        finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+        if getattr(self, '_loading_file', False):
+            return
+        self._loading_file = True
+        threading.Thread(
+            target=self._open_file_editor_path_with_lock,
+            args=(self.current_file,),
+            daemon=True,
+        ).start()
     
     def _create_odin_package_thread(self):
         """Create Odin package (AP/BL/CP/CSC) with correct tar.md5 footer."""
@@ -12408,7 +12409,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 perms = _safe(res)
                 res = run_cmd([aapt2, "dump", "resources", source_path])
                 resources = _safe(res)
-                res = run_cmd([aapt2, "dump", "xmltree", source_path, "--file=AndroidManifest.xml"])
+                res = run_cmd([aapt2, "dump", "xmltree", source_path, "--file", "AndroidManifest.xml"])
                 manifest = _safe(res)
                 res = run_cmd([aapt2, "dump", "strings", source_path])
                 strings_out = _safe(res)
@@ -12432,12 +12433,20 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
                 # Capture values in default args to avoid closure surprises
                 def _update(b=badging, p2=perms, r=resources, m=manifest, s=strings_out):
+                    manifest_text = m
+                    if not manifest_text.strip() or "error" in manifest_text.lower()[:200]:
+                        decoded_manifest = os.path.join(p.working_dir or "", "decoded", "AndroidManifest.xml")
+                        if os.path.isfile(decoded_manifest):
+                            try:
+                                manifest_text = open(decoded_manifest, 'r', encoding='utf-8', errors='replace').read()
+                            except OSError:
+                                pass
                     # Truncate very large outputs to keep UI responsive
                     MAX = 2_000_000
                     for attr, text in (('apk_badging_text', b),
                                        ('apk_perms_text', p2),
                                        ('apk_res_text', r),
-                                       ('apk_manifest_text', m),
+                                       ('apk_manifest_text', manifest_text),
                                        ('apk_strings_text', s)):
                         if hasattr(self, attr):
                             w = getattr(self, attr)
@@ -12620,6 +12629,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.apk_tree_menu = tk.Menu(self, tearoff=0)
         self.apk_tree_menu.add_command(label="📂 Open in File Editor", command=self._apk_open_in_file_editor)
         self.apk_tree_menu.add_command(label="🔍 View in Hex Editor", command=self._apk_open_in_hex_editor)
+        self.apk_tree_menu.add_command(label="🖼️ Preview Image", command=self._apk_preview_image)
         self.apk_tree_menu.add_command(label="📁 Open Containing Folder", command=self._apk_open_containing_folder)
         self.apk_tree_menu.add_separator()
         self.apk_tree_menu.add_command(label="📋 Copy Path", command=self._apk_copy_path)
@@ -12710,6 +12720,36 @@ class SmartphoneFirmwareScrews(tk.Tk):
             styled_messagebox(self, "Error", f"File no longer exists in extract:\n{full}", "error")
             return
         self._open_hex_editor_and_load_file(full)
+
+    def _apk_preview_image(self):
+        """Preview an image resource selected in the APK contents tree."""
+        path = self._apk_get_selected_path()
+        if not path or not path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp')):
+            styled_messagebox(self, "Info", "Select an image resource first.", "info")
+            return
+        full = self._apk_get_full_path()
+        if not full or not os.path.isfile(full):
+            styled_messagebox(self, "Error", "The selected image no longer exists.", "error")
+            return
+        window = tk.Toplevel(self)
+        window.title(f"Image Preview - {os.path.basename(full)}")
+        window.transient(self)
+        try:
+            try:
+                from PIL import Image, ImageTk
+                image = Image.open(full)
+                image.thumbnail((1024, 768), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image)
+            except ImportError:
+                photo = tk.PhotoImage(file=full)
+            label = ttk.Label(window, image=photo)
+            setattr(label, 'image', photo)
+            label.pack(fill='both', expand=True, padx=8, pady=8)
+            ttk.Label(window, text=f"{os.path.basename(full)}  {os.path.getsize(full):,} bytes").pack(pady=(0, 8))
+            window.geometry(f"{max(320, photo.width() + 32)}x{max(240, photo.height() + 72)}")
+        except Exception as exc:
+            window.destroy()
+            styled_messagebox(self, "Preview Error", f"Could not preview image:\n{exc}", "error")
 
     def _open_hex_editor_and_load_file(self, file_path: str):
         """Open a file in the in-app hex editor."""
@@ -18119,7 +18159,11 @@ FLASH AT YOUR OWN RISK!
             if project.opened_files:
                 for file_path in project.opened_files:
                     if os.path.exists(file_path):
-                        self._open_file_editor_file_thread(file_path)
+                        threading.Thread(
+                            target=self._open_file_editor_path_with_lock,
+                            args=(file_path,),
+                            daemon=True,
+                        ).start()
 
             # Restore expanded folders
             if project.expanded_folders:
