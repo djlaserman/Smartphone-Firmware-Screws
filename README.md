@@ -2,24 +2,25 @@
 
 ## Ultimate Firmware Studio - Complete Android ROM & Firmware Toolkit
 
-Professional-grade ROM building, firmware modification, and device flashing toolkit. This comprehensive suite provides everything needed for Android firmware development, from source code compilation to device flashing.
+Windows-focused Android firmware and ROM workspace for inspecting Samsung firmware, porting ROM components, editing binary and text files, managing APK/XAPK projects, and preparing Odin/Heimdall packages.
 
 ## Features
 
 ### Core Capabilities
 
-- **AOSP/Custom ROM Building**: Build Android ROMs from source code or existing images
-- **Odin Firmware Building**: Create byte-exact .tar.md5 firmware packages for Samsung devices
+- **Samsung Firmware Workflow**: Load, inspect, extract, modify, verify, and package `.tar.md5` firmware
+- **Odin Package Creation**: Build AP/BL/CP/CSC packages with TAR validation and MD5 footer verification
 - **Boot Image Modification**: Edit kernel, ramdisk, cmdline, and other boot components
 - **System Customization**: Modify system/vendor/product partitions and properties
-- **APK Tools**: Decompile, recompile, sign, and modify Android applications
+- **APK/XAPK Workspace**: Analyze APK, XAPK, APKS, and APKM packages and manage decoded/build/signing artifacts
 - **OTA Package Creation**: Build over-the-air update packages
 - **Sparse Image Handling**: Convert between sparse and raw image formats
 - **Super Partition Manipulation**: Work with modern Android super partitions
 - **Binary Modding Tools**: Comprehensive archive and compression support (7z, zip, etc.)
 - **Device Flashing**: Heimdall/Odin flashing support for Samsung devices
-- **Project-Based Workflow**: Organized development with project management
-- **30+ Tool Integration**: Extensive collection of external tools in the tools/ directory
+- **Project-Based Workflow**: Save and restore tabs, folders, editor state, Port ROM state, APK projects, and UI settings
+- **Tool Resolver and Manager**: Detect, download, stage, and refresh integrated tools from the Tools tab
+- **Windows CI Releases**: GitHub Actions builds and publishes a PyInstaller Windows executable for version tags
 
 ### Detailed Functionality
 
@@ -30,6 +31,7 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 - **Entry Replacement**: Modify firmware entries in-place with MD5 updates
 - **Firmware Building**: Create new firmware packages from modified components
 - **MD5 Verification**: Verify firmware integrity and signatures
+- **TAR Safety Checks**: Validate regular TAR members, reject unsafe links, detect duplicate AP members, and select source packages deterministically
 
 #### ROM Development
 
@@ -44,6 +46,18 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 - **APK Recompilation**: Build APK from modified source
 - **APK Signing**: Sign APKs with debug or custom keystores
 - **Compression Optimization**: Fix APK compression for Android R+ compatibility
+- **Bundle Analysis**: Run AAPT2 analysis against extracted inner APKs instead of outer XAPK/APKS/APKM containers
+- **Manifest Patching**: Patch debuggable mode, application labels, permissions, and network security configuration through decoded manifests
+
+#### Port ROM Workflow
+
+The Port ROM tab contains 35 ordered steps grouped into preparation, extraction, analysis, modification, repacking, packaging, and validation phases. Steps cover firmware extraction, LZ4 and sparse image conversion, super/boot/ramdisk handling, DTB and SELinux work, APK analysis, image rebuilding, Odin packaging, AVB checks, MD5 checks, and manifest generation.
+
+- Dependencies remain locked by default.
+- Each step has independent `Skip` and `Done` acknowledgements.
+- Explicitly skipping or acknowledging a prerequisite unlocks dependent steps.
+- Skip and Done are mutually exclusive and are saved with the project.
+- Porting steps are available in the Port ROM UI and the ordered `Port ROM > Porting Steps` menu.
 
 #### Boot Image Tools
 
@@ -68,26 +82,50 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 
 #### Advanced Features
 
-- **Hex Editor**: Built-in hex editor with live data analysis
-- **File Editor**: Advanced text editor with syntax highlighting
+- **Hex Editor**: Binary editing, undo/redo, searching, replacement, bookmarks, selections, endian conversion, entropy, strings, histograms, hashes, and context-menu analysis
+- **File Editor**: Folder tree, unsaved buffers, syntax highlighting, language selection, line numbers, word wrap, font controls, find/replace, and Notepad++ integration
+- **Split Workspace**: Split notebooks horizontally or vertically while preserving live tab widgets and editor state
+- **Open Tab**: Reopen Firmware, ROM Building, Hex Editor, File Editor, APK/XAPK, Port ROM, and Tools tabs from the View menu
 - **Entropy Analysis**: Analyze file entropy for security research
 - **String Extraction**: Extract printable strings from binaries
 - **Byte Histogram**: Statistical analysis of binary data
 - **Live Converters**: Real-time conversion between data formats (hex, integer, float, strings)
 
+#### Project Persistence
+
+Project files store the current workflow state, including:
+
+- Visible and selected tabs
+- Firmware and Hex Editor file paths
+- Hex layout, endian mode, gutter, font, and scroll position
+- File Editor folder, current file, unsaved content, wrapping, syntax highlighting, line numbers, and font size
+- Port ROM folders, device fields, step statuses, step results, and Skip/Done overrides
+- APK/XAPK source, extracted/decoded/build/signing paths, package metadata, and bundle file lists
+- Status bar and activity log visibility
+
 ## System Requirements
 
-- **Python 3.7+**
+- **Windows 10/11** for the packaged executable and device workflows
+- **Python 3.9+** for source execution
 - **Java JDK** (for APK tools and signing)
-- **Windows/Linux/macOS** (cross-platform support)
-- **Administrator privileges** (for device flashing on Windows)
+- **Administrator privileges** when using device detection or flashing
 
 ## Installation
 
-1. Clone or download the repository
-2. Ensure Python 3.7+ is installed
-3. Install Java JDK if APK manipulation is needed
-4. Place required tools in the `tools/` directory (see tool integration below)
+### Run from source
+
+1. Clone or download the repository.
+2. Ensure Python and Java are installed when APK operations are needed.
+3. Place or download external tools into `src/tools/`.
+4. Start the GUI:
+
+```bash
+python src/smartphone_firmware_screws.py
+```
+
+### Windows executable
+
+Tagged GitHub releases are built automatically by [`.github/workflows/windows-build.yml`](.github/workflows/windows-build.yml). Each release contains the Windows executable, `VERSION.txt`, and `SHA256SUMS.txt`.
 
 ## Usage
 
@@ -97,17 +135,17 @@ Professional-grade ROM building, firmware modification, and device flashing tool
 python src/smartphone_firmware_screws.py
 ```
 
-### Command Line
-
-The application provides a comprehensive GUI interface with the following main sections:
+### Main workspace sections
 
 - **Firmware Tab**: Load, analyze, and modify firmware files
-- **ROM Tab**: Build and customize Android ROMs
-- **APK Tab**: Decompile, modify, and recompile Android apps
-- **Boot Tab**: Work with boot images and kernels
+- **ROM Building Tab**: Build and customize Android ROMs
+- **Hex Editor Tab**: Inspect and modify binary files
+- **File Editor Tab**: Edit text and decoded project files
+- **APK/XAPK Tab**: Analyze, disassemble, assemble, sign, bundle, and patch Android packages
+- **Port ROM Tab**: Run the ordered Samsung ROM porting workflow
 - **Tools Tab**: Manage external tools and check system status
-- **Hex Editor**: Advanced binary file editing
-- **File Editor**: Text file editing with syntax highlighting
+
+Use `File > New Project`, `File > Open Project`, and `File > Save Project` to persist the workspace state.
 
 ## Tool Integration
 
@@ -177,6 +215,6 @@ This project welcomes contributions. Please ensure all changes comply with the d
 
 This software is provided "AS IS" without warranty. Use at your own risk. Device flashing can potentially brick devices if not done correctly. Always backup important data before flashing.
 
-## Version
+## Version and Releases
 
-**Version 1.0.0** - Latest release with enhanced features and bug fixes.
+The source currently reports version `1.0.0`. The `v1.0.1` GitHub release is built by CI with its tag version, and future `vMAJOR.MINOR.PATCH` tags automatically produce versioned Windows artifacts and releases.
