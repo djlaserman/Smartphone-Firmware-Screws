@@ -36,7 +36,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any, Literal
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, font, simpledialog, scrolledtext
@@ -62,23 +62,56 @@ except Exception:
 APP_TITLE = "Smartphone Firmware Screws"
 VERSION = "1.0.0"  # Updated for fixes
 TOOLS_DIR = os.path.join(os.path.dirname(__file__), "tools")
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
+SETTINGS_FILE = os.path.join(CONFIG_DIR, "editor_settings.json")
+
+# Default editor settings
+DEFAULT_EDITOR_SETTINGS = {
+    'syntax_highlighting': True,
+    'line_numbers': True,
+    'line_numbers_for_code': True,
+    'line_numbers_for_text': False,
+    'line_numbers_for_samsung': False,
+    'word_wrap': False,
+    'font_size': 10,
+    'last_language_mode': 'auto'
+}
+
+def load_editor_settings():
+    """Load editor settings from JSON file"""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+            return {**DEFAULT_EDITOR_SETTINGS, **settings}
+    except Exception:
+        pass
+    return DEFAULT_EDITOR_SETTINGS.copy()
+
+def save_editor_settings(settings):
+    """Save editor settings to JSON file"""
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=2)
+    except Exception:
+        pass
 
 # Tool metadata and download URLs
 TOOL_METADATA = {
-    # Core tools (existing)
     '7z': {
         'description': '7-Zip archive tool',
-        'url': 'https://www.7-zip.org/a/7z2201-x64.exe',
-        'filename': '7z.exe',
-        'version': '22.01',
+        'url': 'https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe',
+        'filename': '7z2602-x64.exe',
+        'version': '26.02',
         'subdir': '7z',
         'extract_type': 'exe',
         'expected_files': ['7z.exe', '7z.dll']
     },
     'lz4': {
         'description': 'LZ4 compression tool',
-        'url': 'https://github.com/lz4/lz4/releases/download/v1.9.4/lz4_v1_9_4_win64.zip',
-        'filename': 'lz4.exe',
+        'url': 'https://github.com/lz4/lz4/releases/download/v1.9.4/lz4_win64_v1_9_4.zip',
+        'filename': 'lz4_win64_v1_9_4.zip',
         'version': '1.9.4',
         'subdir': 'lz4',
         'extract_type': 'zip',
@@ -86,107 +119,112 @@ TOOL_METADATA = {
     },
     'heimdall': {
         'description': 'Heimdall flashing tool',
-        'url': 'https://github.com/Benjamin-Dobell/Heimdall/releases/download/v1.4.2/heimdall-1.4.2-win64.zip',
-        'filename': 'heimdall.exe',
+        'url': 'https://github.com/amo13/Heimdall/releases/download/v1.4.2/heimdall.windows.zip',
+        'filename': 'heimdall.zip',
         'version': '1.4.2',
         'subdir': 'heimdall',
         'extract_type': 'zip',
-        'expected_files': ['heimdall.exe', 'libusb-1.0.dll']
+        'expected_files': ['heimdall.exe', 'heimdall-frontend.exe']
     },
     'magiskboot': {
         'description': 'Magisk boot image tool',
-        'url': 'https://github.com/topjohnwu/Magisk/releases/download/v26.1/magiskboot.exe',
-        'filename': 'magiskboot.exe',
-        'version': '26.1',
-        'subdir': 'magisk',
-        'extract_type': 'exe',
+        'url': 'https://github.com/svoboda18/magiskboot/releases/download/1.0-3/magiskboot.zip',
+        'filename': 'magiskboot.zip',
+        'version': '1.0-3',
+        'subdir': 'magiskboot',
+        'extract_type': 'zip',
         'expected_files': ['magiskboot.exe']
     },
     'simg2img': {
         'description': 'Sparse to raw image converter',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/simg2img.exe',
-        'filename': 'simg2img.exe',
-        'version': 'latest',
-        'subdir': 'android-tools',
-        'extract_type': 'exe',
+        'url': 'https://github.com/meator/android-tools-static/releases/download/36.0.1/android-tools-static-36.0.1-windows-nativelayout-x86_64.zip',
+        'filename': 'android-tools.zip',
+        'version': '36.0.1',
+        'subdir': 'simg2img',
+        'extract_type': 'zip',
         'expected_files': ['simg2img.exe']
     },
     'img2simg': {
         'description': 'Raw to sparse image converter',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/img2simg.exe',
-        'filename': 'img2simg.exe',
-        'version': 'latest',
-        'subdir': 'android-tools',
-        'extract_type': 'exe',
+        'url': 'https://github.com/meator/android-tools-static/releases/download/36.0.1/android-tools-static-36.0.1-windows-nativelayout-x86_64.zip',
+        'filename': 'android-tools.zip',
+        'version': '36.0.1',
+        'subdir': 'img2simg',
+        'extract_type': 'zip',
         'expected_files': ['img2simg.exe']
     },
     'apktool': {
         'description': 'APK decompiler/recompiler',
-        'url': 'https://github.com/iBotPeaches/Apktool/releases/download/v2.7.0/apktool_2.7.0.jar',
-        'filename': 'apktool.jar',
-        'version': '2.7.0',
+        'url': 'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar',
+        'filename': 'apktool_3.0.3.jar',
+        'version': '3.0.3',
         'subdir': 'apktool',
-        'extract_type': 'jar',
-        'expected_files': ['apktool.jar']
+        'extract_type': 'none',
+        'expected_files': ['apktool.jar', 'baksmali.jar', 'smali.jar']
     },
     'zipalign': {
         'description': 'APK alignment tool',
-        'url': 'https://dl.google.com/android/repository/build-tools_r34-windows.zip',
-        'filename': 'zipalign.exe',
-        'version': '34.0.0',
-        'subdir': 'build-tools',
-        'extract_type': 'zip_nested',
-        'expected_files': ['zipalign.exe']
+        'url': 'https://github.com/lzhiyong/android-sdk-tools/releases/download/35.0.2/android-sdk-tools-static-x86_64.zip',
+        'filename': 'android-sdk-tools-static-x86_64.zip',
+        'version': '35.0.2',
+        'subdir': 'zipalign',
+        'extract_type': 'zip',
+        'expected_files': ['build-tools/zipalign']
     },
     'apksigner': {
         'description': 'APK signing tool',
-        'url': 'https://dl.google.com/android/repository/build-tools_r34-windows.zip',
+        'url': 'https://github.com/nicokosi/apksigner/releases/download/34.0.0/apksigner.jar',
         'filename': 'apksigner.jar',
         'version': '34.0.0',
-        'subdir': 'build-tools',
-        'extract_type': 'zip_nested',
+        'subdir': 'java',
+        'extract_type': 'none',
         'expected_files': ['apksigner.jar']
     },
     'java': {
         'description': 'Java Runtime Environment',
-        'url': 'https://download.oracle.com/java/17/archive/jdk-17.0.8_windows-x64_bin.zip',
-        'filename': 'java.exe',
-        'version': '17.0.8',
+        'url': 'https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip',
+        'filename': 'microsoft-jdk-17-windows-x64.zip',
+        'version': '17.0.3',
         'subdir': 'java',
         'extract_type': 'zip',
-        'expected_files': ['bin/java.exe']
+        'expected_files': ['bin/java.exe', 'bin/keytool.exe']
     },
     'bsdtar': {
         'description': 'BSD tar implementation',
-        'url': 'https://github.com/libarchive/libarchive/releases/download/v3.7.2/libarchive-v3.7.2-win64.zip',
-        'filename': 'bsdtar.exe',
-        'version': '3.7.2',
-        'subdir': 'libarchive',
+        'url': 'https://github.com/aspect-build/bsdtar-prebuilt/releases/download/20231212.1/bsdtar-windows-x86_64.zip',
+        'filename': 'bsdtar-windows-x86_64.zip',
+        'version': '20231212.1',
+        'subdir': 'bsdtar',
         'extract_type': 'zip',
         'expected_files': ['bsdtar.exe']
     },
     'dtc': {
         'description': 'Device Tree Compiler',
-        'url': 'https://github.com/dgibson/dtc/releases/download/v1.6.1/dtc-1.6.1-windows.zip',
+        'url': 'https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/windows_x86/dtc.exe',
         'filename': 'dtc.exe',
-        'version': '1.6.1',
+        'version': '15.0.0',
         'subdir': 'dtc',
-        'extract_type': 'zip',
+        'extract_type': 'exe',
         'expected_files': ['dtc.exe']
     },
-
-    # DTB Converter tools
     'dtb_converter': {
         'description': 'Advanced DTB converter tools',
-        'url': 'https://github.com/Superb-Extract-and-pack-dtb/Superb-Extract-and-pack-dtb/archive/refs/heads/main.zip',
+        'url': 'https://github.com/Test-Smali/extract-dtb-python/archive/refs/heads/master.zip',
         'filename': 'dtb-converter.zip',
         'version': 'latest',
         'subdir': 'dtb-converter',
         'extract_type': 'zip_nested',
-        'expected_files': ['Superb_Extract-and_pack_dtb/WorkDir/extract-dtb.py', 'Superb_Extract-and_pack_dtb/WorkDir/pack-dtb.py']
+        'expected_files': ['Superb_Extract-and-pack_dtb/WorkDir/extract-dtb.py', 'Superb_Extract-and-pack_dtb/WorkDir/pack-dtb.py']
     },
-
-    # OTA Payload tools
+    'extract-dtb': {
+        'description': 'Extract DTB tool',
+        'url': 'https://github.com/Test-Smali/extract-dtb-python/archive/refs/heads/master.zip',
+        'filename': 'extract-dtb.zip',
+        'version': 'latest',
+        'subdir': 'extract-dtb',
+        'extract_type': 'zip',
+        'expected_files': ['extract_dtb/extract_dtb.py']
+    },
     'payload_dumper': {
         'description': 'OTA payload extractor',
         'url': 'https://github.com/vm03/payload_dumper/archive/refs/heads/master.zip',
@@ -194,55 +232,49 @@ TOOL_METADATA = {
         'version': 'latest',
         'subdir': 'payload_dumper',
         'extract_type': 'zip_nested',
-        'expected_files': ['payload_dumper-master/payload_dumper.py']
+        'expected_files': ['payload_dumper.py']
     },
-
-    # Android Image Kitchen (AIK)
     'android_image_kitchen': {
         'description': 'Android Image Kitchen tools',
         'url': 'https://github.com/osm0sis/Android-Image-Kitchen/archive/refs/heads/master.zip',
         'filename': 'AIK.zip',
         'version': 'latest',
-        'subdir': 'boot_editor',
-        'extract_type': 'zip_nested',
-        'expected_files': ['Android-Image-Kitchen-master/unpackimg.bat', 'Android-Image-Kitchen-master/repackimg.bat']
+        'subdir': 'AIK',
+        'extract_type': 'zip',
+        'expected_files': ['unpackimg.bat', 'repackimg.bat']
     },
-
-    # Extended Android tools
     'aapt2': {
         'description': 'Android Asset Packaging Tool 2',
-        'url': 'https://dl.google.com/android/repository/build-tools_r34-windows.zip',
-        'filename': 'aapt2.exe',
-        'version': '34.0.0',
-        'subdir': 'build-tools',
-        'extract_type': 'zip_nested',
-        'expected_files': ['aapt2.exe']
+        'url': 'https://github.com/VindroidH/prebuilt-binaries-aapt-aapt_64-aapt2-aapt2_64-windows-linux-macosx/raw/master/windows/aapt2_64.exe.zip',
+        'filename': 'aapt2_64.exe.zip',
+        'version': '35.0.2',
+        'subdir': 'aapt2',
+        'extract_type': 'zip',
+        'expected_files': ['aapt2_64.exe']
     },
     'mkdtboimg': {
         'description': 'DTBO image creation tool',
-        'url': 'https://github.com/cfig/Android_boot_image_editor/releases/download/v2.0/mkdtboimg.exe',
-        'filename': 'mkdtboimg.exe',
-        'version': '2.0',
-        'subdir': 'android-tools',
-        'extract_type': 'exe',
-        'expected_files': ['mkdtboimg.exe']
-    },
-    'make_ext4fs': {
-        'description': 'EXT4 filesystem creation tool',
-        'url': 'https://github.com/LineageOS/android_system_extras/raw/lineage-18.1/make_ext4fs.exe',
-        'filename': 'make_ext4fs.exe',
+        'url': 'https://raw.githubusercontent.com/KharaMe-devices/kernel_realme_r5x/twelve/scripts/dtc/mkdtboimg.py',
+        'filename': 'mkdtboimg.py',
         'version': 'latest',
-        'subdir': 'android-tools',
+        'subdir': 'mkdtboimg',
         'extract_type': 'exe',
-        'expected_files': ['make_ext4fs.exe']
+        'expected_files': ['mkdtboimg.py']
     },
-
-    # Compression tools
+    'avbtool': {
+        'description': 'Android Verified Boot tool',
+        'url': 'https://raw.githubusercontent.com/LineageOS/android_external_avb/master/avbtool.py',
+        'filename': 'avbtool.py',
+        'version': 'latest',
+        'subdir': 'avbtool',
+        'extract_type': 'exe',
+        'expected_files': ['avbtool.py']
+    },
     'brotli': {
         'description': 'Brotli compression tool',
-        'url': 'https://github.com/google/brotli/releases/download/v1.0.9/brotli-1.0.9-windows-x64.zip',
-        'filename': 'brotli.exe',
-        'version': '1.0.9',
+        'url': 'https://github.com/google/brotli/releases/download/v1.2.0/brotli-x64-windows-static.zip',
+        'filename': 'brotli.zip',
+        'version': '1.2.0',
         'subdir': 'brotli',
         'extract_type': 'zip',
         'expected_files': ['brotli.exe']
@@ -250,159 +282,417 @@ TOOL_METADATA = {
     'zstd': {
         'description': 'Zstandard compression tool',
         'url': 'https://github.com/facebook/zstd/releases/download/v1.5.5/zstd-v1.5.5-win64.zip',
-        'filename': 'zstd.exe',
+        'filename': 'zstd-v1.5.5-win64.zip',
         'version': '1.5.5',
-        'subdir': 'zstd',
+        'subdir': 'zstandard',
         'extract_type': 'zip',
         'expected_files': ['zstd.exe']
     },
     'gzip': {
         'description': 'GNU gzip compression',
-        'url': 'https://github.com/mcmilk/7-Zip-zstd/releases/download/22.01-v1.5.5-R3/7z22.01-zstd-x64.exe',
-        'filename': 'gzip.exe',
-        'version': 'latest',
-        'subdir': 'compression',
-        'extract_type': 'exe',
+        'url': 'https://sourceforge.net/projects/gnuwin32/files/gzip/1.3.12-1/gzip-1.3.12-1-bin.zip/download',
+        'filename': 'gzip-1.3.12-1-bin.zip',
+        'version': '1.3.12',
+        'subdir': 'gzip',
+        'extract_type': 'zip',
         'expected_files': ['gzip.exe']
     },
     'xz': {
         'description': 'XZ compression tool',
-        'url': 'https://github.com/mcmilk/7-Zip-zstd/releases/download/22.01-v1.5.5-R3/7z22.01-zstd-x64.exe',
-        'filename': 'xz.exe',
-        'version': 'latest',
-        'subdir': 'compression',
-        'extract_type': 'exe',
+        'url': 'https://sourceforge.net/projects/xz-utils.mirror/files/v5.8.0/xz-5.8.0-windows.zip/download',
+        'filename': 'xz-5.8.0-windows.zip',
+        'version': '5.8.0',
+        'subdir': 'xz',
+        'extract_type': 'zip',
         'expected_files': ['xz.exe']
     },
-
-    # Super partition tools
+    'bzcat': {
+        'description': 'Bzip2 compression utility',
+        'url': 'https://sourceforge.net/projects/gnuwin32/files/bzip2/1.0.5/bzip2-1.0.5-bin.zip/download',
+        'filename': 'bzip2-1.0.5-bin.zip',
+        'version': '1.0.5',
+        'subdir': 'bzip2',
+        'extract_type': 'zip',
+        'expected_files': ['bzcat.exe', 'bzip2.exe']
+    },
     'lpunpack': {
         'description': 'Logical partition unpacker',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/lpunpack.exe',
+        'url': 'https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/windows_x86/lpunpack.exe',
         'filename': 'lpunpack.exe',
-        'version': 'latest',
-        'subdir': 'super_tools',
+        'version': '15.0.0',
+        'subdir': 'lpunpack',
         'extract_type': 'exe',
         'expected_files': ['lpunpack.exe']
     },
     'lpmake': {
         'description': 'Logical partition maker',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/lpmake.exe',
+        'url': 'https://raw.githubusercontent.com/Rprop/aosp15_partition_tools/main/windows_x86/lpmake.exe',
         'filename': 'lpmake.exe',
-        'version': 'latest',
-        'subdir': 'super_tools',
+        'version': '15.0.0',
+        'subdir': 'lpmake',
         'extract_type': 'exe',
         'expected_files': ['lpmake.exe']
     },
-
-    # Security tools
     'sefcontext_compile': {
         'description': 'SELinux file context compiler',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/sefcontext_compile.exe',
-        'filename': 'sefcontext_compile.exe',
-        'version': 'latest',
-        'subdir': 'security',
-        'extract_type': 'exe',
-        'expected_files': ['sefcontext_compile.exe']
+        'url': 'https://github.com/Rprop/aosp15_partition_tools/releases/download/v1.0.0/partition_tools_windows.zip',
+        'filename': 'partition_tools_windows.zip',
+        'version': '1.0.0',
+        'subdir': 'sefcontext',
+        'extract_type': 'zip',
+        'expected_files': ['sefcontext_compile']
     },
     'sefcontext_decompile': {
         'description': 'SELinux file context decompiler',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/sefcontext_decompile.exe',
-        'filename': 'sefcontext_decompile.exe',
-        'version': 'latest',
-        'subdir': 'security',
-        'extract_type': 'exe',
+        'url': 'https://github.com/wuxianlin/sefcontext_decompile/releases/download/1.0/sefcontext_decompile.zip',
+        'filename': 'sefcontext_decompile.zip',
+        'version': '1.0',
+        'subdir': 'sefcontext',
+        'extract_type': 'zip',
         'expected_files': ['sefcontext_decompile.exe']
     },
     'omcdecoder': {
         'description': 'Samsung OMC decoder',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/omcdecoder.exe',
-        'filename': 'omcdecoder.exe',
+        'url': 'https://github.com/continuation/omcdecoder/archive/refs/heads/master.zip',
+        'filename': 'omcdecoder.zip',
         'version': 'latest',
-        'subdir': 'security',
-        'extract_type': 'exe',
-        'expected_files': ['omcdecoder.exe']
+        'subdir': 'omcdecoder',
+        'extract_type': 'zip',
+        'expected_files': ['crb_omcdecoder.exe']
     },
     'opscrypto': {
         'description': 'Android cryptographic operations',
-        'url': 'https://github.com/anestisb/android-tools/raw/master/opscrypto.exe',
-        'filename': 'opscrypto.exe',
+        'url': 'https://github.com/ContinuumG11/ops/archive/refs/heads/main.zip',
+        'filename': 'ops.zip',
         'version': 'latest',
-        'subdir': 'security',
-        'extract_type': 'exe',
-        'expected_files': ['opscrypto.exe']
+        'subdir': 'opscrypto',
+        'extract_type': 'zip',
+        'expected_files': ['opscrypto']
     },
-
-    # Archive tools
+    'ozipdecrypt': {
+        'description': 'Oppo/Realme OZIP decryptor',
+        'url': 'https://github.com/ssut/ozipdecoder/archive/refs/heads/master.zip',
+        'filename': 'ozipdecrypt.zip',
+        'version': '1.0.0',
+        'subdir': 'ozipdecrypt',
+        'extract_type': 'zip',
+        'expected_files': ['ozipdecrypt']
+    },
     'cpio': {
         'description': 'CPIO archive tool',
-        'url': 'https://github.com/mcmilk/7-Zip-zstd/releases/download/22.01-v1.5.5-R3/7z22.01-zstd-x64.exe',
-        'filename': 'cpio.exe',
-        'version': 'latest',
-        'subdir': 'archive_tools',
-        'extract_type': 'exe',
+        'url': 'https://sourceforge.net/projects/gnuwin32/files/cpio/2.6-2/cpio-2.6-2-bin.zip/download',
+        'filename': 'cpio-2.6-2-bin.zip',
+        'version': '2.6-2',
+        'subdir': 'cpio',
+        'extract_type': 'zip',
         'expected_files': ['cpio.exe']
+    },
+    'smali': {
+        'description': 'Smali assembler/disassembler',
+        'url': 'https://repo1.maven.org/maven2/org/smali/smali/2.5.2/smali-2.5.2.jar',
+        'filename': 'smali-2.5.2.jar',
+        'version': '2.5.2',
+        'subdir': 'smali',
+        'extract_type': 'jar',
+        'expected_files': ['smali-2.5.2.jar']
+    },
+    'notepad++': {
+        'description': 'Advanced text editor',
+        'url': 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.9.8/npp.8.9.8.portable.x64.zip',
+        'filename': 'npp.8.9.8.portable.x64.zip',
+        'version': '8.9.8',
+        'subdir': 'notepad++',
+        'extract_type': 'zip',
+        'expected_files': ['notepad++.exe']
+    },
+    'file': {
+        'description': 'File type detection tool',
+        'url': 'https://sourceforge.net/projects/gnuwin32/files/file/5.03/file-5.03-bin.zip/download',
+        'filename': 'file-5.03-bin.zip',
+        'version': '5.03',
+        'subdir': 'file',
+        'extract_type': 'zip',
+        'expected_files': ['file.exe']
     },
     'rsync': {
         'description': 'Remote sync tool',
-        'url': 'https://github.com/rclone/rclone/releases/download/v1.65.2/rclone-v1.65.2-windows-amd64.zip',
-        'filename': 'rsync.exe',
-        'version': '1.65.2',
+        'url': 'https://github.com/nuket/rsync-windows/releases/download/v3.5.0-gc62c545f/rsync-windows-x64.zip',
+        'filename': 'rsync.zip',
+        'version': '3.5.0',
         'subdir': 'rsync',
         'extract_type': 'zip',
         'expected_files': ['rsync.exe']
     },
-
-    # Special formats
-    'ozipdecrypt': {
-        'description': 'Oppo/Realme OZIP decryptor',
-        'url': 'https://github.com/bkerler/ozipdecrypt/releases/download/v1.0.0/ozipdecrypt.exe',
-        'filename': 'ozipdecrypt.exe',
-        'version': '1.0.0',
-        'subdir': 'special_formats',
-        'extract_type': 'exe',
-        'expected_files': ['ozipdecrypt.exe']
-    },
-    'file': {
-        'description': 'File type detection tool',
-        'url': 'https://github.com/julian-r/file-windows/releases/download/v5.45/file-v5.45-win64.zip',
-        'filename': 'file.exe',
-        'version': '5.45',
-        'subdir': 'file_analysis',
-        'extract_type': 'zip',
-        'expected_files': ['file.exe']
-    },
-
-    # Java tools
     'keytool': {
         'description': 'Java keystore management',
-        'url': 'https://download.oracle.com/java/17/archive/jdk-17.0.8_windows-x64_bin.zip',
-        'filename': 'keytool.exe',
-        'version': '17.0.8',
-        'subdir': 'java',
+        'url': 'https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip',
+        'filename': 'microsoft-jdk-17-windows-x64.zip',
+        'version': '17.0.3',
+        'subdir': 'java/bin',
         'extract_type': 'zip',
         'expected_files': ['bin/keytool.exe']
     },
     'jarsigner': {
         'description': 'Java JAR signing tool',
-        'url': 'https://download.oracle.com/java/17/archive/jdk-17.0.8_windows-x64_bin.zip',
-        'filename': 'jarsigner.exe',
-        'version': '17.0.8',
-        'subdir': 'java',
+        'url': 'https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip',
+        'filename': 'microsoft-jdk-17-windows-x64.zip',
+        'version': '17.0.3',
+        'subdir': 'java/bin',
         'extract_type': 'zip',
         'expected_files': ['bin/jarsigner.exe']
     },
-
-    # Editor tools
-    'notepad++': {
-        'description': 'Advanced text editor',
-        'url': 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.6.2/npp.8.6.2.Installer.x64.exe',
-        'filename': 'notepad++.exe',
-        'version': '8.6.2',
-        'subdir': 'editors',
+    'unpackimg': {
+        'description': 'Android Image Kitchen (unpack/repack boot, kernel, recovery, ramdisk; handles AOSP, AOSP_VNDR, AOSP-PXA, ELF, KRNL, OSIP, U-Boot formats; supports gzip/lzop/lzma/xz/bzip2/lz4/lz4-l/cpio ramdisk compressions)',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/archive/refs/heads/main.zip',
+        'filename': 'AIK.zip',
+        'version': 'latest',
+        'subdir': 'AIK',
+        'extract_type': 'zip',
+        'expected_files': ['unpackimg.bat', 'repackimg.bat', 'android_win_tools/androidbootimg.magic', 'android_win_tools/magic']
+    },
+    'mkbootimg': {
+        'description': 'mkbootimg - build Android boot.img from kernel + ramdisk',
+        'url': 'https://github.com/osm0sis/mkbootimg/releases',
+        'filename': 'mkbootimg.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
         'extract_type': 'exe',
-        'expected_files': ['notepad++.exe']
-    }
+        'expected_files': ['mkbootimg.exe']
+    },
+    'unpackbootimg': {
+        'description': 'unpackbootimg - extract kernel, ramdisk, dtb from boot.img',
+        'url': 'https://github.com/osm0sis/mkbootimg/releases',
+        'filename': 'unpackbootimg.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['unpackbootimg.exe']
+    },
+    'elftool': {
+        'description': 'elftool - ELF kernel pack/unpack',
+        'url': 'https://github.com/osm0sis/elftool/releases',
+        'filename': 'elftool.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['elftool.exe']
+    },
+    'mkmtkhdr': {
+        'description': 'mkmtkhdr - MediaTek kernel/ramdisk header tool',
+        'url': 'https://github.com/osm0sis/mkmtkhdr/releases',
+        'filename': 'mkmtkhdr.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['mkmtkhdr.exe']
+    },
+    'futility': {
+        'description': 'futility - ChromeOS kernel signing',
+        'url': 'https://github.com/osm0sis/futility/releases',
+        'filename': 'futility.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['futility.exe']
+    },
+    'dhtbsign': {
+        'description': 'dhtbsign - sign DHTB-formatted boot images',
+        'url': 'https://github.com/osm0sis/dhtbsign/releases',
+        'filename': 'dhtbsign.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['dhtbsign.exe']
+    },
+    'rkcrc': {
+        'description': 'rkcrc - Rockchip KRNL signed ramdisk image tool',
+        'url': 'https://github.com/linux-rockchip/rkflashtool/releases',
+        'filename': 'rkcrc.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['rkcrc.exe']
+    },
+    'loki_tool': {
+        'description': 'loki_tool - Loki-patched boot image tool (LG G2, AT&T S4 etc.)',
+        'url': 'https://github.com/djrbliss/loki/releases',
+        'filename': 'loki.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['loki.exe']
+    },
+    'mboot': {
+        'description': 'mboot - Intel OSIP Android image unpacker/packer',
+        'url': 'https://github.com/osm0sis/mboot/releases',
+        'filename': 'mboot.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['mboot.exe']
+    },
+    'unpackelf': {
+        'description': 'unpackelf - ELF kernel extractor',
+        'url': 'https://github.com/osm0sis/unpackelf/releases',
+        'filename': 'unpackelf.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['unpackelf.exe']
+    },
+    'pxa_mkbootimg': {
+        'description': 'pxa-mkbootimg - Marvell PXA boot.img packer',
+        'url': 'https://github.com/osm0sis/pxa-mkbootimg/releases',
+        'filename': 'pxa-mkbootimg.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['pxa-mkbootimg.exe']
+    },
+    'pxa_unpackbootimg': {
+        'description': 'pxa-unpackbootimg - Marvell PXA boot.img unpacker',
+        'url': 'https://github.com/osm0sis/pxa-mkbootimg/releases',
+        'filename': 'pxa-unpackbootimg.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['pxa-unpackbootimg.exe']
+    },
+    'dumpimage': {
+        'description': 'dumpimage - extract components from U-Boot uImage',
+        'url': 'https://github.com/nicman23/u-boot-windows/releases',
+        'filename': 'dumpimage.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['dumpimage.exe']
+    },
+    'mkimage': {
+        'description': 'mkimage - build U-Boot uImage',
+        'url': 'https://github.com/nicman23/u-boot-windows/releases',
+        'filename': 'mkimage.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['mkimage.exe']
+    },
+    'blobpack': {
+        'description': 'blobpack - pack Android blob image',
+        'url': 'https://github.com/AndroidRoot/BlobTools/releases',
+        'filename': 'blobpack.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['blobpack.exe']
+    },
+    'blobunpack': {
+        'description': 'blobunpack - unpack Android blob image',
+        'url': 'https://github.com/AndroidRoot/BlobTools/releases',
+        'filename': 'blobunpack.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['blobunpack.exe']
+    },
+    'sony_dump': {
+        'description': 'sony_dump - extract Sony SIN kernel image',
+        'url': 'https://github.com/osm0sis/sony_dump/releases',
+        'filename': 'sony_dump.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['sony_dump.exe']
+    },
+    'boot_signer': {
+        'description': 'boot_signer.jar - AVB boot image signer (requires JRE 8+)',
+        'url': 'https://github.com/osm0sis/boot_signer/releases',
+        'filename': 'boot_signer.jar',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'jar',
+        'expected_files': ['boot_signer.jar']
+    },
+    'aik_cpio': {
+        'description': 'cpio - archive tool (AIK uses GNU cpio for ramdisk handling)',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/releases',
+        'filename': 'cpio.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['cpio.exe']
+    },
+    'aik_gzip': {
+        'description': 'gzip - for AOSP ramdisk compression/decompression',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/releases',
+        'filename': 'gzip.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['gzip.exe']
+    },
+    'aik_lz4': {
+        'description': 'lz4 - for modern Android ramdisk (lz4 legacy format)',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/releases',
+        'filename': 'lz4.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['lz4.exe']
+    },
+    'aik_xz': {
+        'description': 'xz - for lzma/xz compressed ramdisks',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/releases',
+        'filename': 'xz.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['xz.exe']
+    },
+    'aik_lzop': {
+        'description': 'lzop - for lzop compressed ramdisks (older devices)',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/releases',
+        'filename': 'lzop.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['lzop.exe']
+    },
+    'aik_bzip2': {
+        'description': 'bzip2 - for bzip2 compressed ramdisks',
+        'url': 'https://github.com/osm0sis/Android-Image-Kitchen/releases',
+        'filename': 'bzip2.exe',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools',
+        'extract_type': 'exe',
+        'expected_files': ['bzip2.exe']
+    },
+    'avb_key': {
+        'description': 'AVB test keys (verity.pk8, verity.x509.der) for boot image signing',
+        'url': 'https://github.com/osm0sis/AVB-test-keys/archive/refs/heads/master.zip',
+        'filename': 'AVB-test-keys.zip',
+        'version': 'latest',
+        'subdir': 'AIK/android_win_tools/avb',
+        'extract_type': 'zip',
+        'expected_files': ['verity.pk8', 'verity.x509.der']
+    },
+    'make_ext4fs': {
+        'description': 'EXT4 filesystem creation tool',
+        'url': 'https://github.com/Rprop/aosp15_partition_tools/releases/download/v1.0.0/partition_tools_windows.zip',
+        'filename': 'partition_tools_windows.zip',
+        'version': '1.0.0',
+        'subdir': 'make_ext4fs',
+        'extract_type': 'zip',
+        'expected_files': ['make_ext4fs.exe']
+    },
+    'patch': {
+        'description': 'Patch utility',
+        'url': 'https://sourceforge.net/projects/gnuwin32/files/patch/2.5.9-7/patch-2.5.9-7-bin.zip/download',
+        'filename': 'patch-2.5.9-7-bin.zip',
+        'version': '2.5.9-7',
+        'subdir': 'patch',
+        'extract_type': 'zip',
+        'expected_files': ['patch.exe']
+    },
 }
 
 # Configure a file handler for startup logging
@@ -433,6 +723,44 @@ COLORS = {
     'warning': '#d29922',
     'success': '#3fb950',
 }
+
+def styled_messagebox(parent, title, message, msg_type='info'):
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.configure(bg=COLORS['bg_primary'])
+    dialog.resizable(False, False)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    icon_colors = {
+        'info': COLORS['accent_blue'],
+        'warning': COLORS['warning'],
+        'error': COLORS['error'],
+        'success': COLORS['success']
+    }
+    icon_color = icon_colors.get(msg_type, COLORS['accent_blue'])
+
+    inner = tk.Frame(dialog, bg=COLORS['bg_primary'])
+    inner.pack(fill='both', expand=True, padx=20, pady=20)
+
+    ttk.Label(inner, text=message, background=COLORS['bg_primary'],
+              foreground=COLORS['text_primary'], font=('Segoe UI', 10)).pack(pady=(0, 15))
+
+    btn_frame = tk.Frame(inner, bg=COLORS['bg_primary'])
+    btn_frame.pack(fill='x')
+    ttk.Button(btn_frame, text="Ok", command=dialog.destroy,
+               style='Accent.TButton' if msg_type == 'info' else 'TButton').pack(side='right')
+
+    dialog.bind('<Return>', lambda e: dialog.destroy())
+    dialog.bind('<Escape>', lambda e: dialog.destroy())
+
+    dialog.update_idletasks()
+    width = max(350, min(500, dialog.winfo_reqwidth() + 60))
+    height = dialog.winfo_reqheight() + 40
+    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+    y = (dialog.winfo_screenheight() // 2) - (height // 2)
+    dialog.geometry(f"{width}x{height}+{x}+{y}")
+    dialog.wait_window()
 
 TAR_BLOCK_SIZE = 512
 
@@ -586,6 +914,29 @@ class Project:
     rom_config: Optional[Dict[str, Any]] = None
     created: str = ""
     modified: str = ""
+    # Extended state for comprehensive project persistence
+    opened_files: Optional[List[str]] = None
+    expanded_folders: Optional[List[str]] = None
+    current_tab: Optional[str] = None
+    current_file: Optional[str] = None
+    file_editor_base_folder: Optional[str] = None
+    hex_editor_file: Optional[str] = None
+    port_rom_source_dir: Optional[str] = None
+    port_rom_target_dir: Optional[str] = None
+    port_rom_step_status: Optional[Dict[int, str]] = None
+    port_rom_step_overrides: Optional[Dict[int, Dict[str, bool]]] = None
+    port_rom_step_overrides: Optional[Dict[int, Dict[str, bool]]] = None
+    port_rom_config: Optional[Dict[str, Any]] = None
+    recent_files: Optional[List[str]] = None
+    editor_unsaved: Optional[Dict[str, str]] = None
+    visible_tabs: Optional[List[str]] = None
+    hex_editor_state: Optional[Dict[str, Any]] = None
+    file_editor_state: Optional[Dict[str, Any]] = None
+    port_rom_fields: Optional[Dict[str, str]] = None
+    port_rom_results: Optional[Dict[int, Any]] = None
+    port_rom_initial_step: Optional[int] = None
+    apk_project_state: Optional[Dict[str, Any]] = None
+    ui_state: Optional[Dict[str, bool]] = None
 
     def __post_init__(self):
         if self.replacements is None:
@@ -595,6 +946,32 @@ class Project:
         if not self.created:
             self.created = datetime.now().isoformat()
         self.modified = datetime.now().isoformat()
+        if self.opened_files is None:
+            self.opened_files = []
+        if self.expanded_folders is None:
+            self.expanded_folders = []
+        if self.port_rom_step_status is None:
+            self.port_rom_step_status = {}
+        if self.port_rom_step_overrides is None:
+            self.port_rom_step_overrides = {}
+        if self.recent_files is None:
+            self.recent_files = []
+        if self.editor_unsaved is None:
+            self.editor_unsaved = {}
+        if self.visible_tabs is None:
+            self.visible_tabs = []
+        if self.hex_editor_state is None:
+            self.hex_editor_state = {}
+        if self.file_editor_state is None:
+            self.file_editor_state = {}
+        if self.port_rom_fields is None:
+            self.port_rom_fields = {}
+        if self.port_rom_results is None:
+            self.port_rom_results = {}
+        if self.apk_project_state is None:
+            self.apk_project_state = {}
+        if self.ui_state is None:
+            self.ui_state = {}
 
     def save(self):
         os.makedirs(self.path, exist_ok=True)
@@ -606,6 +983,29 @@ class Project:
         with open(os.path.join(path, "project.json"), "r") as f:
             data = json.load(f)
         return cls(**data)
+
+@dataclass
+class ApkProject:
+    name: str = ""
+    source_path: Optional[str] = None
+    source_type: str = "apk"
+    working_dir: Optional[str] = None
+    extract_dir: Optional[str] = None
+    decoded_dir: Optional[str] = None
+    built_apk: Optional[str] = None
+    aligned_apk: Optional[str] = None
+    signed_apk: Optional[str] = None
+    keystore: Optional[str] = None
+    keystore_pass: Optional[str] = None
+    key_alias: Optional[str] = None
+    key_pass: Optional[str] = None
+    package_name: str = ""
+    version_name: str = ""
+    version_code: str = ""
+    target_sdk: str = ""
+    file_list: List[str] = field(default_factory=list)
+    bundle_manifest: Optional[Dict[str, Any]] = None
+    is_open: bool = False
 
 @dataclass
 class PortRomConfig:
@@ -674,6 +1074,22 @@ class PortRomConfig:
 def ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
+def safe_extract_zip(archive: zipfile.ZipFile, destination: str) -> None:
+    """Extract ZIP members without allowing paths outside destination."""
+    root = os.path.realpath(destination)
+    ensure_dir(root)
+    for member in archive.infolist():
+        target = os.path.realpath(os.path.join(root, member.filename))
+        if os.path.commonpath((root, target)) != root:
+            raise ValueError(f"Unsafe archive member: {member.filename}")
+    archive.extractall(root)
+
+def _is_empty_dir(path):
+    try:
+        return not any(os.scandir(path))
+    except Exception:
+        return True
+
 def tool_resolve(name: str) -> Optional[str]:
     """Resolve tool from ./tools/ then PATH with validation"""
     exts = ["", ".exe", ".jar", ".bat"] if sys.platform.startswith("win") else ["", ".jar"]
@@ -695,18 +1111,188 @@ def tool_resolve(name: str) -> Optional[str]:
 
     # Special handling for tools that might be in subdirectories
     if name == "simg2img":
-        # Check in boot_editor/tools/bin/
+        candidate = os.path.join(TOOLS_DIR, "simg2img", "simg2img.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
         candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "simg2img.exe")
         if os.path.exists(candidate) and os.path.isfile(candidate):
             return os.path.abspath(candidate)
     elif name == "img2simg":
-        # Check in boot_editor/tools/bin/
+        candidate = os.path.join(TOOLS_DIR, "img2simg", "img2simg.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
         candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "img2simg.exe")
         if os.path.exists(candidate) and os.path.isfile(candidate):
             return os.path.abspath(candidate)
     elif name == "dtc":
-        # Check in boot_editor/tools/bin/
         candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "dtc.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "lpunpack":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "lpunpack.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "lpmake":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "lpmake.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "make_ext4fs":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "make_ext4fs.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "xz":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "xz.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "bzcat":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "bzcat.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "patch":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "patch.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "extract-dtb":
+        # Check in dtb-converter
+        candidate = os.path.join(TOOLS_DIR, "dtb-converter", "Superb_Extract-and_pack_dtb", "WorkDir", "extract-dtb.py")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+        # Check in extract-dtb module
+        candidate = os.path.join(TOOLS_DIR, "extract-dtb", "extract_dtb", "extract_dtb.py")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "dtb_converter":
+        candidate = os.path.join(TOOLS_DIR, "dtb-converter", "Superb_Extract-and_pack_dtb", "WorkDir", "extract-dtb.py")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "sefcontext_compile":
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "aosp", "plugged", "bin", "sefcontext_compile")
+        if os.path.exists(candidate) and (os.path.isfile(candidate) or os.path.isdir(candidate)):
+            return os.path.abspath(candidate)
+        candidate = os.path.join(TOOLS_DIR, "sefcontext", "sefcontext_compile")
+        if os.path.exists(candidate) and (os.path.isfile(candidate) or os.path.isdir(candidate)):
+            return os.path.abspath(candidate)
+    elif name == "sefcontext_decompile":
+        candidate = os.path.join(TOOLS_DIR, "sefcontext", "sefcontext_decompile.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "avbtool":
+        candidate = os.path.join(TOOLS_DIR, "avbtool", "avbtool.py")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "android_image_kitchen":
+        candidate = os.path.join(TOOLS_DIR, "AIK", "unpackimg.bat")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "unpackimg":
+        # Resolve to the bat file (with .bat extension)
+        for cand in [os.path.join(TOOLS_DIR, "AIK", "unpackimg.bat"),
+                     os.path.join(TOOLS_DIR, "AIK", "unpackimg")]:
+            if os.path.exists(cand) and os.path.isfile(cand):
+                return os.path.abspath(cand)
+    elif name == "repackimg":
+        for cand in [os.path.join(TOOLS_DIR, "AIK", "repackimg.bat"),
+                     os.path.join(TOOLS_DIR, "AIK", "repackimg")]:
+            if os.path.exists(cand) and os.path.isfile(cand):
+                return os.path.abspath(cand)
+    elif name in ("mkbootimg", "unpackbootimg", "elftool", "unpackelf",
+                  "mkmtkhdr", "futility", "dhtbsign", "rkcrc", "loki_tool",
+                  "mboot", "pxa_mkbootimg", "pxa_unpackbootimg",
+                  "dumpimage", "mkimage", "blobpack", "blobunpack",
+                  "sony_dump", "boot_signer", "aik_cpio", "aik_gzip",
+                  "aik_lz4", "aik_xz", "aik_lzop", "aik_bzip2",
+                  "truncate", "hexdump", "lzma"):
+        # AIK-internal tools live in AIK/android_win_tools/
+        aik_dir = os.path.join(TOOLS_DIR, "AIK", "android_win_tools")
+        if os.path.isdir(aik_dir):
+            for ext in (".exe", ".bat", ".jar", ""):
+                candidate = os.path.join(aik_dir, name + ext)
+                if os.path.exists(candidate) and os.path.isfile(candidate):
+                    return os.path.abspath(candidate)
+        # Fall back to TOOLS_DIR/<name>/<name>.exe
+        for ext in (".exe", ".bat", ".jar", ""):
+            candidate = os.path.join(TOOLS_DIR, name, name + ext)
+            if os.path.exists(candidate) and os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+    elif name == "avb_key":
+        for d in (os.path.join(TOOLS_DIR, "AIK", "android_win_tools", "avb"),
+                  os.path.join(TOOLS_DIR, "avb"),
+                  os.path.join(TOOLS_DIR, "avbtool")):
+            for fname in ("verity.pk8", "verity.x509.der"):
+                candidate = os.path.join(d, fname)
+                if os.path.exists(candidate) and os.path.isfile(candidate):
+                    return os.path.abspath(candidate)
+    elif name == "mkdtboimg":
+        candidate = os.path.join(TOOLS_DIR, "mkdtboimg", "mkdtboimg.py")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+        candidate = os.path.join(TOOLS_DIR, "android-tools", "mkdtboimg.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+        candidate = os.path.join(TOOLS_DIR, "boot_editor", "tools", "bin", "mkdtboimg.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "payload_dumper":
+        candidate = os.path.join(TOOLS_DIR, "payload_dumper", "payload_dumper.py")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "ozipdecrypt":
+        candidate = os.path.join(TOOLS_DIR, "ozipdecrypt", "ozipdecrypt")
+        if os.path.exists(candidate) and os.path.isdir(candidate):
+            return os.path.abspath(candidate)
+        candidate = os.path.join(TOOLS_DIR, "ozipdecrypt")
+        if os.path.exists(candidate) and os.path.isdir(candidate):
+            return os.path.abspath(candidate)
+    elif name == "omcdecoder":
+        candidate = os.path.join(TOOLS_DIR, "omcdecoder", "crb_omcdecoder.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "brotli":
+        candidate = os.path.join(TOOLS_DIR, "brotli", "brotli.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "zstd":
+        candidate = os.path.join(TOOLS_DIR, "zstandard", "zstd.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "file":
+        candidate = os.path.join(TOOLS_DIR, "AIK", "android_win_tools", "file.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "gzip":
+        candidate = os.path.join(TOOLS_DIR, "AIK", "android_win_tools", "gzip.exe")
+        if os.path.exists(candidate) and os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    elif name == "cpio":
+        candidate = os.path.join(TOOLS_DIR, "cpio", "cpio")
+        if os.path.exists(candidate) and (os.path.isfile(candidate) or os.path.isdir(candidate)):
+            return os.path.abspath(candidate)
+    elif name == "opscrypto":
+        candidate = os.path.join(TOOLS_DIR, "opscrypto", "opscrypto")
+        if os.path.exists(candidate) and os.path.isdir(candidate):
+            return os.path.abspath(candidate)
+        candidate = os.path.join(TOOLS_DIR, "opscrypto")
+        if os.path.exists(candidate) and os.path.isdir(candidate):
+            return os.path.abspath(candidate)
+    elif name == "smali":
+        candidate = os.path.join(TOOLS_DIR, "smali")
+        if os.path.exists(candidate):
+            if os.path.isdir(candidate):
+                for f in os.listdir(candidate):
+                    if f.startswith('smali-') and f.endswith('.jar'):
+                        return os.path.abspath(os.path.join(candidate, f))
+            elif os.path.isfile(candidate) and candidate.endswith('.jar'):
+                return os.path.abspath(candidate)
+    elif name == "aapt2":
+        for sub in ("aapt2_64.exe", "aapt2.exe", "aapt2",
+                    "build-tools/aapt2", "build-tools/aapt2.exe",
+                    "android-sdk-tools/build-tools/aapt2",
+                    "android-sdk-tools/build-tools/aapt2.exe"):
+            candidate = os.path.join(TOOLS_DIR, "aapt2", sub)
+            if os.path.exists(candidate) and os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+    elif name == "zipalign":
+        candidate = os.path.join(TOOLS_DIR, "zipalign", "zipalign")
         if os.path.exists(candidate) and os.path.isfile(candidate):
             return os.path.abspath(candidate)
 
@@ -877,10 +1463,12 @@ def tool_resolve_apksigner() -> Optional[str]:
 
 def run_cmd(cmd: List[str], cwd: Optional[str] = None, capture: bool = True,
             input_data: Optional[bytes] = None) -> subprocess.CompletedProcess:
-    """Execute command with better error handling - NEVER raises exceptions"""
+    """Execute command with better error handling - NEVER raises exceptions.
+    Captures output as bytes (text=False) to avoid Windows cp1252 decode errors
+    on non-ASCII output. Callers should decode the bytes with errors='replace'."""
     try:
         return subprocess.run(
-            cmd, cwd=cwd, capture_output=capture, text=False if input_data else True,
+            cmd, cwd=cwd, capture_output=capture, text=False,
             input=input_data, check=False
         )
     except Exception as e:
@@ -890,7 +1478,7 @@ def run_cmd(cmd: List[str], cwd: Optional[str] = None, capture: bool = True,
             args=cmd,
             returncode=-1,
             stdout=b'' if not capture else None,
-            stderr=str(e).encode() if capture else None
+            stderr=str(e).encode('utf-8', errors='replace') if capture else None
         )
         return result
 
@@ -922,30 +1510,74 @@ def verify_tar_md5_footer(path: str) -> tuple[bool, str]:
             if file_size < 32:
                 return False, 'file too small for footer'
 
-            # Read footer
+            # Try different footer sizes and formats
+            # Samsung firmware can have different MD5 footer formats:
+            # 1. 32 hex chars at the end
+            # 2. "hash  filename\n" format
+            # 3. Hash followed by spaces/newlines
+            
+            # First try: last 32 bytes as pure hex
             f.seek(-32, 2)
             footer = f.read(32)
-
-            # Check if footer is hex
-            if any(c not in b"0123456789abcdefABCDEF" for c in footer):
-                return False, 'footer not hex'
-
-            # Compute MD5 of core (everything except last 32 bytes) in chunks
+            
+            # Check if footer is pure hex (32 hex characters)
+            if all(c in b"0123456789abcdefABCDEF" for c in footer):
+                # Compute MD5 of core (everything except last 32 bytes)
+                f.seek(0)
+                import hashlib
+                md5 = hashlib.md5()
+                remaining = file_size - 32
+                chunk_size = 8192
+                while remaining > 0:
+                    to_read = min(chunk_size, remaining)
+                    data = f.read(to_read)
+                    md5.update(data)
+                    remaining -= to_read
+                
+                computed_md5 = md5.hexdigest().encode('ascii')
+                if computed_md5 == footer:
+                    return True, 'ok'
+                else:
+                    return False, 'md5 mismatch (32-byte footer)'
+            
+            # Second try: look for MD5 hash in larger footer (up to 512 bytes)
+            search_size = min(512, file_size)
+            f.seek(-search_size, 2)
+            tail = f.read(search_size)
+            
+            # Look for 32 consecutive hex characters (MD5 hash)
+            import re
+            # Pattern: 32 hex chars possibly followed by spaces and filename
+            matches = list(re.finditer(rb'([0-9a-fA-F]{32})', tail))
+            
+            if not matches:
+                return False, 'no valid MD5 hash found in footer'
+            
+            # Use the last match (most likely to be the actual hash)
+            last_match = matches[-1]
+            md5_hex_str = last_match.group(1)
+            
+            # Calculate where the TAR data ends (before the MD5 footer)
+            footer_start = file_size - search_size + last_match.start()
+            
+            # Compute MD5 of core (everything before the MD5 footer)
             f.seek(0)
             import hashlib
             md5 = hashlib.md5()
-            remaining = file_size - 32
+            remaining = footer_start
             chunk_size = 8192
             while remaining > 0:
                 to_read = min(chunk_size, remaining)
                 data = f.read(to_read)
                 md5.update(data)
                 remaining -= to_read
-
+            
             computed_md5 = md5.hexdigest().encode('ascii')
-            if computed_md5 != footer:
-                return False, 'md5 mismatch'
-            return True, 'ok'
+            if computed_md5 == md5_hex_str:
+                return True, 'ok'
+            else:
+                return False, f'md5 mismatch (found hash at offset {footer_start})'
+                
     except Exception as e:
         return False, str(e)
 
@@ -953,21 +1585,18 @@ def verify_tar_md5_footer(path: str) -> tuple[bool, str]:
 # Tool Download & Management
 # -------------------------#
 
-def download_file_with_human_behavior(url: str, dest_path: str, progress_callback=None) -> bool:
+def download_file_with_human_behavior(url: str, dest_path: str, progress_callback=None, log_callback=None) -> bool:
     """Download file with human-like behavior to avoid anti-bot detection"""
     try:
-        # Human-like headers
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         }
 
-        # Simulate human delay before request
-        time.sleep(0.5 + (time.time() % 2))  # 0.5-2.5 seconds
+        time.sleep(0.5 + (time.time() % 2))
 
         req = urllib.request.Request(url, headers=headers)
 
@@ -988,95 +1617,139 @@ def download_file_with_human_behavior(url: str, dest_path: str, progress_callbac
                         progress = int((downloaded / total_size) * 100)
                         progress_callback(progress)
 
-                    # Simulate human reading/downloading pauses
-                    time.sleep(0.01 + (time.time() % 0.05))  # 10-55ms between chunks
+                    time.sleep(0.01 + (time.time() % 0.05))
 
+        if log_callback:
+            log_callback(f"Downloaded {os.path.basename(dest_path)} ({downloaded:,} bytes)", 'info')
         return True
+    except urllib.error.HTTPError as e:
+        if log_callback:
+            log_callback(f"HTTP Error {e.code}: {e.reason}", 'error')
+        if log_callback:
+            log_callback(f"Download failed: HTTP Error {e.code}: {e.reason}", 'error')
+        return False
     except Exception as e:
-        print(f"Download failed: {e}")
+        if log_callback:
+            log_callback(f"Download failed: {e}", 'error')
         return False
 
-def extract_archive(archive_path: str, extract_to: str, extract_type: str) -> bool:
+def extract_archive(archive_path: str, extract_to: str, extract_type: str, log_callback=None) -> bool:
     """Extract various archive types"""
     try:
         ensure_dir(extract_to)
 
         if extract_type == 'zip':
             with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_to)
+                safe_extract_zip(zip_ref, extract_to)
+            if log_callback:
+                log_callback(f"Extracted zip to {extract_to}", 'info')
             return True
 
         elif extract_type == 'zip_nested':
-            # For nested zips like build-tools
             temp_dir = tempfile.mkdtemp()
             try:
                 with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
+                    safe_extract_zip(zip_ref, temp_dir)
 
-                # Find the nested zip or directory
-                items = os.listdir(temp_dir)
-                if len(items) == 1 and os.path.isdir(os.path.join(temp_dir, items[0])):
-                    nested_dir = os.path.join(temp_dir, items[0])
-                    # Copy contents to extract_to
-                    for item in os.listdir(nested_dir):
-                        src = os.path.join(nested_dir, item)
-                        dst = os.path.join(extract_to, item)
-                        if os.path.isdir(src):
-                            shutil.copytree(src, dst)
-                        else:
-                            shutil.copy2(src, dst)
-                else:
-                    # Copy all items
-                    for item in items:
-                        src = os.path.join(temp_dir, item)
-                        dst = os.path.join(extract_to, item)
-                        if os.path.isdir(src):
-                            shutil.copytree(src, dst)
-                        else:
-                            shutil.copy2(src, dst)
+                for root, dirs, files in os.walk(temp_dir):
+                    for f in files:
+                        src = os.path.join(root, f)
+                        rel_path = os.path.relpath(src, temp_dir)
+                        dst = os.path.join(extract_to, rel_path)
+                        ensure_dir(os.path.dirname(dst))
+                        shutil.copy2(src, dst)
+
+                if log_callback:
+                    log_callback(f"Extracted nested zip contents to {extract_to}", 'info')
                 return True
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         elif extract_type in ['exe', 'jar']:
-            # For single executables, just move them
             filename = os.path.basename(archive_path)
             dest_path = os.path.join(extract_to, filename)
             shutil.copy2(archive_path, dest_path)
+            if log_callback:
+                log_callback(f"Copied {filename} to {extract_to}", 'info')
+            return True
+
+        elif extract_type == 'none':
             return True
 
         return False
+    except zipfile.BadZipFile as e:
+        if log_callback:
+            log_callback(f"Extraction failed: File is not a valid zip - {e}", 'error')
+        return False
     except Exception as e:
-        print(f"Extraction failed: {e}")
+        if log_callback:
+            log_callback(f"Extraction failed: {e}", 'error')
         return False
 
-def move_files_to_subdir(src_dir: str, tool_name: str, expected_files: List[str]) -> bool:
+def move_files_to_subdir(src_dir: str, tool_subdir_name: str, expected_files: List[str], log_callback=None) -> bool:
     """Move expected files to their proper subdirectories"""
     try:
-        tool_subdir = os.path.join(src_dir, tool_name)
+        tool_subdir = os.path.join(TOOLS_DIR, tool_subdir_name)
         ensure_dir(tool_subdir)
 
+        found_files = []
+        missing_files = []
+
         for expected_file in expected_files:
-            # Handle nested paths like 'bin/java.exe'
-            if '/' in expected_file or '\\' in expected_file:
-                # Find the file in the extracted directory
-                for root, dirs, files in os.walk(src_dir):
-                    if expected_file.replace('/', os.sep).replace('\\', os.sep) in [os.path.relpath(os.path.join(root, f), src_dir) for f in files]:
-                        src_file = os.path.join(root, os.path.basename(expected_file))
-                        dest_file = os.path.join(tool_subdir, os.path.basename(expected_file))
-                        shutil.move(src_file, dest_file)
+            expected_normalized = expected_file.replace('/', os.sep).replace('\\', os.sep)
+
+            found = False
+            for root, dirs, files in os.walk(src_dir):
+                for f in files:
+                    file_rel_path = os.path.relpath(os.path.join(root, f), src_dir).replace('/', os.sep).replace('\\', os.sep)
+                    if file_rel_path == expected_normalized or f == os.path.basename(expected_file):
+                        src_file = os.path.join(root, f)
+
+                        dest_basename = os.path.basename(expected_file)
+                        dest_file = os.path.join(tool_subdir, dest_basename)
+                        shutil.copy2(src_file, dest_file)
+                        found_files.append(dest_basename)
+                        found = True
+                        if log_callback:
+                            log_callback(f"Found and copied {dest_basename}", 'info')
                         break
-            else:
-                # Direct file in root
-                src_file = os.path.join(src_dir, expected_file)
-                if os.path.exists(src_file):
-                    dest_file = os.path.join(tool_subdir, expected_file)
-                    shutil.move(src_file, dest_file)
+                if found:
+                    break
+
+            if not found:
+                missing_files.append(expected_file)
+                if log_callback:
+                    log_callback(f"Could not find: {expected_file}", 'warning')
+
+        if missing_files and not found_files:
+            if log_callback:
+                log_callback(f"No files found for {tool_subdir_name}", 'error')
+            return False
 
         return True
     except Exception as e:
-        print(f"File moving failed: {e}")
+        if log_callback:
+            log_callback(f"File moving failed: {e}", 'error')
         return False
+
+def cleanup_tool_dir(tool_name: str, log_callback=None) -> bool:
+    """Clean up a tool's directory before re-installation"""
+    metadata = TOOL_METADATA.get(tool_name, {})
+    tool_subdir = metadata.get('subdir', tool_name)
+    tool_dir = os.path.join(TOOLS_DIR, tool_subdir)
+
+    if os.path.exists(tool_dir):
+        try:
+            shutil.rmtree(tool_dir, ignore_errors=True)
+            if log_callback:
+                log_callback(f"Cleaned up {tool_dir}", 'info')
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Failed to clean {tool_dir}: {e}", 'warning')
+
+    ensure_dir(TOOLS_DIR)
+    ensure_dir(tool_dir)
+    return True
 
 def cleanup_temp_files(temp_dir: str):
     """Clean up temporary files and directories"""
@@ -1094,17 +1767,59 @@ def download_and_setup_tool(tool_name: str, progress_callback=None, log_callback
         return False
 
     metadata = TOOL_METADATA[tool_name]
+
+    if metadata['url'] == 'local':
+        if log_callback:
+            log_callback(f"Verifying local tool {tool_name}...", 'info')
+        tool_dir = os.path.join(TOOLS_DIR, metadata['subdir'])
+        expected_files = metadata['expected_files']
+        missing = []
+        for ef in expected_files:
+            ef_path = os.path.join(tool_dir, ef)
+            if not os.path.exists(ef_path):
+                missing.append(ef)
+        if missing:
+            if log_callback:
+                log_callback(f"Local tool {tool_name} missing files: {', '.join(missing)}", 'warning')
+            return False
+        if log_callback:
+            log_callback(f"[Ok] {tool_name} verified (local)", 'success')
+        return True
+
     temp_dir = tempfile.mkdtemp(prefix=f"{tool_name}_download_")
 
     try:
+        cleanup_tool_dir(tool_name, log_callback)
+
         if log_callback:
             log_callback(f"Downloading {tool_name} v{metadata['version']}...", 'info')
 
-        # Download the file
         download_url = metadata['url']
-        archive_path = os.path.join(temp_dir, os.path.basename(download_url))
+        if download_url.rstrip('/').endswith('/releases'):
+            if log_callback:
+                log_callback(
+                    f"No direct release asset URL is configured for {tool_name}; "
+                    "use the AIK bundle or install this tool separately.",
+                    'warning',
+                )
+            return False
 
-        if not download_file_with_human_behavior(download_url, archive_path, progress_callback):
+        archive_name = metadata.get('filename') or os.path.basename(download_url)
+        archive_path = os.path.join(temp_dir, archive_name)
+        download_urls = [download_url]
+        if 'sourceforge.net/projects/' in download_url and download_url.endswith('/download'):
+            direct_url = download_url.replace(
+                'https://sourceforge.net/projects/',
+                'https://downloads.sourceforge.net/project/',
+            ).removesuffix('/download')
+            download_urls.append(direct_url)
+
+        downloaded = False
+        for candidate_url in download_urls:
+            if download_file_with_human_behavior(candidate_url, archive_path, progress_callback, log_callback):
+                downloaded = True
+                break
+        if not downloaded:
             if log_callback:
                 log_callback(f"Failed to download {tool_name}", 'error')
             return False
@@ -1112,24 +1827,44 @@ def download_and_setup_tool(tool_name: str, progress_callback=None, log_callback
         if log_callback:
             log_callback(f"Extracting {tool_name}...", 'info')
 
-        # Extract the archive
         extract_dir = os.path.join(temp_dir, 'extracted')
-        if not extract_archive(archive_path, extract_dir, metadata['extract_type']):
+        if not extract_archive(archive_path, extract_dir, metadata['extract_type'], log_callback):
             if log_callback:
                 log_callback(f"Failed to extract {tool_name}", 'error')
             return False
 
-        # Move files to proper subdirectories
+        # AIK is a directory-based tool. Preserve its complete archive tree;
+        # copying only expected_files drops android_win_tools and its helpers.
+        if tool_name in ('android_image_kitchen', 'unpackimg'):
+            aik_source = None
+            for root, _, files in os.walk(extract_dir):
+                if 'unpackimg.bat' in files:
+                    aik_source = root
+                    break
+            if aik_source is None:
+                aik_source = extract_dir
+            aik_dir = os.path.join(TOOLS_DIR, metadata['subdir'])
+            ensure_dir(aik_dir)
+            for entry in os.listdir(aik_source):
+                source = os.path.join(aik_source, entry)
+                destination = os.path.join(aik_dir, entry)
+                if os.path.isdir(source):
+                    shutil.copytree(source, destination, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(source, destination)
+            if log_callback:
+                log_callback(f"Installed complete AIK tree to {aik_dir}", 'info')
+
         tool_dir = os.path.join(TOOLS_DIR, metadata['subdir'])
         ensure_dir(tool_dir)
 
-        if not move_files_to_subdir(extract_dir, metadata['subdir'], metadata['expected_files']):
+        if not move_files_to_subdir(extract_dir, metadata['subdir'], metadata['expected_files'], log_callback):
             if log_callback:
                 log_callback(f"Failed to organize {tool_name} files", 'error')
             return False
 
         if log_callback:
-            log_callback(f"✓ {tool_name} setup complete", 'success')
+            log_callback(f"[Ok] {tool_name} setup complete", 'success')
         return True
 
     except Exception as e:
@@ -1167,6 +1902,8 @@ def compute_md5(path: str, block_size: int = 1024*1024, length: Optional[int] = 
                 break
             h.update(chunk)
             remaining -= len(chunk)
+        if remaining > 0:
+            raise IOError(f"File read incomplete: expected {length} bytes, got {length - remaining} bytes")
     return h.hexdigest().lower()
 
 def read_bytes(path: str, offset: int = 0, length: Optional[int] = None) -> bytes:
@@ -1178,7 +1915,7 @@ def is_admin() -> bool:
     """Check if the current process is running with administrator privileges."""
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+    except OSError:
         return False
 
 def check_and_elevate():
@@ -1299,25 +2036,27 @@ def replace_tar_entry_inplace(tar_path: str, entry_name: str, data: bytes,
     found = find_tar_entry(tar_path, entry_name)
     if not found:
         raise FileNotFoundError(f"Entry '{entry_name}' not found")
-    
+
     hdr_off, data_off, orig_size = found
-    
-    if len(data) > orig_size:
-        raise ValueError(
-            f"Replacement size ({len(data)}) > original ({orig_size})"
-        )
-    
-    if len(data) < orig_size:
+
+    if len(data) == orig_size:
+        with open(tar_path, "r+b") as f:
+            f.seek(data_off)
+            f.write(data)
+    elif len(data) < orig_size:
         if pad_zeros:
             data = data + b'\x00' * (orig_size - len(data))
+            with open(tar_path, "r+b") as f:
+                f.seek(data_off)
+                f.write(data)
         else:
             raise ValueError("Replacement smaller and pad_zeros=False")
-    
-    with open(tar_path, "r+b") as f:
-        f.seek(data_off)
-        f.write(data)
-    
-    # If .tar.md5, update footer
+    else:
+        raise ValueError(
+            f"Replacement size ({len(data)}) > original ({orig_size}). "
+            "In-place replacement not supported for growing entries."
+        )
+
     if tar_path.lower().endswith('.tar.md5'):
         full_size = os.path.getsize(tar_path)
         tar_length = full_size - 32
@@ -1351,7 +2090,29 @@ def strip_md5_footer(md5_path: str, tar_path: str) -> str:
         f.seek(0, 2)
         file_size = f.tell()
         
-        # Try to find MD5 hash - check last 512 bytes for hash
+        # First try: check if last 32 bytes are pure hex
+        if file_size >= 32:
+            f.seek(-32, 2)
+            footer = f.read(32)
+            
+            if all(c in b"0123456789abcdefABCDEF" for c in footer):
+                # Pure 32-byte hex footer
+                md5_hex_str = footer.decode('ascii')
+                footer_start = file_size - 32
+
+                # Write the tar data (everything before the MD5 footer)
+                f.seek(0)
+                with open(tar_path, 'wb') as tar_file:
+                    remaining = footer_start
+                    chunk_size = 1024 * 1024
+                    while remaining > 0:
+                        to_read = min(chunk_size, remaining)
+                        tar_file.write(f.read(to_read))
+                        remaining -= to_read
+
+                return md5_hex_str
+        
+        # Second try: find MD5 hash in larger footer (up to 512 bytes)
         search_size = min(512, file_size)
         f.seek(-search_size, 2)
         tail = f.read(search_size)
@@ -1385,13 +2146,18 @@ def strip_md5_footer(md5_path: str, tar_path: str) -> str:
     return md5_hex_str
 
 def append_md5_footer(tar_path: str, out_md5: str) -> str:
-    """Compute MD5 and append"""
+    """Compute MD5 and append in Samsung Odin format.
+
+    Samsung .tar.md5 format is: TAR data + 32-byte MD5 hash.
+    Some variants may have padding before the MD5, but the simple
+    append of 32 bytes works with most Odin versions.
+    """
     md5_hash = compute_md5(tar_path)
-    
+
     with open(tar_path, "rb") as src, open(out_md5, "wb") as dst:
         shutil.copyfileobj(src, dst)
         dst.write(md5_hash.encode('ascii'))
-    
+
     return md5_hash
 
 def verify_tar_md5(md5_file: str) -> Tuple[bool, str]:
@@ -1416,33 +2182,41 @@ def verify_tar_md5(md5_file: str) -> Tuple[bool, str]:
 def extract_system_image(system_img: str, out_dir: str) -> None:
     """Extract system.img using simg2img and mount"""
     ensure_dir(out_dir)
-    
-    # First convert sparse to raw if needed
-    magic = read_bytes(system_img, 0, 4)
-    if magic == b'\x3a\xff\x26\xed':  # Sparse image magic
-        raw_img = tempfile.mktemp(suffix=".img")
-        simg2img = tool_resolve("simg2img")
-        if simg2img:
-            result = run_cmd([simg2img, system_img, raw_img])
+
+    raw_img = None
+    try:
+        magic = read_bytes(system_img, 0, 4)
+        if magic == b'\x3a\xff\x26\xed':  # Sparse image magic
+            raw_img = tempfile.mktemp(suffix=".img")
+            simg2img = tool_resolve("simg2img")
+            if simg2img:
+                result = run_cmd([simg2img, system_img, raw_img])
+                if result.returncode == 0:
+                    system_img = raw_img
+                else:
+                    raw_img = None
+            else:
+                raise FileNotFoundError("simg2img not found")
+
+        seven_z = tool_resolve("7z")
+        if seven_z:
+            result = run_cmd([seven_z, "x", system_img, f"-o{out_dir}"])
             if result.returncode == 0:
-                system_img = raw_img
-        else:
-            raise FileNotFoundError("simg2img not found")
-    
-    # Extract using 7z or bsdtar
-    seven_z = tool_resolve("7z")
-    if seven_z:
-        result = run_cmd([seven_z, "x", system_img, f"-o{out_dir}"])
-        if result.returncode == 0:
-            return
-    
-    bsdtar = tool_resolve("bsdtar")
-    if bsdtar:
-        result = run_cmd([bsdtar, "-xf", system_img, "-C", out_dir])
-        if result.returncode == 0:
-            return
-    
-    raise RuntimeError("Could not extract system image")
+                return
+
+        bsdtar = tool_resolve("bsdtar")
+        if bsdtar:
+            result = run_cmd([bsdtar, "-xf", system_img, "-C", out_dir])
+            if result.returncode == 0:
+                return
+
+        raise RuntimeError("Could not extract system image")
+    finally:
+        if raw_img and os.path.exists(raw_img):
+            try:
+                os.remove(raw_img)
+            except OSError:
+                pass
 
 def build_rom_from_images(images_dir: str, out_zip: str,
                          rom_name: str = "CustomROM") -> None:
@@ -1603,7 +2377,7 @@ def sign_apk_with_jarsigner(apk_path: str) -> None:
         # Clean up temporary keystore
         try:
             os.remove(debug_keystore)
-        except:
+        except OSError:
             pass
 
 def sign_apk(apk_path: str, keystore: str, key_alias: str, key_pass: str) -> None:
@@ -1691,55 +2465,91 @@ def recompile_apk(src_dir: str, out_apk: str, target_sdk: Optional[int] = None) 
     fix_apk_compression(out_apk)
 
 def unpack_boot_img(boot_img: str, out_dir: str) -> Dict[str, Any]:
-    """Unpack boot image"""
+    """Unpack a boot/recovery image. Returns a dict with the method used and the
+    output paths. After unpacking, the ramdisk is automatically extracted to
+    `<out_dir>/ramdisk/` if AIK is used."""
     ensure_dir(out_dir)
+    errors = []
 
-    # Try magiskboot first
+    # 1) magiskboot (fast, produces kernel + ramdisk.cpio directly)
     magiskboot = tool_resolve("magiskboot")
     if magiskboot:
         boot_basename = os.path.basename(boot_img)
         dest_path = os.path.join(out_dir, boot_basename)
-        # Normalize paths to handle different separators
-        src_norm = os.path.normpath(os.path.abspath(boot_img))
-        dst_norm = os.path.normpath(os.path.abspath(dest_path))
-        if src_norm != dst_norm:
-            shutil.copy2(boot_img, dest_path)  # Use copy2 to overwrite if exists
+        if os.path.normpath(os.path.abspath(boot_img)) != os.path.normpath(os.path.abspath(dest_path)):
+            shutil.copy2(boot_img, dest_path)
         result = run_cmd([magiskboot, "unpack", boot_basename], cwd=out_dir)
         if result.returncode == 0:
-            return {'method': 'magiskboot', 'status': 'success'}
+            return {'method': 'magiskboot', 'status': 'success', 'out_dir': out_dir}
 
-    # Try AIK as fallback
+    # 2) AIK unpackimg.bat (handles AOSP, AOSP_VNDR, AOSP-PXA, ELF, KRNL, OSIP,
+    #    U-Boot, BLOB, CHROMEOS, DHTB, NOOK, Sony SIN; supports gzip/lzop/lzma/
+    #    xz/bzip2/lz4/lz4-l/cpio ramdisk; auto-unpacks ramdisk to split_img/ and
+    #    ramdisk/ subdirectories)
     aik = tool_resolve("unpackimg")
     if aik:
+        aik_root = os.path.dirname(aik)
+        # AIK uses %bin% (= aik_root/android_win_tools) and writes split_img/
+        # and ramdisk/ as subdirectories of CWD
         result = run_cmd([aik, boot_img], cwd=out_dir)
         if result.returncode == 0:
-            return {'method': 'AIK', 'status': 'success'}
+            # Find the produced split_img/ and ramdisk/ directories and merge them
+            split_img = os.path.join(out_dir, "split_img")
+            ramdisk = os.path.join(out_dir, "ramdisk")
+            return {
+                'method': 'AIK',
+                'status': 'success',
+                'out_dir': out_dir,
+                'split_img': split_img if os.path.isdir(split_img) else None,
+                'ramdisk': ramdisk if os.path.isdir(ramdisk) else None,
+            }
+        err = result.stderr.decode(errors='replace') if result and result.stderr else ''
+        errors.append(f"AIK: {err.strip()[:200]}")
 
-    # If both fail, try a simple extraction method using 7z/bsdtar
+    # 3) 7z (works for some images, no ramdisk handling)
     seven_z = tool_resolve("7z")
     if seven_z:
         result = run_cmd([seven_z, "x", boot_img, f"-o{out_dir}"])
         if result.returncode == 0:
-            return {'method': '7z', 'status': 'success'}
+            return {'method': '7z', 'status': 'success', 'out_dir': out_dir}
+        errors.append(f"7z: {result.stderr.decode(errors='replace')[:200] if result and result.stderr else ''}")
 
+    # 4) bsdtar
     bsdtar = tool_resolve("bsdtar")
     if bsdtar:
         result = run_cmd([bsdtar, "-xf", boot_img, "-C", out_dir])
         if result.returncode == 0:
-            return {'method': 'bsdtar', 'status': 'success'}
+            return {'method': 'bsdtar', 'status': 'success', 'out_dir': out_dir}
 
-    raise RuntimeError("Boot image unpacker not found or all unpackers failed")
+    raise RuntimeError(
+        "Boot image unpacker not found or all unpackers failed. "
+        "Install magiskboot or AIK (with android_win_tools). Errors: " + " | ".join(errors)
+    )
 
-def repack_boot_img(work_dir: str, out_img: str) -> None:
-    """Repack boot image"""
-    magiskboot = tool_resolve("magiskboot")
-    if magiskboot:
-        result = run_cmd([magiskboot, "repack", "boot.img"], cwd=work_dir)
-        if result.returncode == 0 and os.path.exists(os.path.join(work_dir, "new-boot.img")):
-            shutil.copy(os.path.join(work_dir, "new-boot.img"), out_img)
-            return
-    
-    raise RuntimeError("Boot repack failed")
+def repack_boot_img(work_dir: str, out_img: str, prefer: str = "auto") -> None:
+    """Repack a boot image. prefers magiskboot, falls back to AIK.
+    `work_dir` should be the directory produced by unpack_boot_img."""
+    if prefer in ("auto", "magiskboot"):
+        magiskboot = tool_resolve("magiskboot")
+        if magiskboot:
+            result = run_cmd([magiskboot, "repack", "boot.img"], cwd=work_dir)
+            if result.returncode == 0 and os.path.exists(os.path.join(work_dir, "new-boot.img")):
+                shutil.copy(os.path.join(work_dir, "new-boot.img"), out_img)
+                return
+
+    if prefer in ("auto", "aik"):
+        aik = tool_resolve("repackimg")
+        if aik:
+            result = run_cmd([aik], cwd=work_dir)
+            if result.returncode == 0:
+                # AIK writes image-new.img (or unsigned-new.img if signed)
+                for name in ("image-new.img", "unsigned-new.img"):
+                    src = os.path.join(work_dir, name)
+                    if os.path.exists(src):
+                        shutil.copy(src, out_img)
+                        return
+
+    raise RuntimeError("Boot repack failed: no working repacker found")
 
 def extract_kernel(boot_unpack_dir: str, out_path: str) -> None:
     """Extract kernel from unpacked boot directory"""
@@ -1756,58 +2566,240 @@ def extract_dtb(boot_unpack_dir: str, out_path: str) -> None:
     shutil.copy(dtb_path, out_path)
 
 def extract_ramdisk(cpio_file: str, out_dir: str) -> None:
-    """Extract ramdisk"""
+    """Extract ramdisk (CPIO archive, possibly gz/lz4/lzma/xz/bzip2/lzop compressed).
+    Detects compression by magic bytes, then uses the right tool to decompress,
+    then uses cpio (or AIK) to extract."""
     ensure_dir(out_dir)
 
-    work_file = cpio_file
-    if cpio_file.lower().endswith('.lz4'):
-        lz4 = tool_resolve("lz4")
-        if lz4:
-            work_file = tempfile.mktemp()
-            result = run_cmd([lz4, "-d", "-f", cpio_file, work_file])
-            if result.returncode != 0:
-                raise RuntimeError("LZ4 decompress failed")
+    if not os.path.exists(cpio_file):
+        raise FileNotFoundError(f"Ramdisk not found: {cpio_file}")
 
+    # Detect compression by magic bytes
+    with open(cpio_file, 'rb') as f:
+        magic = f.read(8)
+
+    work_file = cpio_file
+    tmp_files = []
+
+    try:
+        # LZ4 legacy frame magic: 02 21 4C 18
+        if magic[:4] == b'\x02\x21\x4c\x18':
+            lz4 = tool_resolve("lz4")
+            if not lz4:
+                raise FileNotFoundError("lz4 not found, cannot decompress lz4 ramdisk")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            result = run_cmd([lz4, "-d", "-f", cpio_file, tmp])
+            if result.returncode != 0:
+                raise RuntimeError(f"LZ4 decompress failed: {result.stderr.decode(errors='replace')[:200]}")
+            work_file = tmp
+
+        # LZ4 frame format (newer): 04 22 4D 18
+        elif magic[:4] == b'\x04\x22\x4d\x18':
+            lz4 = tool_resolve("lz4")
+            if not lz4:
+                raise FileNotFoundError("lz4 not found")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            result = run_cmd([lz4, "-d", "-f", "--frame-format", cpio_file, tmp])
+            if result.returncode != 0:
+                # Try without --frame-format (older lz4 doesn't support it)
+                result = run_cmd([lz4, "-d", "-f", cpio_file, tmp])
+                if result.returncode != 0:
+                    raise RuntimeError(f"LZ4 frame decompress failed: {result.stderr.decode(errors='replace')[:200]}")
+            work_file = tmp
+
+        # gzip magic: 1F 8B
+        elif magic[:2] == b'\x1f\x8b':
+            gzip = tool_resolve("gzip")
+            if not gzip:
+                raise FileNotFoundError("gzip not found")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            with open(cpio_file, 'rb') as f_in, open(tmp, 'wb') as f_out:
+                result = run_cmd([gzip, "-dc"], input_data=f_in.read())
+                if result.returncode != 0:
+                    raise RuntimeError("gzip decompress failed")
+                f_out.write(result.stdout if isinstance(result.stdout, bytes) else b"")
+            work_file = tmp
+
+        # xz magic: FD 37 7A 58 5A 00
+        elif magic[:6] == b'\xfd7zXZ\x00':
+            xz = tool_resolve("xz")
+            if not xz:
+                raise FileNotFoundError("xz not found")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            result = run_cmd([xz, "-dc", cpio_file])
+            if result.returncode != 0:
+                raise RuntimeError("xz decompress failed")
+            with open(tmp, 'wb') as f_out:
+                f_out.write(result.stdout if isinstance(result.stdout, bytes) else b"")
+            work_file = tmp
+
+        # lzma magic: 5D 00 00 (followed by size)
+        elif magic[0] == 0x5d and magic[1] == 0x00 and magic[2] == 0x00:
+            xz = tool_resolve("xz")
+            if not xz:
+                raise FileNotFoundError("xz not found (needed for lzma)")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            result = run_cmd([xz, "-Flzma", "-dc", cpio_file])
+            if result.returncode != 0:
+                raise RuntimeError("lzma decompress failed")
+            with open(tmp, 'wb') as f_out:
+                f_out.write(result.stdout if isinstance(result.stdout, bytes) else b"")
+            work_file = tmp
+
+        # bzip2 magic: 42 5A 68 (BZh)
+        elif magic[:3] == b'BZh':
+            bz = tool_resolve("bzip2")
+            if not bz:
+                raise FileNotFoundError("bzip2 not found")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            result = run_cmd([bz, "-dc", cpio_file])
+            if result.returncode != 0:
+                raise RuntimeError("bzip2 decompress failed")
+            with open(tmp, 'wb') as f_out:
+                f_out.write(result.stdout if isinstance(result.stdout, bytes) else b"")
+            work_file = tmp
+
+        # lzop magic: 89 4C 5A 4F
+        elif magic[:4] == b'\x89LZO':
+            lzop = tool_resolve("lzop")
+            if not lzop:
+                raise FileNotFoundError("lzop not found")
+            tmp = tempfile.mktemp(suffix=".cpio")
+            tmp_files.append(tmp)
+            result = run_cmd([lzop, "-dc", cpio_file])
+            if result.returncode != 0:
+                raise RuntimeError("lzop decompress failed")
+            with open(tmp, 'wb') as f_out:
+                f_out.write(result.stdout if isinstance(result.stdout, bytes) else b"")
+            work_file = tmp
+
+        # Plain CPIO: "070701" (newc) or "070702" (newc with crc)
+        with open(work_file, 'rb') as f:
+            hdr = f.read(6)
+        if hdr not in (b'070701', b'070702'):
+            raise RuntimeError(
+                f"Unknown ramdisk format. Magic: {hdr!r}. "
+                "Expected CPIO (070701/070702), or compressed ramdisk (gzip/xz/lz4/lzma/bzip2/lzop)."
+            )
+
+        # Try bsdtar first
+        bsdtar = tool_resolve("bsdtar")
+        if bsdtar:
+            result = run_cmd([bsdtar, "-xf", work_file, "-C", out_dir])
+            if result.returncode == 0:
+                return
+
+        # Fall back to cpio
+        cpio = tool_resolve("cpio")
+        if cpio:
+            with open(work_file, 'rb') as f:
+                cpio_data = f.read()
+            result = run_cmd([cpio, "-idm", "--no-absolute-filenames"], cwd=out_dir, input_data=cpio_data)
+            if result.returncode == 0:
+                return
+            err = result.stderr.decode(errors='replace') if result and result.stderr else "unknown"
+            raise RuntimeError(f"cpio extraction failed: {err[:300]}")
+
+        # Last resort: try AIK's cpio via unpackimg's split_img + ramdisk workflow
+        raise RuntimeError("No cpio or bsdtar available to extract ramdisk")
+    finally:
+        for tmp in tmp_files:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+
+def create_ramdisk(src_dir: str, out_cpio: str, compress: str = "gzip") -> None:
+    """Create a ramdisk from a directory. `compress` controls the compression
+    applied AFTER creating the cpio: 'gzip', 'lz4', 'lzma', 'xz', 'bzip2',
+    'lzop', or 'none' for uncompressed cpio. Detects existing tools."""
+    if not os.path.isdir(src_dir):
+        raise FileNotFoundError(f"Source dir not found: {src_dir}")
+
+    # First, try cpio (newc format, the standard for Android ramdisks)
+    cpio = tool_resolve("cpio")
     bsdtar = tool_resolve("bsdtar")
-    if bsdtar:
-        result = run_cmd([bsdtar, "-xf", work_file, "-C", out_dir])
-        if result.returncode == 0:
+
+    tmp_cpio = tempfile.mktemp(suffix=".cpio")
+    cpio_created = False
+
+    try:
+        if bsdtar:
+            # bsdtar with --format newc creates a newc-format cpio
+            result = run_cmd([bsdtar, "--format", "newc", "-cf", tmp_cpio, "-C", src_dir, "."])
+            if result.returncode == 0:
+                cpio_created = True
+
+        if not cpio_created and cpio:
+            # Use cpio -o with find pipe (correct way to create a cpio archive)
+            result = run_cmd([cpio, "-o", "-H", "newc", "--quiet",
+                              "-F", tmp_cpio], cwd=src_dir,
+                             input_data=_find_files_for_cpio(src_dir).encode('utf-8'))
+            if result.returncode == 0 and os.path.exists(tmp_cpio) and os.path.getsize(tmp_cpio) > 0:
+                cpio_created = True
+
+        if not cpio_created:
+            raise FileNotFoundError("Neither bsdtar nor cpio could create a ramdisk")
+
+        # Now compress (or copy as-is) to the final output path
+        if compress == "none" or not compress:
+            shutil.move(tmp_cpio, out_cpio)
             return
 
-    # Fallback to cpio command if bsdtar fails
-    cpio = tool_resolve("cpio")
-    if cpio:
-        try:
-            with open(work_file, 'rb') as f:
-                result = run_cmd([cpio, "-idm"], cwd=out_dir, input_data=f.read())
-                if result.returncode == 0:
-                    return
-        except Exception:
-            pass
+        compress_tool = {
+            "gzip":  ("gzip",  ["-9f"]),
+            "lz4":   ("lz4",   ["-9f", "-l"]),  # -l = legacy format (Android-friendly)
+            "lzma":  ("xz",    ["-Flzma", "-9f"]),
+            "xz":    ("xz",    ["-9f", "-Ccrc32"]),
+            "bzip2": ("bzip2", ["-9f"]),
+            "lzop":  ("lzop",  ["-9f"]),
+        }.get(compress.lower() if compress else "gzip")
 
-    raise RuntimeError("Ramdisk extraction failed")
+        if not compress_tool:
+            shutil.move(tmp_cpio, out_cpio)
+            return
 
-def create_ramdisk(src_dir: str, out_cpio: str, compress: bool = True) -> None:
-    """Create ramdisk"""
-    bsdtar = tool_resolve("bsdtar")
-    if not bsdtar:
-        raise FileNotFoundError("bsdtar not found")
-    
-    tmp_cpio = out_cpio if not compress else tempfile.mktemp()
-    result = run_cmd([bsdtar, "-cf", tmp_cpio, "-C", src_dir, "."])
-    if result.returncode != 0:
-        raise RuntimeError("Ramdisk creation failed")
-    
-    if compress:
-        lz4 = tool_resolve("lz4")
-        if lz4:
-            result = run_cmd([lz4, "-9", "-f", tmp_cpio, out_cpio])
-            if result.returncode != 0:
-                raise RuntimeError("LZ4 compression failed")
-        try:
-            os.remove(tmp_cpio)
-        except Exception:
-            pass
+        tool_name, args = compress_tool
+        tool_path = tool_resolve(tool_name)
+        if not tool_path:
+            # Fall back to plain cpio
+            shutil.move(tmp_cpio, out_cpio)
+            return
+
+        result = run_cmd([tool_path] + args, input_data=open(tmp_cpio, 'rb').read())
+        if result.returncode == 0:
+            out_bytes = result.stdout if isinstance(result.stdout, bytes) else b""
+            with open(out_cpio, 'wb') as f:
+                f.write(out_bytes)
+        else:
+            # Compressor failed; keep plain cpio
+            shutil.move(tmp_cpio, out_cpio)
+    finally:
+        if os.path.exists(tmp_cpio):
+            try:
+                os.remove(tmp_cpio)
+            except OSError:
+                pass
+
+def _find_files_for_cpio(src_dir: str) -> str:
+    """Generate a list of files for cpio -o via stdin (relative paths, newline-separated)."""
+    lines = []
+    for root, dirs, files in os.walk(src_dir):
+        rel = os.path.relpath(root, src_dir)
+        if rel != ".":
+            lines.append(rel)
+        for f in files:
+            full = os.path.join(root, f)
+            rel_f = os.path.relpath(full, src_dir)
+            lines.append(rel_f)
+    return "\n".join(lines) + "\n"
 
 # -------------------------
 # LZ4 Operations
@@ -1915,7 +2907,7 @@ def fix_apk_compression(apk_path: str) -> None:
             else:
                 try:
                     os.remove(aligned_apk)
-                except:
+                except OSError:
                     pass
 
     finally:
@@ -1926,14 +2918,19 @@ def fix_apk_compression(apk_path: str) -> None:
 # -------------------------
 # Heimdall Flashing
 # -------------------------
-def heimdall_detect_device() -> bool:
-    """Detect device"""
+def heimdall_detect_device() -> Tuple[bool, str]:
+    """Detect device and return (success, device_info)"""
     heimdall = tool_resolve("heimdall")
     if not heimdall:
-        return False
-    
+        return False, "Heimdall not found"
+
     result = run_cmd([heimdall, "detect"])
-    return result.returncode == 0
+    if result.returncode == 0:
+        output = result.stdout.decode(errors='replace').strip()
+        return True, output if output else "Device detected"
+    else:
+        error = result.stderr.decode(errors='replace').strip()
+        return False, error if error else "No device detected"
 
 def heimdall_flash(partition_map: Dict[str, str]) -> bool:
     """Flash via Heimdall"""
@@ -2002,13 +2999,13 @@ class TextOutputDialog(tk.Toplevel):
     def __init__(self, parent, title: str, text_content: str):
         super().__init__(parent)
         self.title(title)
-        self.geometry("600x400")
         self.resizable(True, True)
+        self.configure(bg=COLORS['bg_card'])
 
         self.text_area = scrolledtext.ScrolledText(self, wrap='word', font=('Consolas', 10),
                                                   bg=COLORS['log_bg'], fg=COLORS['log_fg'])
         self.text_area.insert(tk.END, text_content)
-        self.text_area.config(state='disabled') # Make it read-only
+        self.text_area.config(state='disabled')
         self.text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         close_button = ttk.Button(self, text="Close", command=self.destroy)
@@ -2016,7 +3013,24 @@ class TextOutputDialog(tk.Toplevel):
 
         self.transient(parent)
         self.grab_set()
-        self.wait_window(self)
+        
+        # Center the dialog
+        self.update_idletasks()
+        width = 600
+        height = 400
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+# Helper used by the hex editor's word analysis dialog.
+def _int_to_float(val: int, size: int) -> str:
+    """Convert an int to its IEEE 754 float representation."""
+    import struct
+    if size == 4:
+        return str(struct.unpack("<f", struct.pack("<I", val & 0xFFFFFFFF))[0])
+    if size == 8:
+        return str(struct.unpack("<d", struct.pack("<Q", val & 0xFFFFFFFFFFFFFFFF))[0])
+    return "n/a"
 
 # -------------------------
 # GUI: Hex Editor Widget
@@ -2046,10 +3060,31 @@ class HexEditorWidget(ttk.Frame):
         self.undo_stack = []
         self.redo_stack = []
         self.bookmarks = {}
+        self.bookmarks_listbox = None  # Bookmarks panel listbox (not yet implemented)
         self.current_selection = (None, None)  # (start, end)
         self.windowed = False
         self.firmware_type = None  # Detected firmware file type
         self.preserved_selection = None  # To preserve selection across focus changes
+        self.font_name = "Courier New"
+        self.font_family = "Courier New"
+        self.font_size = 10
+        self.gutter_visible = True
+        self.toolbar = None
+        self.toolbar_hidden = False
+        self.navigation_history = []
+        self.navigation_index = -1
+        self.max_history = 100
+        self.find_window = None
+        self.find_occurrences = []
+        self.current_occurrence = 0
+        self.current_find_pattern = None
+        self.search_hits = []
+        self.search_hit_indices = []
+        self._search_cached_query = None
+        self.occurrence_label = None
+        self.modified_regions = []
+        self._edit_generation = 0
+        self._search_pattern = None
 
     def _build_ui(self):
         # Apply consistent background colors to match the application theme
@@ -2067,6 +3102,7 @@ class HexEditorWidget(ttk.Frame):
         # Top frame controls
         top_frame = ttk.Frame(self, style='Card.TFrame')
         top_frame.pack(side=tk.TOP, fill=tk.X)
+        self.toolbar = top_frame  # Save toolbar reference for toggle
 
         ttk.Button(top_frame, text="Open", command=self.open_file, takefocus=False).pack(side=tk.LEFT, padx=2)
         ttk.Button(top_frame, text="Save", command=self.save_file, takefocus=False).pack(side=tk.LEFT, padx=2)
@@ -2096,6 +3132,26 @@ class HexEditorWidget(ttk.Frame):
         ttk.Button(top_frame, text="Next", command=lambda: self._search(direction=1), takefocus=False).pack(side=tk.LEFT, padx=(2,0))
         ttk.Button(top_frame, text="Entropy", command=self.entropy_analysis, takefocus=False).pack(side=tk.LEFT, padx=4)
         ttk.Button(top_frame, text="Strings", command=self.show_strings, takefocus=False).pack(side=tk.LEFT, padx=4)
+        # Font family and size selectors
+        ttk.Label(top_frame, text="  Font: ").pack(side=tk.LEFT, padx=(12,2))
+        self.font_family_var = tk.StringVar(value=self.font_family)
+        available_fonts = self._get_available_fonts()
+        font_combo = ttk.Combobox(top_frame, textvariable=self.font_family_var,
+                                  values=available_fonts, width=14, takefocus=False)
+        font_combo.pack(side=tk.LEFT)
+        font_combo.bind("<<ComboboxSelected>>", lambda e: self._set_font_family(self.font_family_var.get()))
+        ttk.Label(top_frame, text=" Size: ").pack(side=tk.LEFT, padx=(6,2))
+        self.font_size_var = tk.IntVar(value=self.font_size)
+        size_combo = ttk.Combobox(top_frame, textvariable=self.font_size_var,
+                                  values=("7", "8", "9", "10", "11", "12", "14", "16", "18", "20", "24"),
+                                  width=3, takefocus=False)
+        size_combo.pack(side=tk.LEFT)
+        size_combo.bind("<<ComboboxSelected>>", lambda e: self._set_font_size(self.font_size_var.get()))
+        # Gutter toggle (shown by default)
+        ttk.Label(top_frame, text="  Gutter:").pack(side=tk.LEFT, padx=(12,2))
+        self.gutter_visible_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(top_frame, text="On", variable=self.gutter_visible_var,
+                        command=self._toggle_gutter, takefocus=False).pack(side=tk.LEFT)
 
         # Main panes: left = hex view, right = converters / analysis
         main_pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL, style='Card.TFrame')
@@ -2104,10 +3160,15 @@ class HexEditorWidget(ttk.Frame):
         # Left frame: hex text view
         left_frame = ttk.Frame(main_pane, style='Card.TFrame')
         # Gutter for decoded words
-        self.gutter = tk.Text(left_frame, width=18, font=("Courier New", 10), wrap="none", state=tk.DISABLED,
-                              bg=COLORS['bg_secondary'], fg=COLORS['text_primary'])
+        self.gutter = tk.Text(left_frame, width=18, font=(self.font_family, self.font_size), wrap="none", state=tk.DISABLED,
+                              bg=COLORS['bg_secondary'], fg=COLORS['text_primary'],
+                              cursor="arrow")
         self.gutter.pack(side=tk.LEFT, fill=tk.Y)
-        self.hex_text = tk.Text(left_frame, font=("Courier New", 10), wrap="none", undo=False,
+        self.gutter.bind("<Button-3>", self._show_gutter_context_menu)
+        self.gutter.bind("<Button-2>", self._show_gutter_context_menu)
+        self.gutter.bind("<Control-Button-1>", self._show_gutter_context_menu)
+        self.gutter.bind("<Button-1>", self._on_gutter_click)
+        self.hex_text = tk.Text(left_frame, font=(self.font_family, self.font_size), wrap="none", undo=False,
                                bg=COLORS['log_bg'], fg=COLORS['log_fg'], insertbackground=COLORS['text_primary'])
         self.hex_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.hex_text.bind("<<Selection>>", self.on_selection)
@@ -2245,109 +3306,165 @@ class HexEditorWidget(ttk.Frame):
                 self.data = bytearray(f.read())
             self.file_path = file_path
             self.modified = False
-            self._refresh_display()
+            self.undo_stack.clear()
+            self.redo_stack.clear()
+            self.search_hits.clear()
+            self._search_cached_query = None
+            self._search_pattern = None
+            self.find_occurrences.clear()
+            self.preserved_selection = None
+            self.current_selection = (None, None)
+            self._edit_generation += 1
+            self.offset_top = 0
+            data_len = len(self.data)
+            self.windowed = data_len > 1024 * 256
+            self.firmware_type = detect_firmware_file_type(os.path.basename(file_path))
+            # Use the unified render path so the line format matches every other
+            # consumer (selection / highlight / goto / on_click all parse the
+            # same "OFFSET  HEX  ASCII" layout produced by refresh_view).
+            self.refresh_view()
             self.status_callback(f"Loaded: {os.path.basename(file_path)}")
         except Exception as e:
             self.log_callback(f"Failed to load file: {e}", 'error')
-    
+
+    # Backwards-compat alias – some external callers used this name. The
+    # canonical renderer is refresh_view() so all line-format assumptions
+    # stay in one place.
     def _refresh_display(self):
-            """Refresh the hex display"""
-            self.hex_text.delete('1.0', tk.END)
-            if self.data is None:
-                return
-            lines = []
-            data_len = len(self.data)
-            for i in range(0, data_len, self.bytes_per_line):
-                offset = i
-                hex_part = ""
-                ascii_part = ""
-                for j in range(self.bytes_per_line):
-                    if i + j < data_len:
-                        byte_val = self.data[i + j]
-                        hex_part += f"{byte_val:02X} "
-                        ascii_part += chr(byte_val) if 32 <= byte_val <= 126 else "."
-                    else:
-                        hex_part += "   "
-                        ascii_part += " "
-                line = f"{offset:08X}: {hex_part:<{self.bytes_per_line*3}} {ascii_part}"
-                lines.append(line)
-            self.hex_text.insert('1.0', '\n'.join(lines))
-            for i in range(0, len(self.data), self.bytes_per_line):
-                line_data = self.data[i:i+self.bytes_per_line]
-                offset = f"{i:08X}"
-                hex_part = ' '.join(f"{b:02X}" for b in line_data)
-                ascii_part = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in line_data)
-                lines.append(f"{offset}  {hex_part:<{self.bytes_per_line*3}}  {ascii_part}")
-            self.hex_text.insert('1.0', '\n'.join(lines))
+        """Deprecated: delegates to refresh_view()."""
+        self.refresh_view()
 
     def zoom_in(self):
         """Zoom in the hex display"""
-        # Placeholder implementation
-        self.log_callback("Zoom in not implemented", 'info')
+        if hasattr(self, 'font_size'):
+            current_size = self.font_size
+            new_size = min(current_size + 2, 24)
+            self.font_size = new_size
+            self.hex_text.configure(font=(self.font_name, new_size))
+            self.log_callback(f"Zoomed in to {new_size}pt", 'info')
+        else:
+            self.log_callback("Font size not configurable", 'info')
 
     def zoom_out(self):
         """Zoom out the hex display"""
-        # Placeholder implementation
-        self.log_callback("Zoom out not implemented", 'info')
+        if hasattr(self, 'font_size'):
+            current_size = self.font_size
+            new_size = max(current_size - 2, 6)
+            self.font_size = new_size
+            self.hex_text.configure(font=(self.font_name, new_size))
+            self.log_callback(f"Zoomed out to {new_size}pt", 'info')
+        else:
+            self.log_callback("Font size not configurable", 'info')
 
     def reset_zoom(self):
         """Reset zoom to default"""
-        # Placeholder implementation
-        self.log_callback("Reset zoom not implemented", 'info')
+        if hasattr(self, 'font_size'):
+            self.font_size = 10
+            self.hex_text.configure(font=(self.font_name, 10))
+            self.log_callback("Reset zoom to 10pt", 'info')
+        else:
+            self.log_callback("Font size not configurable", 'info')
 
     def toggle_toolbar(self):
         """Toggle toolbar visibility"""
-        # Placeholder implementation
-        self.log_callback("Toggle toolbar not implemented", 'info')
+        if hasattr(self, 'toolbar') and self.toolbar is not None and hasattr(self, 'toolbar_hidden'):
+            if self.toolbar_hidden:
+                self.toolbar.pack(fill='x', padx=5, pady=5)
+                self.toolbar_hidden = False
+                self.log_callback("Toolbar shown", 'info')
+            else:
+                self.toolbar.pack_forget()
+                self.toolbar_hidden = True
+                self.log_callback("Toolbar hidden", 'info')
+        else:
+            self.log_callback("Toolbar not available", 'info')
     
     def _show_context_menu(self, event):
         """Show context menu on right-click"""
         context_menu = tk.Menu(self, tearoff=0)
-        
+
         # File operations
-        context_menu.add_command(label="📁 Open File...", command=self.open_file)
-        context_menu.add_command(label="💾 Save", command=self.save_file, state=tk.NORMAL if self.file_path else tk.DISABLED)
-        context_menu.add_command(label="💾 Save As...", command=self.save_as)
-        context_menu.add_separator()
-        
+        file_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="📁 File", menu=file_menu)
+        file_menu.add_command(label="Open...", command=self.open_file, accelerator="Ctrl+O")
+        file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S", state=tk.NORMAL if self.file_path else tk.DISABLED)
+        file_menu.add_command(label="Save As...", command=self.save_as)
+        file_menu.add_separator()
+        file_menu.add_command(label="File Properties", command=self.show_file_properties)
+        file_menu.add_command(label="Detect File Type", command=self.detect_file_type)
+
         # Edit operations
-        context_menu.add_command(label="↩️ Undo", command=self.undo, state=tk.NORMAL if self.undo_stack else tk.DISABLED)
-        context_menu.add_command(label="↪️ Redo", command=self.redo, state=tk.NORMAL if self.redo_stack else tk.DISABLED)
-        context_menu.add_separator()
-        
+        edit_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="✏️ Edit", menu=edit_menu)
+        edit_menu.add_command(label="Undo", command=self.undo, accelerator="Ctrl+Z", state=tk.NORMAL if self.undo_stack else tk.DISABLED)
+        edit_menu.add_command(label="Redo", command=self.redo, accelerator="Ctrl+Y", state=tk.NORMAL if self.redo_stack else tk.DISABLED)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Insert Bytes...", command=self.insert_bytes)
+        edit_menu.add_command(label="Delete Bytes", command=self.delete_bytes)
+        edit_menu.add_command(label="Fill Range...", command=self.fill_range)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="XOR...", command=self.xor_chunk)
+        edit_menu.add_command(label="Reverse Bytes", command=self.reverse_bytes)
+        edit_menu.add_command(label="Swap Endianness", command=self.swap_endianness)
+        edit_menu.add_command(label="Complement Bytes", command=self.complement_bytes)
+
         # Selection operations
-        context_menu.add_command(label="🔍 Select All", command=self.select_all)
-        sel_start, sel_length = self.current_selection
-        has_selection = sel_start is not None
-        context_menu.add_command(label="📋 Copy Hex", command=self.copy_hex_to_clipboard, state=tk.NORMAL if has_selection else tk.DISABLED)
-        context_menu.add_separator()
-        
-        # Search operations
-        context_menu.add_command(label="🔎 Find...", command=self.find_dialog)
-        context_menu.add_command(label="🔄 Replace...", command=self.replace_dialog)
-        context_menu.add_command(label="➡️ Go To...", command=self.goto_dialog)
-        context_menu.add_separator()
-        
-        # View settings submenu
+        sel_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="🔍 Selection", menu=sel_menu)
+        sel_menu.add_command(label="Select All", command=self.select_all, accelerator="Ctrl+A")
+        sel_menu.add_command(label="Copy Hex", command=self.copy_hex_to_clipboard)
+        sel_menu.add_separator()
+        sel_menu.add_command(label="Copy As Hex Dump", command=self.copy_as_hex_dump)
+        sel_menu.add_command(label="Copy As C Array", command=self.copy_as_c_array)
+        sel_menu.add_command(label="Copy As Base64", command=self.copy_as_base64)
+        sel_menu.add_command(label="Copy As Binary", command=self.copy_as_binary_string)
+        sel_menu.add_separator()
+        sel_menu.add_command(label="Compute Hashes", command=self.compute_hashes)
+        sel_menu.add_command(label="Inspect Data Structure", command=self.inspect_data_structure)
+
+        # Bookmarks
+        bookmark_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="🔖 Bookmarks", menu=bookmark_menu)
+        bookmark_menu.add_command(label="Toggle Bookmark", command=lambda: self.toggle_bookmark())
+        bookmark_menu.add_command(label="Clear All Bookmarks", command=self.clear_all_bookmarks)
+        if self.bookmarks:
+            bookmark_menu.add_separator()
+            for key, data in sorted(self.bookmarks.items(), key=lambda x: x[1]['offset']):
+                bookmark_menu.add_command(label=f"Go to: {data['name']}",
+                                       command=lambda o=data['offset']: self.goto_offset(o))
+
+        # Navigation
+        nav_menu = tk.Menu(context_menu, tearoff=0)
+        context_menu.add_cascade(label="🧭 Navigation", menu=nav_menu)
+        nav_menu.add_command(label="Go To Offset...", command=self.goto_dialog, accelerator="Ctrl+G")
+        nav_menu.add_command(label="Quick Jump", command=self.quick_jump_menu)
+        nav_menu.add_separator()
+        nav_menu.add_command(label="Back", command=self.navigate_back, accelerator="Alt+Left")
+        nav_menu.add_command(label="Forward", command=self.navigate_forward, accelerator="Alt+Right")
+        nav_menu.add_separator()
+        nav_menu.add_command(label="Find...", command=self.find_dialog, accelerator="Ctrl+F")
+        nav_menu.add_command(label="Replace...", command=self.replace_dialog, accelerator="Ctrl+H")
+
+        # View settings
         view_menu = tk.Menu(context_menu, tearoff=0)
-        context_menu.add_cascade(label="👁️ View Settings", menu=view_menu)
-        
+        context_menu.add_cascade(label="👁️ View", menu=view_menu)
+
         # Bytes per line submenu
         bpl_menu = tk.Menu(view_menu, tearoff=0)
         view_menu.add_cascade(label="Bytes per Line", menu=bpl_menu)
         current_bpl = self.bytes_per_line
-        for bpl in [8, 16, 24, 32]:
-            bpl_menu.add_radiobutton(label=str(bpl), command=lambda b=bpl: self._set_bpl(b), 
+        for bpl in [8, 16, 24, 32, 64]:
+            bpl_menu.add_radiobutton(label=str(bpl), command=lambda b=bpl: self._set_bpl(b),
                                    variable=tk.IntVar(value=current_bpl), value=bpl)
-        
+
         # Group size submenu
         group_menu = tk.Menu(view_menu, tearoff=0)
         view_menu.add_cascade(label="Group Size", menu=group_menu)
         current_group = int(self.group_var.get()) if hasattr(self, 'group_var') else 4
-        for group in [4, 8, 16, 32, 64]:
+        for group in [1, 2, 4, 8, 16]:
             group_menu.add_radiobutton(label=str(group), command=lambda g=group: self._set_group_size(g),
                                      variable=tk.IntVar(value=current_group), value=group)
-        
+
         # Endian submenu
         endian_menu = tk.Menu(view_menu, tearoff=0)
         view_menu.add_cascade(label="Endianness", menu=endian_menu)
@@ -2356,42 +3473,50 @@ class HexEditorWidget(ttk.Frame):
                                    variable=tk.StringVar(value=current_endian), value="big")
         endian_menu.add_radiobutton(label="Little Endian", command=lambda: self.set_endian("little"),
                                    variable=tk.StringVar(value=current_endian), value="little")
-        
-        context_menu.add_separator()
-        
-        # Analysis tools submenu
+
+        # Analysis tools
         analysis_menu = tk.Menu(context_menu, tearoff=0)
-        context_menu.add_cascade(label="🔬 Analysis Tools", menu=analysis_menu)
-        analysis_menu.add_command(label="📊 Entropy Analysis", command=self.entropy_analysis)
-        analysis_menu.add_command(label="🔤 Extract Strings", command=self.show_strings)
-        analysis_menu.add_command(label="📈 Byte Histogram", command=self.byte_histogram)
-        
-        # Quick actions for current selection
-        if has_selection:
-            context_menu.add_separator()
-            quick_menu = tk.Menu(context_menu, tearoff=0)
-            context_menu.add_cascade(label="⚡ Quick Actions", menu=quick_menu)
-            
-            # Data interpretation
-            interpret_menu = tk.Menu(quick_menu, tearoff=0)
-            quick_menu.add_cascade(label="Interpret As", menu=interpret_menu)
-            interpret_menu.add_command(label="Integer (Unsigned)", command=lambda: self._quick_interpret("uint"))
-            interpret_menu.add_command(label="Integer (Signed)", command=lambda: self._quick_interpret("int"))
-            interpret_menu.add_command(label="Float32", command=lambda: self._quick_interpret("float32"))
-            interpret_menu.add_command(label="Float64", command=lambda: self._quick_interpret("float64"))
-            interpret_menu.add_command(label="UTF-8 String", command=lambda: self._quick_interpret("utf8"))
-            interpret_menu.add_command(label="UTF-16 String", command=lambda: self._quick_interpret("utf16"))
-            
-            # Quick operations
-            quick_menu.add_command(label="Fill with 0x00", command=lambda: self._quick_fill(0x00))
-            quick_menu.add_command(label="Fill with 0xFF", command=lambda: self._quick_fill(0xFF))
-            quick_menu.add_command(label="Fill with Pattern...", command=self._quick_fill_pattern)
-        
+        context_menu.add_cascade(label="🔬 Analysis", menu=analysis_menu)
+        analysis_menu.add_command(label="Entropy Analysis", command=self.entropy_analysis)
+        analysis_menu.add_command(label="Extract Strings", command=self.show_strings)
+        analysis_menu.add_command(label="Byte Histogram", command=self.byte_histogram)
+        analysis_menu.add_command(label="File Hashes", command=self.compute_file_hashes)
+        analysis_menu.add_separator()
+        analysis_menu.add_command(label="Hex Calculator", command=self.hex_calculator)
+        analysis_menu.add_command(label="Export Modified Regions", command=self.export_modified_regions)
+
         # Show context menu at cursor position
         try:
             context_menu.tk_popup(event.x_root, event.y_root)
         finally:
             context_menu.grab_release()
+
+    def show_file_properties(self):
+        """Show file properties dialog"""
+        if not self.file_path:
+            messagebox.showwarning("No File", "No file is currently open")
+            return
+
+        try:
+            stat = os.stat(self.file_path)
+            md5_hash = hashlib.md5(self._get_bytes_all()).hexdigest()
+
+            props = f"""File Properties
+{'=' * 40}
+File: {os.path.basename(self.file_path)}
+Path: {self.file_path}
+
+Size: {stat.st_size:,} bytes ({stat.st_size / 1024:.2f} KB)
+
+Created: {datetime.fromtimestamp(stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S')}
+Modified: {datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')}
+
+MD5: {md5_hash}
+"""
+            dlg = TextOutputDialog(self.winfo_toplevel(), "File Properties", props)
+            self.wait_window(dlg)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not get file properties: {e}")
     
     def _set_group_size(self, size):
         """Set group size from context menu"""
@@ -2549,6 +3674,10 @@ class HexEditorWidget(ttk.Frame):
         self.bind("<Control-g>", lambda e: self.goto_dialog())
         self.bind("<Control-z>", lambda e: self.undo())
         self.bind("<Control-y>", lambda e: self.redo())
+        self.bind("<Alt-Left>", lambda e: self.navigate_back())
+        self.bind("<Alt-Right>", lambda e: self.navigate_forward())
+        self.bind("<Control-b>", lambda e: self.toggle_bookmark())
+        self.bind("<Control-l>", lambda e: self.quick_jump_menu())
 
     # File operations
     def open_file(self, mmap_ok=False):
@@ -2562,7 +3691,7 @@ class HexEditorWidget(ttk.Frame):
                 if isinstance(res, mmap.mmap):
                     self.mmap_file = res
                     self.file_handle = fhandle
-                    self.data = None
+                    self.data = bytearray(res)
                 else:
                     self.data = bytearray(res)
             else:
@@ -2601,6 +3730,15 @@ class HexEditorWidget(ttk.Frame):
         self.data = bytearray()
         self.file_path = None
         self.modified = False
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.search_hits.clear()
+        self._search_cached_query = None
+        self._search_pattern = None
+        self.find_occurrences.clear()
+        self.current_selection = (None, None)
+        self.preserved_selection = None
+        self._edit_generation += 1
 
     def save_file(self):
         if not self.file_path:
@@ -2641,6 +3779,11 @@ class HexEditorWidget(ttk.Frame):
         return bytes(self.data[start:start + length]) if self.data else b""
 
     def _write_slice(self, start, bts: bytes):
+        if start < 0 or start >= self._get_len() or not bts:
+            return
+        # Hex editing is in-place. Do not let a write past EOF silently grow
+        # the bytearray, which would make undo and file offsets inconsistent.
+        bts = bts[:self._get_len() - start]
         # record for undo
         old = self._get_slice(start, len(bts))
         self.undo_stack.append(("write", start, old))
@@ -2651,6 +3794,8 @@ class HexEditorWidget(ttk.Frame):
             if self.data:
                 self.data[start:start + len(bts)] = bts
         self.modified = True
+        self._edit_generation += 1
+        self._search_cached_query = None
 
     def _get_bytes_all(self):
         if self.mmap_file:
@@ -2672,18 +3817,32 @@ class HexEditorWidget(ttk.Frame):
             base = 0
         gutter_lines = []
         group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
-        for i in range(0, len(data), self.bytes_per_line):
-            chunk = data[i:i + self.bytes_per_line]
+        bpl = max(1, int(self.bytes_per_line))
+        for i in range(0, len(data), bpl):
+            chunk = data[i:i + bpl]
             # Group bytes with proper spacing between groups
             hex_parts = []
             for j in range(0, len(chunk), group_sz):
                 group = chunk[j:j + group_sz]
                 hex_parts.append(" ".join(f"{b:02X}" for b in group))
             hex_chunk = "  ".join(hex_parts)
-            # Pad to fixed width: each byte 2 hex + 1 space; plus one extra spacer between groups
-            group_spacer = 2 if len(chunk) > group_sz else 0
-            expected_chars = self.bytes_per_line * 3 - 1 + group_spacer
-            hex_padded = f"{hex_chunk:<{expected_chars}}"
+            # Correct width accounting for group joining. Each group renders
+            # as "XX XX ... XX" = (bytes_in_group * 3 - 1) chars when the
+            # group has >= 2 bytes, else 2 chars for a 1-byte trailing group.
+            # The "  " boundary between groups adds 2 chars per gap.
+            if len(chunk) >= 2:
+                full_groups = len(chunk) // group_sz
+                rem = len(chunk) - full_groups * group_sz
+                expected_chars = (
+                    full_groups * (group_sz * 3 - 1)
+                    + (rem * 3 - 1 if rem >= 2 else (2 if rem == 1 else 0))
+                    + max(0, (full_groups + (1 if rem else 0)) - 1) * 2
+                )
+            else:
+                expected_chars = 2 if len(chunk) == 1 else 0
+            hex_padded = f"{hex_chunk:<{expected_chars}}" if expected_chars > 0 else hex_chunk
+            hex_padded = f"{hex_chunk:<{expected_chars}}" if expected_chars > 0 else hex_chunk
+            hex_padded = f"{hex_chunk:<{expected_chars}}" if expected_chars > 0 else hex_chunk
             ascii_chunk = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
             # Use firmware-specific width if detected, otherwise adapt to file size
             if self.firmware_type:
@@ -2704,13 +3863,36 @@ class HexEditorWidget(ttk.Frame):
             for w in range(0, len(chunk) - len(chunk) % 4, 4):
                 val = int.from_bytes(chunk[w:w+4], byteorder=endian_fixed)
                 words32.append(f"{val:08X}")
-            gutter_lines.append(f"{ ' '.join(words16[:4]) } | { ' '.join(words32[:2]) }")
+            gutter_lines.append(f"{ ' '.join(words16) } | { ' '.join(words32) }")
         # Update gutter
         try:
+            # Resize gutter width to fit the 16/32-bit decoded words.
+            # 16-bit: n * 4 hex digits + (n-1) spaces; 32-bit: n * 8 + (n-1) spaces.
+            # n16 = bpl/2, n32 = bpl/4. Plus " | " separator (3 chars).
+            n16 = bpl // 2
+            n32 = bpl // 4
+            gutter_width = 0
+            if n16 > 0:
+                gutter_width += n16 * 4 + max(0, n16 - 1)
+            if n32 > 0:
+                gutter_width += n32 * 8 + max(0, n32 - 1)
+            if n16 > 0 and n32 > 0:
+                gutter_width += 3  # " | "
+            # Pad a little to avoid last-char clipping
+            gutter_width = max(18, gutter_width + 2)
+            self.gutter.configure(width=gutter_width)
             self.gutter.configure(state=tk.NORMAL)
             self.gutter.delete('1.0', tk.END)
             self.gutter.insert('1.0', '\n'.join(gutter_lines) + ('\n' if gutter_lines else ''))
             self.gutter.configure(state=tk.DISABLED)
+        except Exception:
+            pass
+        # Reset view to top-left so the first column is ALWAYS visible after
+        # any refresh (file load, bytes/line change, group change, etc.).
+        try:
+            self.hex_text.xview_moveto(0)
+            self.hex_text.yview_moveto(0)
+            self.hex_text.mark_set(tk.INSERT, "1.0")
         except Exception:
             pass
         # Keep the widget editable - do not disable it
@@ -2740,7 +3922,706 @@ class HexEditorWidget(ttk.Frame):
         except Exception:
             pass
 
+    def _get_available_fonts(self) -> Tuple[str, ...]:
+        """Return a list of monospace fonts available on this system, with
+        the current `font_family` at the top so it's always visible."""
+        candidates = (
+            "Courier New", "Consolas", "Cascadia Mono", "Cascadia Code",
+            "JetBrains Mono", "Fira Code", "Source Code Pro", "Menlo",
+            "Monaco", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono",
+            "Roboto Mono", "Hack", "Anonymous Pro", "Inconsolata", "Monospace",
+        )
+        try:
+            import tkinter.font as tkfont
+            available = set(tkfont.families())
+        except Exception:
+            return candidates
+        present = [f for f in candidates if f in available]
+        extras = sorted(available - set(candidates))
+        # Make sure current font is in the list
+        if self.font_family not in present and self.font_family not in extras:
+            return (self.font_family, *present, *extras)
+        # Move current to front
+        if self.font_family in present:
+            present.remove(self.font_family)
+        if self.font_family in extras:
+            extras.remove(self.font_family)
+        return (self.font_family, *present, *extras)
+
+    def _set_font_family(self, name: str):
+        try:
+            self.font_family = name or "Courier New"
+            self.font_name = self.font_family
+            self.gutter.configure(font=(self.font_family, self.font_size))
+            self.hex_text.configure(font=(self.font_family, self.font_size))
+            # Invalidate search cache; line widths depend on font
+            if hasattr(self, '_search_cached_query'):
+                self._search_cached_query = None
+            self.refresh_view()
+        except Exception as e:
+            self.log_callback(f"Font change error: {e}", "error")
+
+    def _set_font_size(self, val: int):
+        try:
+            self.font_size = max(6, min(48, int(val)))
+            self.gutter.configure(font=(self.font_family, self.font_size))
+            self.hex_text.configure(font=(self.font_family, self.font_size))
+            if hasattr(self, '_search_cached_query'):
+                self._search_cached_query = None
+            self.refresh_view()
+        except Exception as e:
+            self.log_callback(f"Font size change error: {e}", "error")
+
+    def _toggle_gutter(self):
+        """Show/hide the gutter (decoded-words column)."""
+        try:
+            self.gutter_visible = bool(self.gutter_visible_var.get())
+            if self.gutter_visible:
+                # Re-pack the gutter on the left
+                self.gutter.pack(side=tk.LEFT, fill=tk.Y, before=self.hex_text)
+            else:
+                self.gutter.pack_forget()
+        except Exception as e:
+            self.log_callback(f"Toggle gutter error: {e}", "error")
+
+    def _on_gutter_click(self, event):
+        """Left-click on the gutter: select the corresponding hex row in
+        the main hex_text view and show the context menu on right-click
+        (handled by _show_gutter_context_menu)."""
+        try:
+            index = self.gutter.index(f"@{event.x},{event.y}")
+            line = int(index.split(".")[0])
+            # Move hex_text to the same row
+            self.hex_text.see(f"{line}.0")
+            self.hex_text.focus_set()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Gutter context menu — full set of operations on decoded 16/32-bit
+    # words (and the underlying bytes the word represents).
+    # ------------------------------------------------------------------
+    def _gutter_word_at_y(self, y: int) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+        """Return (row_index, byte_offset_in_row, word_kind) for the word
+        under y pixels in the gutter. word_kind is '16' or '32'. byte_offset
+        is the start of the word in the current row. None if click missed a
+        word."""
+        try:
+            index = self.gutter.index(f"@{0},{y}")
+            line = int(index.split(".")[0])
+            if line < 1:
+                return None, None, None
+            # Determine which line in hex_text corresponds to this row
+            # Lines are 1:1
+            text_line = self.gutter.get(f"{line}.0", f"{line}.end")
+            if "|" not in text_line:
+                return None, None, None
+            left, right = text_line.split("|", 1)
+            # Get x position relative to gutter
+            # Use the bbox of the click
+            try:
+                bbox = self.gutter.bbox(index)
+                if bbox is None:
+                    return line, None, None
+                bbox_x, _, _, _ = bbox
+                x_pixel = int(bbox_x)
+            except Exception:
+                return line, None, None
+
+            # Determine which side: 16-bit (left) or 32-bit (right)
+            # Compute pixel positions of the "|" character
+            try:
+                pipe_col = left.index("|")
+            except ValueError:
+                return line, None, None
+            pipe_x = self._char_pixel_offset(left, pipe_col, self.font_family, self.font_size)
+            char_w, space_w = self._char_metrics(self.font_family, self.font_size)
+            if x_pixel < pipe_x:
+                # 16-bit side: each word is 4 hex digits + 1 space
+                words16 = left.split()
+                # x_pixel / (4*char_width + space_width) determines index
+                word_w = 4 * char_w + space_w
+                idx = int(x_pixel / word_w) if word_w else 0
+                idx = max(0, min(len(words16) - 1, idx))
+                return line, idx * 2, "16"
+            else:
+                # 32-bit side
+                words32 = right.split()
+                x_in_right = x_pixel - pipe_x - 3 * char_w  # 3 = " | " width
+                word_w = 8 * char_w + space_w
+                idx = int(x_in_right / word_w) if word_w else 0
+                idx = max(0, min(len(words32) - 1, idx))
+                return line, idx * 4, "32"
+        except Exception:
+            return None, None, None
+
+    def _gutter_byte_offset(self, line: int, byte_in_row: int) -> Optional[int]:
+        """Convert (line index 1-based, byte offset within row) to absolute
+        byte offset in the file. Returns None if line is out of range."""
+        if not self.data or line < 1:
+            return None
+        bpl = self.bytes_per_line
+        if self.windowed:
+            row_offset = (line - 1) * bpl
+            return self.offset_top + row_offset + byte_in_row
+        return (line - 1) * bpl + byte_in_row
+
+    def _gutter_value_at(self, y: int) -> Tuple[Optional[int], Optional[int]]:
+        """Return (absolute_byte_offset, decoded_int_value) for the word
+        under y pixels in the gutter, respecting endianness."""
+        row, byte_in_row, kind = self._gutter_word_at_y(y)
+        if row is None or byte_in_row is None or kind is None:
+            return None, None
+        abs_off = self._gutter_byte_offset(row, byte_in_row)
+        if abs_off is None or abs_off >= len(self.data):
+            return None, None
+        size = 2 if kind == "16" else 4
+        if abs_off + size > len(self.data):
+            return None, None
+        chunk = bytes(self.data[abs_off:abs_off + size])
+        endian = self.endian if self.endian in ("big", "little") else "big"
+        return abs_off, int.from_bytes(chunk, byteorder=endian)
+
+    @staticmethod
+    def _char_metrics(family: str, size: int) -> Tuple[int, int]:
+        """Approximate monospace char and space pixel widths for a (family, size)."""
+        # Empirical: 1pt ≈ 1.6 px wide for Courier New; space ≈ 0.5x char
+        char_w = max(4, int(size * 0.62))
+        return char_w, max(2, int(char_w * 0.5))
+
+    @staticmethod
+    def _char_pixel_offset(text: str, char_index: int, family: str, size: int) -> int:
+        char_w, _ = HexEditorWidget._char_metrics(family, size)
+        return char_index * char_w
+
+    def _show_gutter_context_menu(self, event):
+        """Comprehensive context menu for the gutter (decoded words)."""
+        try:
+            # Identify the word at the click
+            row, byte_in_row, kind = self._gutter_word_at_y(event.y)
+            abs_off, value = self._gutter_value_at(event.y)
+            # If no word was identified, show a minimal menu with file ops only
+            if row is None or abs_off is None or kind is None or value is None:
+                m = tk.Menu(self, tearoff=0)
+                file_menu = tk.Menu(m, tearoff=0)
+                m.add_cascade(label="📁 File", menu=file_menu)
+                file_menu.add_command(label="Open...", command=self.open_file, accelerator="Ctrl+O")
+                file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S",
+                                      state=tk.NORMAL if self.file_path else tk.DISABLED)
+                file_menu.add_command(label="Save As...", command=self.save_as)
+                file_menu.add_separator()
+                file_menu.add_command(label="File Properties", command=self.show_file_properties)
+                file_menu.add_command(label="Detect File Type", command=self.detect_file_type)
+                view_menu = tk.Menu(m, tearoff=0)
+                m.add_cascade(label="👁️ View", menu=view_menu)
+                view_menu.add_checkbutton(label="Show Gutter",
+                                          variable=self.gutter_visible_var,
+                                          command=self._toggle_gutter)
+                try:
+                    m.tk_popup(event.x_root, event.y_root)
+                finally:
+                    m.grab_release()
+                return
+
+            m = tk.Menu(self, tearoff=0)
+
+            # === Decoded value section ===
+            val_menu = tk.Menu(m, tearoff=0)
+            m.add_cascade(label="🔢 Decoded Value", menu=val_menu)
+            if value is None:
+                val_menu.add_command(label="(no word under cursor)", state=tk.DISABLED)
+            else:
+                val_menu.add_command(label=f"Value (decimal): {value}",
+                                     state=tk.DISABLED)
+                val_menu.add_command(label=f"Value (hex): {value:0{2 if kind == '16' else 4}X}",
+                                     state=tk.DISABLED)
+                val_menu.add_command(label=f"Size: {kind}-bit ({'big' if self.endian == 'big' else 'little'}-endian)",
+                                     state=tk.DISABLED)
+                if kind == "16":
+                    val_menu.add_command(label=f"As signed 16-bit: {value - 0x10000 if value >= 0x8000 else value}",
+                                         state=tk.DISABLED)
+                else:
+                    val_menu.add_command(label=f"As signed 32-bit: {value - 0x100000000 if value >= 0x80000000 else value}",
+                                         state=tk.DISABLED)
+                val_menu.add_separator()
+                val_menu.add_command(label="📋 Copy Decoded Value (decimal)",
+                                     command=lambda v=value: self._copy_to_clipboard(str(v)))
+                val_menu.add_command(label="📋 Copy Decoded Value (hex)",
+                                     command=lambda v=value, k=kind: self._copy_to_clipboard(f"{v:0{2 if k == '16' else 4}X}"))
+                val_menu.add_command(label="📋 Copy Decoded Value (signed)",
+                                     command=lambda v=value, k=kind: self._copy_to_clipboard(
+                                         str(v - 0x10000 if k == '16' and v >= 0x8000
+                                             else v - 0x100000000 if k == '32' and v >= 0x80000000
+                                             else v)))
+                val_menu.add_command(label="📋 Copy Word Bytes (hex)",
+                                     command=lambda o=abs_off, k=kind: self._copy_word_bytes_hex(o, k))
+            m.add_separator()
+
+            # === Selection / jump ===
+            sel_menu = tk.Menu(m, tearoff=0)
+            m.add_cascade(label="🔍 Selection", menu=sel_menu)
+            sel_state = tk.NORMAL if abs_off is not None else tk.DISABLED
+            sel_menu.add_command(label="🎯 Select This Word in Hex View",
+                                 command=lambda o=abs_off, k=kind: self._gutter_select_word_in_hex(o, k),
+                                 state=sel_state)
+            sel_menu.add_command(label="🎯 Select 16-bit Word", state=sel_state,
+                                 command=lambda o=abs_off: self._select_byte_range(o, 2))
+            sel_menu.add_command(label="🎯 Select 32-bit Word", state=sel_state,
+                                 command=lambda o=abs_off: self._select_byte_range(o, 4))
+            selected_row = row if row is not None else 0
+            sel_menu.add_command(label="🎯 Select This Row", state=sel_state,
+                                 command=lambda r=selected_row: self._select_row(r))
+            sel_menu.add_command(label="🎯 Select Entire Word + Stride", state=sel_state,
+                                 command=lambda o=abs_off, k=kind: self._gutter_select_stride(o, k))
+            sel_menu.add_separator()
+            sel_menu.add_command(label="📋 Copy Word Bytes (raw)", state=sel_state,
+                                 command=lambda o=abs_off, k=kind: self._copy_word_bytes_hex(o, k))
+            sel_menu.add_command(label="📋 Copy Word as Hex String", state=sel_state,
+                                 command=lambda o=abs_off, k=kind: self._copy_word_bytes_hex(o, k))
+            sel_menu.add_command(label="📋 Copy Word as Decimal String", state=sel_state,
+                                 command=lambda o=abs_off, k=kind: self._copy_word_bytes_decimal(o, k))
+            sel_menu.add_command(label="📋 Copy as C uint16/uint32 Literal", state=sel_state,
+                                 command=lambda v=value, k=kind: self._copy_to_clipboard(
+                                     f"uint{k}_t(0x{v:0{2 if k == '16' else 4}X}u)"))
+            m.add_separator()
+
+            # === Editing ===
+            edit_menu = tk.Menu(m, tearoff=0)
+            m.add_cascade(label="✏️ Edit", menu=edit_menu)
+            ed_state = tk.NORMAL if abs_off is not None else tk.DISABLED
+            edit_menu.add_command(label="Set Word Value (hex)...", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._gutter_edit_word(o, k, "hex"))
+            edit_menu.add_command(label="Set Word Value (decimal)...", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._gutter_edit_word(o, k, "dec"))
+            edit_menu.add_command(label="Set Word Value (signed)...", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._gutter_edit_word(o, k, "signed"))
+            edit_menu.add_separator()
+            edit_menu.add_command(label="XOR with Constant...", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._xor_word(o, k))
+            edit_menu.add_command(label="Negate (two's complement)", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._negate_word(o, k))
+            edit_menu.add_command(label="Increment", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._inc_word(o, k, 1))
+            edit_menu.add_command(label="Decrement", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._inc_word(o, k, -1))
+            edit_menu.add_command(label="Swap Endianness", state=ed_state,
+                                  command=lambda o=abs_off, k=kind: self._swap_word_endian(o, k))
+            edit_menu.add_command(label="Fill Row with This Word", state=ed_state,
+                                  command=lambda v=value, k=kind: self._fill_row_with_word(v, k))
+            m.add_separator()
+
+            # === Bookmarks ===
+            bm_menu = tk.Menu(m, tearoff=0)
+            m.add_cascade(label="🔖 Bookmarks", menu=bm_menu)
+            bm_state = tk.NORMAL if abs_off is not None else tk.DISABLED
+            bm_menu.add_command(label="Add Bookmark Here", state=bm_state,
+                                command=lambda o=abs_off, k=kind, v=value: self._gutter_add_bookmark(o, k, v))
+            if self.bookmarks:
+                bm_menu.add_separator()
+                for key, data in sorted(self.bookmarks.items(), key=lambda x: x[1]['offset']):
+                    bm_menu.add_command(label=f"Go to: {data['name']}",
+                                       command=lambda o=data['offset']: self.goto_offset(o))
+            m.add_separator()
+
+            # === View / analysis ===
+            view_menu = tk.Menu(m, tearoff=0)
+            m.add_cascade(label="👁️ View", menu=view_menu)
+            bpl_menu = tk.Menu(view_menu, tearoff=0)
+            view_menu.add_cascade(label="Bytes per Line", menu=bpl_menu)
+            for bpl in [8, 16, 24, 32, 64]:
+                bpl_menu.add_radiobutton(label=str(bpl),
+                                         command=lambda b=bpl: self._set_bpl(b),
+                                         value=bpl,
+                                         variable=tk.IntVar(value=self.bytes_per_line))
+            endian_menu = tk.Menu(view_menu, tearoff=0)
+            view_menu.add_cascade(label="Endianness", menu=endian_menu)
+            endian_menu.add_radiobutton(label="Big Endian",
+                                        command=lambda: self.set_endian("big"),
+                                        value="big",
+                                        variable=tk.StringVar(value=self.endian))
+            endian_menu.add_radiobutton(label="Little Endian",
+                                        command=lambda: self.set_endian("little"),
+                                        value="little",
+                                        variable=tk.StringVar(value=self.endian))
+            view_menu.add_separator()
+            view_menu.add_checkbutton(label="Show Gutter",
+                                      variable=self.gutter_visible_var,
+                                      command=self._toggle_gutter)
+            view_menu.add_command(label="🔬 Analyze This Word",
+                                  state=bm_state,
+                                  command=lambda o=abs_off, k=kind: self._gutter_analyze_word(o, k))
+            view_menu.add_command(label="📊 As Float (32-bit IEEE 754)",
+                                  state=tk.NORMAL if kind == '32' and value is not None else tk.DISABLED,
+                                  command=lambda v=value: self._copy_to_clipboard(str(_int_to_float(v, 4))))
+            view_menu.add_command(label="📊 As Double (64-bit IEEE 754)",
+                                  state=tk.DISABLED,  # gutter only shows 32-bit max
+                                  command=lambda: None)
+            view_menu.add_command(label="📝 As ASCII (4 bytes)",
+                                  state=bm_state,
+                                  command=lambda o=abs_off, k=kind: self._copy_word_as_ascii(o, k))
+            m.add_separator()
+
+            # === File ops (subset) ===
+            file_menu = tk.Menu(m, tearoff=0)
+            m.add_cascade(label="📁 File", menu=file_menu)
+            file_menu.add_command(label="Open...", command=self.open_file, accelerator="Ctrl+O")
+            file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S",
+                                  state=tk.NORMAL if self.file_path else tk.DISABLED)
+            file_menu.add_command(label="Save As...", command=self.save_as)
+            file_menu.add_separator()
+            file_menu.add_command(label="File Properties", command=self.show_file_properties)
+            file_menu.add_command(label="Detect File Type", command=self.detect_file_type)
+
+            # Show at cursor
+            try:
+                m.tk_popup(event.x_root, event.y_root)
+            finally:
+                m.grab_release()
+        except Exception as e:
+            self.log_callback(f"Gutter menu error: {e}", "error")
+
+    # ---- gutter context-menu helpers ----
+    def _copy_to_clipboard(self, text: str):
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+        except Exception:
+            pass
+
+    def _copy_word_bytes_hex(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        chunk = bytes(self.data[offset:offset + size])
+        self._copy_to_clipboard(chunk.hex())
+
+    def _copy_word_bytes_decimal(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        chunk = bytes(self.data[offset:offset + size])
+        self._copy_to_clipboard(" ".join(str(b) for b in chunk))
+
+    def _copy_word_as_ascii(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        chunk = bytes(self.data[offset:offset + size])
+        ascii_str = "".join(chr(b) if 32 <= b < 127 else f"\\x{b:02X}" for b in chunk)
+        self._copy_to_clipboard(ascii_str)
+
+    def _gutter_select_word_in_hex(self, offset: int, kind: str) -> None:
+        if offset is None:
+            return
+        self._select_byte_range(offset, 2 if kind == "16" else 4)
+
+    def _gutter_select_stride(self, offset: int, kind: str) -> None:
+        """Select every 16/32-bit word at the same offset in the current view
+        (e.g. the 4th byte of every row, to compare across rows)."""
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        # byte offset within first row
+        in_row = offset % self.bytes_per_line
+        if in_row % size != 0:
+            return
+        # collect every occurrence
+        sel_ranges = []
+        cur = offset
+        bpl = self.bytes_per_line
+        while cur + size <= len(self.data):
+            sel_ranges.append((cur, cur + size))
+            cur += bpl
+        if not sel_ranges:
+            return
+        # apply to first range; copy others to clipboard as hex dump
+        self._select_byte_range(sel_ranges[0][0], size)
+        if len(sel_ranges) > 1:
+            dump = "\n".join(f"{s:08X}: " + bytes(self.data[s:e]).hex() for s, e in sel_ranges)
+            self._copy_to_clipboard(dump)
+            self.log_callback(f"Copied stride of {len(sel_ranges)} {kind}-bit words", "info")
+
+    def _select_byte_range(self, offset: int, size: int) -> None:
+        if offset is None or not self.data:
+            return
+        if offset + size > len(self.data):
+            return
+        # Find the corresponding text line/column for (offset..offset+size)
+        bpl = self.bytes_per_line
+        start_line = (offset // bpl) + 1
+        end_line = ((offset + size - 1) // bpl) + 1
+        # Build the start/end text positions using the same column math as display
+        try:
+            start_pos = self._offset_to_text_pos(offset, bpl)
+            end_pos = self._offset_to_text_pos(offset + size, bpl)
+        except Exception:
+            return
+        if end_line > start_line:
+            # multi-line selection; just select start_pos -> end of last line
+            end_pos = f"{end_line}.end"
+        try:
+            self.hex_text.tag_remove("sel", "1.0", tk.END)
+            self.hex_text.tag_add("sel", start_pos, end_pos)
+            self.hex_text.mark_set(tk.INSERT, start_pos)
+            self.hex_text.see(start_pos)
+            self.current_selection = (offset, offset + size)
+        except Exception:
+            pass
+
+    def _offset_to_text_pos(self, offset: int, bpl: int) -> str:
+        """Convert a byte offset to a Text widget position ("line.col") using
+        the same column math as the display."""
+        line = (offset // bpl) + 1
+        in_line = offset % bpl
+        # Locate hex_start by reading the line text
+        text_line = self.hex_text.get(f"{line}.0", f"{line}.end")
+        # Address is everything before the first "  "
+        sep_idx = text_line.find("  ")
+        if sep_idx < 0:
+            return f"{line}.0"
+        hex_start = sep_idx + 2
+        col = self._col_for_byte_in_line(in_line, hex_start, int(self.group_var.get()))
+        return f"{line}.{col}"
+
+    def _select_row(self, row: int) -> None:
+        if row is None or row < 1:
+            return
+        bpl = self.bytes_per_line
+        offset = (row - 1) * bpl
+        size = min(bpl, len(self.data) - offset)
+        if size <= 0:
+            return
+        self._select_byte_range(offset, size)
+
+    def _gutter_edit_word(self, offset: int, kind: str, mode: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        endian = self.endian if self.endian in ("big", "little") else "big"
+        current = int.from_bytes(bytes(self.data[offset:offset + size]), byteorder=endian)
+        if mode == "hex":
+            new_str = simpledialog.askstring(
+                f"Set {kind}-bit Word (hex)",
+                f"Enter new value (0..0x{'FFFF' if kind == '16' else 'FFFFFFFF'}):",
+                initialvalue=f"{current:0{2 if kind == '16' else 4}X}",
+                parent=self,
+            )
+        elif mode == "dec":
+            new_str = simpledialog.askstring(
+                f"Set {kind}-bit Word (decimal, unsigned)",
+                f"Enter new value (0..{'65535' if kind == '16' else '4294967295'}):",
+                initialvalue=str(current),
+                parent=self,
+            )
+        else:  # signed
+            if kind == "16":
+                lo, hi = -0x8000, 0x7FFF
+            else:
+                lo, hi = -0x80000000, 0x7FFFFFFFF
+            new_str = simpledialog.askstring(
+                f"Set {kind}-bit Word (decimal, signed)",
+                f"Enter new value ({lo}..{hi}):",
+                initialvalue=str(current if current <= hi else current - 0x10000 if kind == '16' else current - 0x100000000),
+                parent=self,
+            )
+        if not new_str:
+            return
+        try:
+            if mode == "hex":
+                base = 16
+            else:
+                base = 10
+            new_val = int(new_str.strip(), base)
+        except ValueError:
+            messagebox.showerror("Invalid", f"Not a valid integer: {new_str!r}")
+            return
+        new_bytes = new_val.to_bytes(size, byteorder=endian, signed=False)
+        for i, b in enumerate(new_bytes):
+            self.data[offset + i] = b
+        self.modified = True
+        self.refresh_view()
+        self.log_callback(f"Set {kind}-bit word @0x{offset:X} to 0x{new_val:0{2 if kind == '16' else 4}X}", "info")
+
+    def _xor_word(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        val = simpledialog.askstring(
+            f"XOR {kind}-bit word with...",
+            f"Enter XOR mask (hex, up to {size * 2} hex digits):",
+            initialvalue="FFFF" if kind == "16" else "FFFFFFFF",
+            parent=self,
+        )
+        if not val:
+            return
+        try:
+            mask = int(val.strip(), 16)
+        except ValueError:
+            messagebox.showerror("Invalid", f"Not a valid hex value: {val!r}")
+            return
+        mask_bytes = mask.to_bytes(size, byteorder="big", signed=False)
+        endian = self.endian if self.endian in ("big", "little") else "big"
+        cur = int.from_bytes(bytes(self.data[offset:offset + size]), byteorder=endian)
+        new = cur ^ int.from_bytes(mask_bytes, byteorder=endian)
+        new_bytes = new.to_bytes(size, byteorder=endian, signed=False)
+        for i, b in enumerate(new_bytes):
+            self.data[offset + i] = b
+        self.modified = True
+        self.refresh_view()
+        self.log_callback(f"XOR'd {kind}-bit word @0x{offset:X} with 0x{mask:X}", "info")
+
+    def _negate_word(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        endian = self.endian if self.endian in ("big", "little") else "big"
+        cur = int.from_bytes(bytes(self.data[offset:offset + size]), byteorder=endian)
+        max_val = 1 << (size * 8)
+        new = (-cur) & (max_val - 1)
+        new_bytes = new.to_bytes(size, byteorder=endian, signed=False)
+        for i, b in enumerate(new_bytes):
+            self.data[offset + i] = b
+        self.modified = True
+        self.refresh_view()
+        self.log_callback(f"Negated {kind}-bit word @0x{offset:X}", "info")
+
+    def _inc_word(self, offset: int, kind: str, delta: int) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        endian = self.endian if self.endian in ("big", "little") else "big"
+        cur = int.from_bytes(bytes(self.data[offset:offset + size]), byteorder=endian)
+        new = (cur + delta) & ((1 << (size * 8)) - 1)
+        new_bytes = new.to_bytes(size, byteorder=endian, signed=False)
+        for i, b in enumerate(new_bytes):
+            self.data[offset + i] = b
+        self.modified = True
+        self.refresh_view()
+        self.log_callback(f"{kind}-bit word @0x{offset:X} {('+' if delta > 0 else '')}{delta}", "info")
+
+    def _swap_word_endian(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        chunk = bytes(self.data[offset:offset + size])
+        swapped = chunk[::-1]
+        for i, b in enumerate(swapped):
+            self.data[offset + i] = b
+        self.modified = True
+        self.refresh_view()
+        self.log_callback(f"Swapped endianness of {kind}-bit word @0x{offset:X}", "info")
+
+    def _fill_row_with_word(self, value: int, kind: str) -> None:
+        """Fill the bytes of the current row with the bytes of `value`."""
+        if value is None or not self.data:
+            return
+        bpl = self.bytes_per_line
+        sel = self.hex_text.tag_ranges("sel")
+        if sel:
+            try:
+                start = int(str(sel[0]).split(".")[0])
+            except Exception:
+                start = 1
+        else:
+            start = 1
+        row_offset = (start - 1) * bpl
+        if row_offset >= len(self.data):
+            return
+        size = 2 if kind == "16" else 4
+        chunk = (value & ((1 << (size * 8)) - 1)).to_bytes(size, byteorder="big", signed=False)
+        end = min(row_offset + bpl, len(self.data))
+        i = 0
+        for off in range(row_offset, end):
+            self.data[off] = chunk[i % size]
+            i += 1
+        self.modified = True
+        self.refresh_view()
+        self.log_callback(f"Filled row {start} with 0x{value:0{2 if kind == '16' else 4}X}", "info")
+
+    def _gutter_add_bookmark(self, offset: int, kind: str, value: int) -> None:
+        if offset is None:
+            return
+        name = simpledialog.askstring(
+            "Add Bookmark",
+            f"Bookmark name for offset 0x{offset:08X} ({kind}-bit = 0x{value:0{2 if kind == '16' else 4}X}):",
+            initialvalue=f"@{offset:08X}",
+            parent=self,
+        )
+        if not name:
+            return
+        self.bookmarks[name] = {"offset": offset, "value": value, "size": int(kind)}
+        self.log_callback(f"Bookmark added: {name} @ 0x{offset:X}", "info")
+
+    def _gutter_analyze_word(self, offset: int, kind: str) -> None:
+        if offset is None or not self.data:
+            return
+        size = 2 if kind == "16" else 4
+        if offset + size > len(self.data):
+            return
+        endian = self.endian if self.endian in ("big", "little") else "big"
+        chunk = bytes(self.data[offset:offset + size])
+        val = int.from_bytes(chunk, byteorder=endian)
+        max_val = 1 << (size * 8)
+        signed = val - max_val if val >= (max_val >> 1) else val
+        ascii_repr = "".join(chr(b) if 32 <= b < 127 else f"\\x{b:02X}" for b in chunk)
+        try:
+            if size == 4:
+                f32 = _int_to_float(val, 4)
+            else:
+                f32 = "n/a"
+        except Exception:
+            f32 = "(not a valid float)"
+        msg = (
+            f"Word Analysis @ 0x{offset:08X}\n\n"
+            f"Size: {kind}-bit ({endian}-endian)\n"
+            f"Bytes (hex): {chunk.hex().upper()}\n"
+            f"Bytes (ASCII): {ascii_repr}\n"
+            f"Unsigned decimal: {val}\n"
+            f"Signed decimal: {signed}\n"
+            f"Hex: 0x{val:0{2 if kind == '16' else 4}X}\n"
+            f"Binary: {bin(val)}\n"
+            f"Octal: {oct(val)}\n"
+            f"Float32: {f32}\n"
+        )
+        messagebox.showinfo(f"{kind}-bit Word Analysis", msg)
+
+
     # --- Search / Highlight ---
+    def _col_for_byte_in_line(self, in_line: int, hex_start: int, group_sz: int) -> int:
+        """Return the column (0-based, relative to line start) where byte
+        ``in_line`` (0-based offset within the row) begins in the hex area.
+
+        Layout per row: each byte is "XX " (3 chars), bytes within a group are
+        separated by a single space, and groups are separated by an *extra*
+        space ("  "). The last byte of each group does *not* have a trailing
+        separator (Python's ' '.join collapses it), so the column formula is:
+            col = hex_start
+                + (group_num * (group_sz * 3 + 1))
+                + (pos_in_group * 3)
+        where the +1 is the extra space inserted by '"  ".join' at the group
+        boundary (the join replaces the missing trailing space of the previous
+        group's last byte with a 2-space boundary).
+        """
+        group_num = in_line // group_sz
+        pos_in_group = in_line % group_sz
+        return hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
+
     def _parse_search_query(self, q: str) -> bytes | None:
         q = q.strip()
         if not q:
@@ -2783,17 +4664,13 @@ class HexEditorWidget(ttk.Frame):
             
             # Calculate position accounting for dynamic group separators
             group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
-            
-            # Calculate position: each byte is "XX " (3 chars), groups separated by 2 spaces
-            # Within each group: bytes separated by 1 space
-            # Between groups: 2 additional spaces
-            group_num = in_line // group_sz
-            pos_in_group = in_line % group_sz
-            
-            # Position = hex_start + (complete groups * (group_size * 3 + 2)) + (bytes in current group * 3)
-            # But subtract 1 from group spacing since last byte in group doesn't have trailing space
-            start_col = hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
-            end_col = start_col + 2
+
+            start_col = self._col_for_byte_in_line(in_line, hex_start, group_sz)
+            pattern_length = len(self._search_pattern or b'')
+            if pattern_length <= 0:
+                continue
+            end_byte = min(self.bytes_per_line - 1, in_line + pattern_length - 1)
+            end_col = self._col_for_byte_in_line(end_byte, hex_start, group_sz) + 2
             
             # Ensure we don't go beyond the line
             if start_col < len(text_line) and end_col <= len(text_line):
@@ -2809,7 +4686,7 @@ class HexEditorWidget(ttk.Frame):
         # Build list of hit offsets once or when query changes
         # Include group size in cache key to handle dynamic grouping changes
         group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
-        cache_key = (pattern, len(data), self.bytes_per_line, group_sz)
+        cache_key = (pattern, len(data), self.bytes_per_line, group_sz, self._edit_generation)
         
         if getattr(self, '_search_cached_query', None) != cache_key:
             self._search_cached_query = cache_key
@@ -2822,6 +4699,7 @@ class HexEditorWidget(ttk.Frame):
                 hits.append(i)
                 i += 1
             self.search_hits = hits
+            self._search_pattern = pattern
             self._apply_search_highlights()
             self._search_index = -1
             
@@ -2840,22 +4718,20 @@ class HexEditorWidget(ttk.Frame):
         # Calculate line position accounting for windowed view
         line_idx = (off - (self.offset_top if self.windowed else 0)) // self.bytes_per_line + 1
         in_line = (off - (self.offset_top if self.windowed else 0)) % self.bytes_per_line
-        
+
         # Get the actual line text and find hex start position
         text_line = self.hex_text.get(f"{line_idx}.0", f"{line_idx}.end")
         space_pos = text_line.find('  ')
         if space_pos != -1:
             hex_start = space_pos + 2
-            
+
             # Calculate position accounting for dynamic group separators
-            group_num = in_line // group_sz
-            pos_in_group = in_line % group_sz
-            col = hex_start + (group_num * (group_sz * 3 + 1)) + (pos_in_group * 3)
-            
+            col = self._col_for_byte_in_line(in_line, hex_start, group_sz)
+
             # Set cursor and scroll to position
             self.hex_text.mark_set(tk.INSERT, f"{line_idx}.{col}")
             self.hex_text.see(f"{line_idx}.0")
-            
+
         self.update_selection_info(off, len(pattern))
 
     # Selection / mapping: map mouse click in Text to byte offset
@@ -2875,18 +4751,22 @@ class HexEditorWidget(ttk.Frame):
                 base = 0
             else:
                 base = int(offset_hex, 16)
-            # hex starts after offset and spaces (variable position now)
-            hex_start = space_pos + 2  # Skip the two spaces
-            # compute position in hex area; each byte is "XX " except last may be shorter
-            # find nearest hex token by splitting.
-            tokens = text_line[hex_start:hex_start + self.bytes_per_line * 3].split()
-            # find which token mouse clicked over by computing char index
+            # hex starts after offset and the two-space separator
+            hex_start = space_pos + 2
             col_in_line = col - hex_start
             if col_in_line < 0:
                 return
-            # compute approximate token index
-            token_idx = max(0, min(len(tokens) - 1, col_in_line // 3))
-            # select byte
+            # Robust byte mapping: walk groups of `group_sz` bytes. Each byte
+            # is 3 chars ("XX "), each group boundary adds one extra space.
+            group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
+            bpl = max(1, int(self.bytes_per_line))
+            token_idx = 0
+            for byte_idx in range(bpl):
+                c = self._col_for_byte_in_line(byte_idx, hex_start, group_sz)
+                if c + 2 <= col:        # click is past this 2-hex-digit column
+                    token_idx = byte_idx
+                else:
+                    break
             byte_offset = base + token_idx
             self.update_selection_info(byte_offset, 1)
         except Exception:
@@ -2920,22 +4800,19 @@ class HexEditorWidget(ttk.Frame):
             if col < hex_start:
                 return
 
-            # Calculate which byte we're editing using token boundaries
+            # Map the click column to the byte index using the shared helper so
+            # it stays consistent with the renderer and the highlighters.
+            group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
+            bpl = max(1, int(self.bytes_per_line))
             col_in_line = col - hex_start
-            tokens = text_line[hex_start:hex_start + self.bytes_per_line * 3 + 2].split()
-            # Build cumulative positions of token starts to account for extra spacer
-            cumul = []
-            pos = 0
-            for t in tokens:
-                cumul.append(pos)
-                pos += len(t) + 1  # token plus one space
             token_idx = 0
-            for k in range(len(cumul)):
-                if col_in_line >= cumul[k]:
-                    token_idx = k
+            for byte_idx in range(bpl):
+                c = self._col_for_byte_in_line(byte_idx, hex_start, group_sz)
+                if c <= col_in_line:
+                    token_idx = byte_idx
                 else:
                     break
-            if token_idx >= self.bytes_per_line:
+            if token_idx >= bpl:
                 return
 
             byte_offset = base + token_idx
@@ -2998,7 +4875,9 @@ class HexEditorWidget(ttk.Frame):
                 return
             if end_off < start_off:
                 start_off, end_off = end_off, start_off
-            self.update_selection_info(start_off, end_off - start_off + 1)
+            # Tk text selections are end-exclusive. The end position maps to
+            # the first byte after the selection, so do not add one here.
+            self.update_selection_info(start_off, max(1, end_off - start_off))
         except Exception:
             self.update_selection_info(None, None)
 
@@ -3033,13 +4912,21 @@ class HexEditorWidget(ttk.Frame):
                 base = 0
             else:
                 base = int(offset_hex, 16)
-            # hex starts after offset and spaces (variable position now)
-            hex_start = space_pos + 2  # Skip the two spaces
-            # find token column
+            # hex starts after offset and the two-space separator
+            hex_start = space_pos + 2
             col_in_line = col - hex_start
             if col_in_line < 0:
                 return None
-            token_idx = max(0, min(self.bytes_per_line - 1, col_in_line // 3))
+            # Walk bytes using the shared helper so all selection paths agree.
+            group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
+            bpl = max(1, int(self.bytes_per_line))
+            token_idx = 0
+            for byte_idx in range(bpl):
+                c = self._col_for_byte_in_line(byte_idx, hex_start, group_sz)
+                if c <= col_in_line:
+                    token_idx = byte_idx
+                else:
+                    break
             return base + token_idx
         except Exception:
             return None
@@ -3324,28 +5211,32 @@ class HexEditorWidget(ttk.Frame):
     # Find / Replace / Goto
     def find_dialog(self):
         # Create a persistent find dialog
-        if hasattr(self, 'find_window') and self.find_window.winfo_exists():
+        if hasattr(self, 'find_window') and self.find_window and self.find_window.winfo_exists():
             self.find_window.lift()
             return
 
         find_window = tk.Toplevel(self)
         find_window.title("Find (hex or text)")
-        find_window.geometry("450x200")
+        find_window.configure(bg=COLORS['bg_card'])
         self.find_window = find_window
+        
+        # Main container frame
+        main_frame = ttk.Frame(find_window, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(find_window, text="Pattern (hex bytes space-separated or text):").pack(pady=5)
-        find_entry = ttk.Entry(find_window, width=50)
+        ttk.Label(main_frame, text="Pattern (hex bytes space-separated or text):").pack(pady=5)
+        find_entry = ttk.Entry(main_frame, width=50)
         find_entry.pack(pady=5)
 
-        is_hex_var = tk.BooleanVar(value=False)  # Default to text search
-        ttk.Checkbutton(find_window, text="Hex input", variable=is_hex_var).pack(pady=5)
+        is_hex_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Hex input", variable=is_hex_var).pack(pady=5)
 
         # Occurrence counter label
-        self.occurrence_label = ttk.Label(find_window, text="")
+        self.occurrence_label = ttk.Label(main_frame, text="")
         self.occurrence_label.pack(pady=5)
 
         # Buttons frame
-        button_frame = ttk.Frame(find_window)
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
 
         def do_find():
@@ -3353,7 +5244,6 @@ class HexEditorWidget(ttk.Frame):
             if not pattern:
                 return
             result = (pattern, is_hex_var.get())
-            # Process the find result
             self._process_find_result(result)
 
         ttk.Button(button_frame, text="Find", command=do_find).pack(side=tk.LEFT, padx=5)
@@ -3363,10 +5253,29 @@ class HexEditorWidget(ttk.Frame):
 
         find_entry.focus_set()
         find_window.transient(self.winfo_toplevel())
-        find_window.protocol("WM_DELETE_WINDOW", lambda: setattr(self, 'find_window', None))
+        
+        def on_close():
+            self.find_window = None
+            find_window.destroy()
+        
+        find_window.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # Center the dialog
+        find_window.update_idletasks()
+        width = 450
+        height = 200
+        x = (find_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (find_window.winfo_screenheight() // 2) - (height // 2)
+        find_window.geometry(f"{width}x{height}+{x}+{y}")
 
     def _process_find_result(self, result):
         pattern, is_hex = result
+        
+        if not self.file_path or self._get_len() == 0:
+            if self.occurrence_label:
+                self.occurrence_label.config(text="No file loaded")
+            return
+
         data = self._get_slice(0, self._get_len())
         if is_hex:
             try:
@@ -3377,10 +5286,8 @@ class HexEditorWidget(ttk.Frame):
         else:
             pat = pattern.encode("utf-8")
 
-        # Store current pattern for highlighting
         self.current_find_pattern = pat
 
-        # Find all occurrences
         self.find_occurrences = []
         start = 0
         while True:
@@ -3391,8 +5298,11 @@ class HexEditorWidget(ttk.Frame):
             start = idx + len(pat)
 
         if not self.find_occurrences:
-            self.occurrence_label.config(text="No occurrences found")
-            messagebox.showinfo("Find", "Pattern not found")
+            if self.occurrence_label:
+                self.occurrence_label.config(text="No occurrences found")
+            # Only show messagebox once by checking if window still exists
+            if hasattr(self, 'find_window') and self.find_window and self.find_window.winfo_exists():
+                messagebox.showinfo("Find", "Pattern not found", parent=self.find_window)
             return
 
         # Initialize current occurrence index
@@ -3404,19 +5314,30 @@ class HexEditorWidget(ttk.Frame):
             return
 
         idx = self.find_occurrences[index]
-        # Get the actual pattern length from the stored pattern
-        if hasattr(self, 'current_find_pattern'):
-            pat_len = len(self.current_find_pattern)
-        else:
-            pat_len = 1  # Fallback
+        pat_len = len(self.current_find_pattern) if self.current_find_pattern else 1
 
-        # Highlight the current occurrence
+        # Update view first if needed (for windowed mode)
+        if self.windowed and not (self.offset_top <= idx < self.offset_top + 1024 * 256):
+            self.offset_top = max(0, idx - 256)
+            self.refresh_view()
+        
+        # Highlight the current occurrence AFTER view refresh
         self._highlight_occurrence(idx, pat_len)
-
-        # Update view and selection
-        self.offset_top = max(0, idx - 256)
-        self.refresh_view()
+        
+        # Update selection info
         self.update_selection_info(idx, pat_len)
+        
+        # Scroll to the occurrence
+        bytes_per_line = self.bytes_per_line
+        base_offset = self.offset_top if self.windowed else 0
+        rel_offset = idx - base_offset
+        line_idx = rel_offset // bytes_per_line + 1
+        
+        try:
+            self.hex_text.see(f"{line_idx}.0")
+        except Exception:
+            pass
+        
         # Use firmware-specific width if detected, otherwise adapt to file size
         if self.firmware_type:
             formatted_offset = format_offset(idx, self._get_len(), base=16, min_width=self.firmware_type['width'],
@@ -3425,23 +5346,19 @@ class HexEditorWidget(ttk.Frame):
             formatted_offset = format_offset(idx, self._get_len(), base=16, clamp_profile="firmware")
         self.set_status(f"Found at 0x{formatted_offset}")
 
-        # Update occurrence counter
-        self.occurrence_label.config(text=f"{index + 1} of {len(self.find_occurrences)}")
+        if self.occurrence_label:
+            self.occurrence_label.config(text=f"{index + 1} of {len(self.find_occurrences)}")
 
     def _highlight_occurrence(self, offset, length):
         """Highlight a specific occurrence in the hex view"""
-        # Clear previous highlights
         self.hex_text.tag_remove("find_highlight", "1.0", tk.END)
 
-        # Calculate which lines contain this occurrence, accounting for windowed view
         base_offset = self.offset_top if self.windowed else 0
         bytes_per_line = self.bytes_per_line
-        
-        # Calculate relative positions within the current view
+
         rel_start = offset - base_offset
         rel_end = offset + length - base_offset
-        
-        # Skip if occurrence is not in current view
+
         if rel_start < 0 or rel_start >= (1024 * 256 if self.windowed else self._get_len()):
             return
             
@@ -3475,15 +5392,9 @@ class HexEditorWidget(ttk.Frame):
                 group_sz = max(1, int(self.group_var.get()) if hasattr(self, 'group_var') else 4)
                 start_in_line = occ_start - line_start_offset
                 end_in_line = occ_end - line_start_offset
-                
-                # Calculate position accounting for group separators
-                start_group_num = start_in_line // group_sz
-                start_pos_in_group = start_in_line % group_sz
-                end_group_num = (end_in_line - 1) // group_sz
-                end_pos_in_group = (end_in_line - 1) % group_sz
-                
-                char_start = hex_start + (start_group_num * (group_sz * 3 + 1)) + (start_pos_in_group * 3)
-                char_end = hex_start + (end_group_num * (group_sz * 3 + 1)) + (end_pos_in_group * 3) + 2
+
+                char_start = self._col_for_byte_in_line(start_in_line, hex_start, group_sz)
+                char_end = self._col_for_byte_in_line(end_in_line - 1, hex_start, group_sz) + 2
 
                 # Ensure we don't go beyond the line
                 if char_start < len(text_line) and char_end <= len(text_line):
@@ -3508,18 +5419,21 @@ class HexEditorWidget(ttk.Frame):
         # Create a simple replace dialog
         replace_window = tk.Toplevel(self)
         replace_window.title("Replace (hex or text)")
-        replace_window.geometry("400x200")
+        replace_window.configure(bg=COLORS['bg_card'])
+        
+        main_frame = ttk.Frame(replace_window, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(replace_window, text="Find (hex bytes space-separated or text):").pack(pady=2)
-        find_entry = ttk.Entry(replace_window, width=50)
+        ttk.Label(main_frame, text="Find (hex bytes space-separated or text):").pack(pady=2)
+        find_entry = ttk.Entry(main_frame, width=50)
         find_entry.pack(pady=2)
 
-        ttk.Label(replace_window, text="Replace with (hex bytes space-separated or text):").pack(pady=2)
-        replace_entry = ttk.Entry(replace_window, width=50)
+        ttk.Label(main_frame, text="Replace with (hex bytes space-separated or text):").pack(pady=2)
+        replace_entry = ttk.Entry(main_frame, width=50)
         replace_entry.pack(pady=2)
 
-        is_hex_var = tk.BooleanVar(value=False)  # Default to text search
-        ttk.Checkbutton(replace_window, text="Hex input", variable=is_hex_var).pack(pady=5)
+        is_hex_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Hex input", variable=is_hex_var).pack(pady=5)
 
         def do_replace():
             find_pat = find_entry.get().strip()
@@ -3529,13 +5443,21 @@ class HexEditorWidget(ttk.Frame):
                 return
             result = (find_pat, replace_pat, is_hex_var.get())
             replace_window.destroy()
-            # Process the replace result
             self._process_replace_result(result)
 
-        ttk.Button(replace_window, text="Replace All", command=do_replace).pack(pady=10)
+        ttk.Button(main_frame, text="Replace All", command=do_replace).pack(pady=10)
         find_entry.focus_set()
         replace_window.transient(self.winfo_toplevel())
         replace_window.grab_set()
+        
+        # Center the dialog
+        replace_window.update_idletasks()
+        width = 500
+        height = 220
+        x = (replace_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (replace_window.winfo_screenheight() // 2) - (height // 2)
+        replace_window.geometry(f"{width}x{height}+{x}+{y}")
+        
         self.wait_window(replace_window)
 
     def _process_replace_result(self, result):
@@ -3547,6 +5469,14 @@ class HexEditorWidget(ttk.Frame):
         else:
             src = find_pat.encode("utf-8")
             dst = replace_pat.encode("utf-8")
+        if not src:
+            return
+        if len(src) != len(dst):
+            messagebox.showwarning(
+                "In-place editor",
+                "Replace requires equal-length byte sequences in the hex editor.",
+            )
+            return
         count = 0
         i = data.find(src)
         while i != -1:
@@ -3613,8 +5543,9 @@ class HexEditorWidget(ttk.Frame):
                     xs.append(base_offset + i)
             import matplotlib.pyplot as plt
             fig = plt.figure(figsize=(8, 5))
-            if fig.canvas.manager:
-                fig.canvas.manager.set_window_title("Data Entropy Analysis")
+            manager = getattr(fig.canvas, 'manager', None)
+            if manager is not None:
+                manager.set_window_title("Data Entropy Analysis")
             plt.plot(xs, ent_vals, 'b-', linewidth=2)
             plt.title(f"Data Entropy Analysis - Overall: {ent:.4f} bits/byte ({len(data):,} bytes)")
             plt.xlabel("File Offset (bytes)")
@@ -3655,7 +5586,7 @@ class HexEditorWidget(ttk.Frame):
                                 break
                             strings_with_offsets.append((data_offset + pos, s_string))
                             pos += len(string_bytes)
-                    except:
+                    except Exception:
                         continue
 
                 # Sort by offset
@@ -3691,8 +5622,9 @@ class HexEditorWidget(ttk.Frame):
         if MATPLOTLIB:
             import matplotlib.pyplot as plt
             fig = plt.figure(figsize=(10, 6))
-            if fig.canvas.manager:
-                fig.canvas.manager.set_window_title("Byte Frequency Distribution")
+            manager = getattr(fig.canvas, 'manager', None)
+            if manager is not None:
+                manager.set_window_title("Byte Frequency Distribution")
             plt.bar(range(256), freq, width=1.0)
             plt.title(f"Byte Frequency Distribution - {len(data):,} bytes analyzed")
             plt.xlabel("Byte Value (0-255)")
@@ -3702,13 +5634,16 @@ class HexEditorWidget(ttk.Frame):
             # textual top 16
             items = sorted(((i, freq[i]) for i in range(256)), key=lambda x: -x[1])[:20]
             text = "\n".join(f"{i:02X}: {c}" for i, c in items)
-            dlg = TextOutputDialog(self, "Byte histogram (top 20)", text)
+            dlg = TextOutputDialog(self.winfo_toplevel(), "Byte histogram (top 20)", text)
             self.wait_window(dlg)
 
     # Utility
     def set_status(self, text):
         self.status.config(text=text)
-        self.status_callback.config(text=text)
+        if callable(self.status_callback):
+            self.status_callback(text)
+        elif hasattr(self.status_callback, "config"):
+            self.status_callback.config(text=text)
 
     def on_exit(self):
         if self.modified and messagebox.askyesno("Exit", "File modified. Save before exit?"):
@@ -3757,6 +5692,794 @@ class HexEditorWidget(ttk.Frame):
         except Exception:
             return None
 
+    # Navigation History
+    def _add_navigation_point(self, offset: int):
+        """Add a point to navigation history"""
+        if self.navigation_index < len(self.navigation_history) - 1:
+            self.navigation_history = self.navigation_history[:self.navigation_index + 1]
+        self.navigation_history.append(offset)
+        if len(self.navigation_history) > self.max_history:
+            self.navigation_history.pop(0)
+        self.navigation_index = len(self.navigation_history) - 1
+
+    def navigate_back(self):
+        """Navigate to previous location in history"""
+        if self.navigation_index > 0:
+            self.navigation_index -= 1
+            offset = self.navigation_history[self.navigation_index]
+            self.goto_offset(offset)
+            self.set_status(f"Navigated back to 0x{offset:X}")
+
+    def navigate_forward(self):
+        """Navigate to next location in history"""
+        if self.navigation_index < len(self.navigation_history) - 1:
+            self.navigation_index += 1
+            offset = self.navigation_history[self.navigation_index]
+            self.goto_offset(offset)
+            self.set_status(f"Navigated forward to 0x{offset:X}")
+
+    def goto_offset(self, offset: int):
+        """Go to specific offset"""
+        if offset < 0 or offset >= self._get_len():
+            return
+        self.offset_top = max(0, offset - 32)
+        self.refresh_view()
+        self.update_selection_info(offset, 1)
+        self._add_navigation_point(offset)
+
+    # Bookmarks
+    def toggle_bookmark(self, offset: Optional[int] = None):
+        """Toggle bookmark at current position or specified offset"""
+        if offset is None:
+            sel = self.current_selection
+            if sel[0] is not None:
+                offset = sel[0]
+            else:
+                return
+        bookmark_key = f"0x{offset:08X}"
+        if bookmark_key in self.bookmarks:
+            del self.bookmarks[bookmark_key]
+            self.set_status(f"Removed bookmark at {bookmark_key}")
+        else:
+            name = simpledialog.askstring("Add Bookmark", "Bookmark name:", initialvalue=f"Bookmark at {bookmark_key}")
+            if name:
+                self.bookmarks[bookmark_key] = {"name": name, "offset": offset}
+                self.set_status(f"Added bookmark: {name}")
+        self._update_bookmarks_display()
+
+    def _update_bookmarks_display(self):
+        """Update bookmarks list in the panel if it exists"""
+        if hasattr(self, 'bookmarks_listbox') and self.bookmarks_listbox:
+            self.bookmarks_listbox.delete(0, tk.END)
+            for key, data in sorted(self.bookmarks.items(), key=lambda x: x[1]['offset']):
+                self.bookmarks_listbox.insert(tk.END, f"{data['name']} ({key})")
+
+    def go_to_bookmark(self, event=None):
+        """Go to selected bookmark"""
+        if hasattr(self, 'bookmarks_listbox') and self.bookmarks_listbox:
+            selection = self.bookmarks_listbox.curselection()
+            if selection:
+                index = selection[0]
+                keys = sorted(self.bookmarks.keys(), key=lambda x: self.bookmarks[x]['offset'])
+                if index < len(keys):
+                    bookmark = self.bookmarks[keys[index]]
+                    self.goto_offset(bookmark['offset'])
+
+    def clear_all_bookmarks(self):
+        """Clear all bookmarks"""
+        if self.bookmarks:
+            if messagebox.askyesno("Clear Bookmarks", "Are you sure you want to clear all bookmarks?"):
+                self.bookmarks.clear()
+                self._update_bookmarks_display()
+                self.set_status("All bookmarks cleared")
+
+    # Copy As functionality
+    def copy_as_hex_dump(self):
+        """Copy selection as hex dump format"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        hex_dump = ""
+        for i in range(0, len(raw), 16):
+            chunk = raw[i:i+16]
+            hex_bytes = " ".join(f"{b:02X}" for b in chunk)
+            hex_dump += f"{i:08X}  {hex_bytes:<48}  |{self.ascii_repr(chunk)}|\n"
+        self.clipboard_clear()
+        self.clipboard_append(hex_dump)
+        self.set_status("Copied as hex dump")
+
+    def copy_as_c_array(self):
+        """Copy selection as C array"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        array_name = simpledialog.askstring("C Array Name", "Enter array name:", initialvalue="data")
+        if not array_name:
+            return
+        lines = [f"// {len(raw)} bytes, offset 0x{sel[0]:X}"]
+        lines.append(f"unsigned char {array_name}[] = {{")
+        for i in range(0, len(raw), 16):
+            chunk = raw[i:i+16]
+            bytes_str = ", ".join(f"0x{b:02X}" for b in chunk)
+            lines.append(f"    {bytes_str},")
+        lines.append("};")
+        c_array = "\n".join(lines)
+        self.clipboard_clear()
+        self.clipboard_append(c_array)
+        self.set_status("Copied as C array")
+
+    def copy_as_base64(self):
+        """Copy selection as base64"""
+        import base64
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        b64 = base64.b64encode(raw).decode('ascii')
+        self.clipboard_clear()
+        self.clipboard_append(b64)
+        self.set_status("Copied as base64")
+
+    def copy_as_binary_string(self):
+        """Copy selection as binary string"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        binary = " ".join(f"{b:08b}" for b in raw)
+        self.clipboard_clear()
+        self.clipboard_append(binary)
+        self.set_status("Copied as binary string")
+
+    # Hash computation
+    def compute_hashes(self):
+        """Compute hashes of file or selection"""
+        sel = self.current_selection
+        if sel[0] is None:
+            data = self._get_bytes_all()
+            desc = f"entire file ({len(data)} bytes)"
+        else:
+            data = self._get_slice(sel[0], sel[1])
+            desc = f"selection ({len(data)} bytes at 0x{sel[0]:X})"
+
+        md5_hash = hashlib.md5(data).hexdigest()
+        sha1_hash = hashlib.sha1(data).hexdigest()
+        sha256_hash = hashlib.sha256(data).hexdigest()
+        sha512_hash = hashlib.sha512(data).hexdigest()
+
+        result = f"""Hash Computation Results
+{'=' * 40}
+Data: {desc}
+
+MD5:    {md5_hash}
+SHA1:   {sha1_hash}
+SHA256: {sha256_hash}
+SHA512: {sha512_hash}
+"""
+        dlg = TextOutputDialog(self.winfo_toplevel(), "Hash Computation Results", result)
+        self.wait_window(dlg)
+
+    def compute_file_hashes(self):
+        """Compute hashes of the entire file"""
+        if not self.file_path:
+            messagebox.showwarning("No File", "No file is currently open")
+            return
+        data = self._get_bytes_all()
+        file_size = os.path.getsize(self.file_path)
+        md5_hash = hashlib.md5(data).hexdigest()
+        sha1_hash = hashlib.sha1(data).hexdigest()
+        sha256_hash = hashlib.sha256(data).hexdigest()
+        sha512_hash = hashlib.sha512(data).hexdigest()
+
+        result = f"""File Hash Computation
+{'=' * 40}
+File: {os.path.basename(self.file_path)}
+Path: {self.file_path}
+Size: {file_size:,} bytes
+
+MD5:    {md5_hash}
+SHA1:   {sha1_hash}
+SHA256: {sha256_hash}
+SHA512: {sha512_hash}
+"""
+        self.clipboard_clear()
+        self.clipboard_append(result)
+        self.set_status("File hashes copied to clipboard")
+        dlg = TextOutputDialog(self.winfo_toplevel(), "File Hash Computation", result)
+        self.wait_window(dlg)
+
+    # Chunk operations
+    def xor_chunk(self):
+        """XOR selection with a value"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        value_str = simpledialog.askstring("XOR Value", "Enter hex value to XOR with (e.g., FF):")
+        if not value_str:
+            return
+        try:
+            xor_value = int(value_str.replace(' ', ''), 16)
+        except ValueError:
+            messagebox.showerror("Invalid Value", "Please enter a valid hex value")
+            return
+
+        raw = bytearray(self._get_slice(sel[0], sel[1]))
+        for i in range(len(raw)):
+            raw[i] ^= xor_value
+        self._write_slice(sel[0], bytes(raw))
+        self.refresh_view()
+        self.set_status(f"XORed {len(raw)} bytes with 0x{xor_value:02X}")
+
+    def reverse_bytes(self):
+        """Reverse the byte order of selection"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        reversed_raw = bytes(reversed(raw))
+        self._write_slice(sel[0], reversed_raw)
+        self.refresh_view()
+        self.set_status(f"Reversed {len(raw)} bytes")
+
+    def swap_endianness(self):
+        """Swap the endianness of selection (e.g., 0x12345678 -> 0x78563412)"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = self._get_slice(sel[0], sel[1])
+        if len(raw) % 2 != 0:
+            messagebox.showwarning("Invalid Size", "Selection must be an even number of bytes for endianness swap")
+            return
+        swapped = bytes(reversed(raw))
+        self._write_slice(sel[0], swapped)
+        self.refresh_view()
+        self.set_status(f"Swapped endianness of {len(raw)} bytes")
+
+    def complement_bytes(self):
+        """Compute bitwise complement of selection"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+        raw = bytearray(self._get_slice(sel[0], sel[1]))
+        for i in range(len(raw)):
+            raw[i] = ~raw[i] & 0xFF
+        self._write_slice(sel[0], bytes(raw))
+        self.refresh_view()
+        self.set_status(f"Complemented {len(raw)} bytes")
+
+    # Hex Calculator
+    def hex_calculator(self):
+        """Open hex calculator dialog"""
+        calc = HexCalculatorDialog(self)
+        self.wait_window(calc)
+
+    # Data Inspector - Parse binary structures
+    def inspect_data_structure(self):
+        """Inspect and parse data as various binary structures"""
+        sel = self.current_selection
+        if sel[0] is None:
+            messagebox.showwarning("No Selection", "Please select bytes to inspect")
+            return
+
+        inspector = DataInspectorDialog(self, sel[0], sel[1], self._get_slice, self.endian)
+        self.wait_window(inspector)
+
+    # Magic number / file type detection
+    def detect_file_type(self):
+        """Detect file type based on magic numbers"""
+        if not self.file_path:
+            data = self._get_slice(0, min(64, self._get_len()))
+        else:
+            data = self._get_slice(0, min(64, self._get_len()))
+
+        magic_results = []
+
+        # Check common magic numbers
+        magic_numbers = [
+            (b"\x89PNG\r\n\x1a\n", "PNG Image"),
+            (b"\xff\xd8\xff", "JPEG Image"),
+            (b"\x50\x4b\x03\x04", "ZIP Archive / DOCX / XLSX / APK"),
+            (b"\x50\x4b\x05\x06", "Empty ZIP Archive"),
+            (b"\x50\x4b\x01\x02", "ZIP with central directory"),
+            (b"\x1f\x8b", "GZIP Archive"),
+            (b"\x42\x5a\x68", "BZIP2 Archive"),
+            (b"\xfd\x37\x7a\x58\x5a\x00", "XZ Archive"),
+            (b"\x04\x22\x4d\x18", "LZ4 Compressed"),
+            (b"\x28\xb5\x2f\xfd", "Zstandard Compressed"),
+            (b"PK\x03\x04", "ZIP Archive (alternate)"),
+            (b"\x7fELF", "ELF Executable"),
+            (b"\xcafebabe", "Java Class File"),
+            (b"\xce\xfa\xed\xfe", "Mac Mach-O (32-bit)"),
+            (b"\xcf\xfa\xed\xfe", "Mac Mach-O (64-bit)"),
+            (b"MZ", "Windows Executable (DOS/MZ)"),
+            (b"\x00\x00\x01\x00", "ICO Image"),
+            (b"\x42\x4d", "BMP Image"),
+            (b"\x47\x49\x46\x38\x39\x61", "GIF89a Image"),
+            (b"\x47\x49\x46\x38\x37\x61", "GIF87a Image"),
+            (b"RIFF", "RIFF Audio (WAV/AVI)"),
+            (b"\x1f\x9d", "LZW Compressed (old)"),
+            (b"\x1f\xa0", "LZW Compressed (alternate)"),
+            (b"MM\x00*", "TIFF Image (big endian)"),
+            (b"II*\x00", "TIFF Image (little endian)"),
+            (b"\x00\x00\x01\x00", "ICO Image (alternate)"),
+            (b"ANDROID", "Android Boot Image"),
+            (b"AVB0", "Android Verified Boot"),
+            (b"CRAP", "Samsung Sboot/ABOOT"),
+            (b"\x03\x00\x00\x00", "EXT2/3/4 Filesystem"),
+            (b"\xfd7zXZ", "XZ Compressed (alternate)"),
+            (b"\x04\x22\x4d\x18", "LZ4 Frame Format"),
+            (b"\x53\x50\x30\x31", "Sony PSF (PlayStation)"),
+            (b"FSR", "Samsung modem firmware"),
+        ]
+
+        detected = []
+        for magic, file_type in magic_numbers:
+            if data.startswith(magic):
+                detected.append((magic.hex().upper(), file_type))
+
+        header_hex = data[:32].hex().upper()
+
+        result = f"""File Type Detection
+{'=' * 50}
+File: {os.path.basename(self.file_path) if self.file_path else 'Unsaved'}
+Size: {self._get_len():,} bytes
+
+Header Bytes (first 32): {header_hex}
+
+Detected Types:
+"""
+        if detected:
+            for magic, ftype in detected:
+                result += f"  • {ftype} (magic: {magic})\n"
+        else:
+            result += "  No known magic numbers detected\n"
+
+        result += f"""
+Common Android/Firmware Types:
+  • boot.img: Android boot image
+  • system.img: Android system partition
+  • vendor.img: Android vendor partition
+  • userdata.img: Android userdata partition
+  • super.img: Android super partition
+  • dtbo.img: Device Tree Overlay
+  • vbmeta.img: Verified Boot metadata
+  • sparse image: Android sparse data image
+"""
+        dlg = TextOutputDialog(self.winfo_toplevel(), "File Type Detection", result)
+        self.wait_window(dlg)
+
+    # Quick jump to common locations
+    def quick_jump_menu(self):
+        """Show quick jump menu"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Start of file (0x00)", command=lambda: self.goto_offset(0))
+        menu.add_command(label="End of file", command=lambda: self.goto_offset(max(0, self._get_len() - 1)))
+        menu.add_separator()
+        menu.add_command(label="Previous 1KB", command=lambda: self.goto_offset(max(0, self.offset_top - 1024)))
+        menu.add_command(label="Next 1KB", command=lambda: self.goto_offset(min(self._get_len(), self.offset_top + 1024)))
+        menu.add_separator()
+
+        # Common offsets based on file size
+        file_size = self._get_len()
+        if file_size > 0x1000:
+            menu.add_command(label="1/4 of file", command=lambda: self.goto_offset(file_size // 4))
+            menu.add_command(label="1/2 of file (middle)", command=lambda: self.goto_offset(file_size // 2))
+            menu.add_command(label="3/4 of file", command=lambda: self.goto_offset(file_size * 3 // 4))
+
+        # Try to show at cursor position
+        try:
+            menu.tk_popup(500, 300)
+        finally:
+            menu.grab_release()
+
+    # Modified regions tracking
+    def track_modified_region(self, start: int, length: int):
+        """Track a modified region for display"""
+        self.modified_regions.append({"start": start, "length": length, "timestamp": time.time()})
+        # Keep only recent modifications
+        if len(self.modified_regions) > 100:
+            self.modified_regions = self.modified_regions[-100:]
+
+    def export_modified_regions(self):
+        """Export list of modified regions"""
+        if not self.modified_regions:
+            messagebox.showinfo("No Modifications", "No modifications have been recorded")
+            return
+
+        result = "Modified Regions\n" + "=" * 50 + "\n"
+        for i, region in enumerate(self.modified_regions, 1):
+            result += f"{i}. Offset: 0x{region['start']:X}, Length: {region['length']} bytes\n"
+
+        dlg = TextOutputDialog(self.winfo_toplevel(), "Modified Regions", result)
+        self.wait_window(dlg)
+
+    # Insert / Delete bytes
+    def insert_bytes(self):
+        """Insert bytes at current position"""
+        sel = self.current_selection
+        if sel[0] is None:
+            offset = 0
+        else:
+            offset = sel[0]
+
+        count_str = simpledialog.askstring("Insert Bytes", "Number of bytes to insert:", initialvalue="1")
+        if not count_str:
+            return
+        try:
+            count = int(count_str)
+        except ValueError:
+            messagebox.showerror("Invalid", "Please enter a valid number")
+            return
+
+        value_str = simpledialog.askstring("Insert Value", "Hex value for inserted bytes (default: 00):", initialvalue="00")
+        if value_str is None:
+            return
+        try:
+            value = int(value_str.replace(' ', ''), 16) & 0xFF if value_str.strip() else 0
+        except ValueError:
+            value = 0
+
+        # For memory-mapped or array data, insert the bytes
+        insert_data = bytes([value] * count)
+
+        if self.mmap_file:
+            # mmap doesn't support insert, so we need to be careful
+            messagebox.showwarning("Not Supported", "Insert not supported for memory-mapped files. Use a non-mapped file.")
+            return
+        elif self.data:
+            self.data = bytearray(list(self.data[:offset]) + list(insert_data) + list(self.data[offset:]))
+            self._add_navigation_point(offset)
+            self.refresh_view()
+            self.set_status(f"Inserted {count} bytes at 0x{offset:X}")
+
+    def delete_bytes(self):
+        """Delete selected bytes"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+
+        start, length = sel
+
+        if self.mmap_file:
+            messagebox.showwarning("Not Supported", "Delete not supported for memory-mapped files.")
+            return
+        elif self.data:
+            self.data = bytearray(list(self.data[:start]) + list(self.data[start + length:]))
+            self._add_navigation_point(start)
+            self.refresh_view()
+            self.set_status(f"Deleted {length} bytes at 0x{start:X}")
+
+    # Fill range
+    def fill_range(self):
+        """Fill selected range with a pattern"""
+        sel = self.current_selection
+        if sel[0] is None:
+            return
+
+        start, length = sel
+
+        pattern_str = simpledialog.askstring("Fill Pattern", "Hex pattern to fill (e.g., DE AD BE EF):")
+        if not pattern_str:
+            return
+
+        try:
+            pattern = bytes.fromhex(pattern_str.replace(' ', ''))
+            if not pattern:
+                messagebox.showerror("Invalid", "Pattern cannot be empty")
+                return
+        except ValueError:
+            messagebox.showerror("Invalid", "Invalid hex pattern")
+            return
+
+        # Create filled data
+        fill_data = (pattern * ((length // len(pattern)) + 1))[:length]
+        self._write_slice(start, fill_data)
+        self.refresh_view()
+        self.set_status(f"Filled {length} bytes at 0x{start:X} with pattern")
+
+
+# -------------------------
+# GUI: Hex Calculator Dialog
+# -------------------------
+class HexCalculatorDialog(tk.Toplevel):
+    """Hex calculator dialog for conversions and math"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Hex Calculator")
+        self.resizable(False, False)
+        self.configure(bg=COLORS['bg_card'])
+
+        self._build_ui()
+        self._bind_shortcuts()
+
+        # Center dialog
+        self.update_idletasks()
+        width, height = 500, 450
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+        self.transient(parent)
+        self.grab_set()
+
+    def _build_ui(self):
+        main_frame = ttk.Frame(self, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Input
+        ttk.Label(main_frame, text="Enter value (hex, dec, or 0x prefix):").pack(pady=(0, 5))
+        self.input_entry = ttk.Entry(main_frame, font=('Consolas', 12))
+        self.input_entry.pack(fill=tk.X, pady=(0, 10))
+        self.input_entry.bind('<KeyRelease>', lambda e: self.calculate())
+
+        # Results
+        results_frame = ttk.LabelFrame(main_frame, text="Conversions", padding=10)
+        results_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        self.dec_label = ttk.Label(results_frame, text="Decimal: -", font=('Consolas', 10))
+        self.dec_label.pack(anchor="w", pady=2)
+        self.hex_label = ttk.Label(results_frame, text="Hex: -", font=('Consolas', 10))
+        self.hex_label.pack(anchor="w", pady=2)
+        self.bin_label = ttk.Label(results_frame, text="Binary: -", font=('Consolas', 10))
+        self.bin_label.pack(anchor="w", pady=2)
+        self.oct_label = ttk.Label(results_frame, text="Octal: -", font=('Consolas', 10))
+        self.oct_label.pack(anchor="w", pady=2)
+        self.ascii_label = ttk.Label(results_frame, text="ASCII: -", font=('Consolas', 10))
+        self.ascii_label.pack(anchor="w", pady=2)
+
+        ttk.Separator(main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+
+        # Operations
+        ops_frame = ttk.LabelFrame(main_frame, text="Operations", padding=10)
+        ops_frame.pack(fill=tk.X, pady=(0, 10))
+
+        row1 = ttk.Frame(ops_frame)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="Value 2:").pack(side=tk.LEFT)
+        self.val2_entry = ttk.Entry(row1, width=20, font=('Consolas', 10))
+        self.val2_entry.pack(side=tk.LEFT, padx=5)
+        self.val2_entry.bind('<KeyRelease>', lambda e: self.calculate())
+
+        row2 = ttk.Frame(ops_frame)
+        row2.pack(fill=tk.X, pady=5)
+        for op, label in [("+", "Add"), ("-", "Sub"), ("&", "AND"), ("|", "OR"), ("^", "XOR")]:
+            ttk.Button(row2, text=f"{label} ({op})", command=lambda o=op: self.do_operation(o),
+                      width=10).pack(side=tk.LEFT, padx=2)
+
+        row3 = ttk.Frame(ops_frame)
+        row3.pack(fill=tk.X, pady=5)
+        for op, label in [("~", "NOT"), ("<<", "ShL"), (">>", "ShR")]:
+            ttk.Button(row3, text=f"{label}", command=lambda o=op: self.do_operation(o),
+                      width=10).pack(side=tk.LEFT, padx=2)
+
+        self.result_label = ttk.Label(main_frame, text="Result: -", font=('Consolas', 11, 'bold'))
+        self.result_label.pack(pady=5)
+
+        ttk.Button(main_frame, text="Copy Result", command=self.copy_result).pack()
+
+    def _bind_shortcuts(self):
+        self.bind('<Return>', lambda e: self.copy_result())
+        self.bind('<Escape>', lambda e: self.destroy())
+
+    def calculate(self):
+        try:
+            val_str = self.input_entry.get().strip()
+            if not val_str:
+                return
+
+            # Parse value
+            if val_str.startswith('0x') or val_str.startswith('0X'):
+                value = int(val_str, 16)
+            elif val_str.startswith('$'):
+                value = int(val_str[1:], 16)
+            elif val_str.isdigit():
+                value = int(val_str)
+            else:
+                value = int(val_str, 16)
+
+            self.dec_label.config(text=f"Decimal: {value:,}")
+            self.hex_label.config(text=f"Hex: 0x{value:X}")
+            self.bin_label.config(text=f"Binary: {value & 0xFFFFFFFF:032b}")
+            self.oct_label.config(text=f"Octal: {oct(value)}")
+
+            if 32 <= (value & 0xFF) <= 126:
+                self.ascii_label.config(text=f"ASCII: '{chr(value & 0xFF)}'")
+            else:
+                self.ascii_label.config(text="ASCII: (non-printable)")
+
+            self._last_result = value
+            self.result_label.config(text=f"Result: 0x{value:X} ({value})")
+
+        except ValueError:
+            self.dec_label.config(text="Decimal: -")
+            self.hex_label.config(text="Hex: -")
+            self.bin_label.config(text="Binary: -")
+            self.oct_label.config(text="Octal: -")
+            self.ascii_label.config(text="ASCII: -")
+
+    def do_operation(self, op):
+        try:
+            val1 = getattr(self, '_last_result', 0)
+            val2_str = self.val2_entry.get().strip()
+            if val2_str:
+                if val2_str.startswith('0x'):
+                    val2 = int(val2_str, 16)
+                else:
+                    val2 = int(val2_str)
+            else:
+                val2 = 0
+
+            if op == "+":
+                result = val1 + val2
+            elif op == "-":
+                result = val1 - val2
+            elif op == "&":
+                result = val1 & val2
+            elif op == "|":
+                result = val1 | val2
+            elif op == "^":
+                result = val1 ^ val2
+            elif op == "~":
+                result = ~val1 & 0xFFFFFFFF
+            elif op == "<<":
+                result = (val1 << val2) & 0xFFFFFFFF
+            elif op == ">>":
+                result = val1 >> val2
+            else:
+                result = val1
+
+            self._last_result = result
+            self.result_label.config(text=f"Result: 0x{result:X} ({result})")
+            self.input_entry.delete(0, tk.END)
+            self.input_entry.insert(0, f"0x{result:X}")
+            self.calculate()
+
+        except ValueError:
+            pass
+
+    def copy_result(self):
+        if hasattr(self, '_last_result'):
+            self.clipboard_clear()
+            self.clipboard_append(f"0x{self._last_result:X}")
+
+
+# -------------------------
+# GUI: Data Inspector Dialog
+# -------------------------
+class DataInspectorDialog(tk.Toplevel):
+    """Dialog for inspecting binary data as various structures"""
+
+    def __init__(self, parent, offset, length, get_slice_func, endian="big"):
+        super().__init__(parent)
+        self.offset = offset
+        self.length = length
+        self.get_slice = get_slice_func
+        self.endian = endian
+        self.title(f"Data Inspector - 0x{offset:X} ({length} bytes)")
+        self.configure(bg=COLORS['bg_card'])
+
+        self._build_ui()
+        self._populate_data()
+
+        self.update_idletasks()
+        width, height = 700, 500
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+        self.transient(parent)
+        self.grab_set()
+
+    def _build_ui(self):
+        main_frame = ttk.Frame(self, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Info
+        info_frame = ttk.LabelFrame(main_frame, text="Selection Info")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.info_label = ttk.Label(info_frame, text="", font=('Consolas', 10))
+        self.info_label.pack(padx=5, pady=5)
+
+        # Raw hex view
+        hex_frame = ttk.LabelFrame(main_frame, text="Raw Hex")
+        hex_frame.pack(fill=tk.X, pady=(0, 10))
+
+        scroll = scrolledtext.ScrolledText(hex_frame, height=6, font=('Consolas', 9),
+                                           bg=COLORS['log_bg'], fg=COLORS['log_fg'])
+        scroll.pack(fill=tk.X, padx=5, pady=5)
+        self.hex_text = scroll
+
+        # Structure interpretations
+        struct_frame = ttk.LabelFrame(main_frame, text="Interpretations")
+        struct_frame.pack(fill=tk.BOTH, expand=True)
+
+        scroll2 = scrolledtext.ScrolledText(struct_frame, font=('Consolas', 10),
+                                            bg=COLORS['log_bg'], fg=COLORS['log_fg'])
+        scroll2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.struct_text = scroll2
+
+    def _populate_data(self):
+        raw = self.get_slice(self.offset, self.length)
+        self.info_label.config(text=f"Offset: 0x{self.offset:X} | Length: {self.length} bytes")
+
+        # Show raw hex
+        hex_str = " ".join(f"{b:02X}" for b in raw)
+        self.hex_text.insert(tk.END, hex_str)
+        self.hex_text.config(state=tk.DISABLED)
+
+        # Interpret as various structures
+        interpretations = []
+
+        # Byte/Word/DWord
+        if len(raw) >= 1:
+            val8 = raw[0]
+            interpretations.append(f"UINT8:  {val8} (0x{val8:02X})")
+            interpretations.append(f"INT8:   {val8 if val8 < 128 else val8 - 256} (0x{val8:02X})")
+
+        if len(raw) >= 2:
+            val16_le = int.from_bytes(raw[:2], 'little', signed=False)
+            val16_be = int.from_bytes(raw[:2], 'big', signed=False)
+            interpretations.append(f"UINT16 (LE): {val16_le} (0x{val16_le:04X})")
+            interpretations.append(f"UINT16 (BE): {val16_be} (0x{val16_be:04X})")
+            interpretations.append(f"INT16 (LE): {val16_le if val16_le < 32768 else val16_le - 65536} (0x{val16_le:04X})")
+
+        if len(raw) >= 4:
+            val32_le = int.from_bytes(raw[:4], 'little', signed=False)
+            val32_be = int.from_bytes(raw[:4], 'big', signed=False)
+            interpretations.append(f"UINT32 (LE): {val32_le} (0x{val32_le:08X})")
+            interpretations.append(f"UINT32 (BE): {val32_be} (0x{val32_be:08X})")
+
+        if len(raw) >= 8:
+            val64_le = int.from_bytes(raw[:8], 'little', signed=False)
+            val64_be = int.from_bytes(raw[:8], 'big', signed=False)
+            interpretations.append(f"UINT64 (LE): {val64_le} (0x{val64_be:016X})")
+            interpretations.append(f"UINT64 (BE): {val64_be} (0x{val64_be:016X})")
+
+        # Floats
+        if len(raw) >= 4:
+            f32_le = struct.unpack('<f', raw[:4])[0]
+            f32_be = struct.unpack('>f', raw[:4])[0]
+            interpretations.append(f"Float32 (LE): {f32_le}")
+            interpretations.append(f"Float32 (BE): {f32_be}")
+
+        if len(raw) >= 8:
+            f64_le = struct.unpack('<d', raw[:8])[0]
+            f64_be = struct.unpack('>d', raw[:8])[0]
+            interpretations.append(f"Float64 (LE): {f64_le}")
+            interpretations.append(f"Float64 (BE): {f64_be}")
+
+        # Strings
+        if len(raw) >= 4:
+            try:
+                utf8 = raw.decode('utf-8', errors='replace').rstrip('\x00')
+                if utf8:
+                    interpretations.append(f"UTF-8:  \"{utf8[:64]}\"")
+            except:
+                pass
+
+            try:
+                utf16le = raw[:64].decode('utf-16le', errors='replace').rstrip('\x00')
+                if utf16le:
+                    interpretations.append(f"UTF-16 LE: \"{utf16le}\"")
+            except:
+                pass
+
+        # Timestamp (Unix epoch)
+        if len(raw) >= 4:
+            val32 = int.from_bytes(raw[:4], 'little', signed=False)
+            if 946684800 <= val32 <= 2147483647:  # Jan 2000 - Jan 2038
+                from datetime import datetime
+                dt = datetime.fromtimestamp(val32)
+                interpretations.append(f"Unix Timestamp (LE): {val32} -> {dt.isoformat()}")
+
+        self.struct_text.insert(tk.END, "\n".join(interpretations))
+        self.struct_text.config(state=tk.DISABLED)
+
+
 # -------------------------
 # GUI: Enhanced Strings Dialog
 # -----------------------------
@@ -3766,8 +6489,8 @@ class EnhancedStringsDialog(tk.Toplevel):
     def __init__(self, parent, strings_with_offsets: List[Tuple[int, str]], file_size: int, hex_editor=None):
         super().__init__(parent)
         self.title("Enhanced Strings Analysis")
-        self.geometry("1000x700")
         self.resizable(True, True)
+        self.configure(bg=COLORS['bg_card'])
 
         self.strings_with_offsets = strings_with_offsets
         self.file_size = file_size
@@ -3783,6 +6506,14 @@ class EnhancedStringsDialog(tk.Toplevel):
         self._populate_strings()
         self._bind_shortcuts()
         self._setup_predictive_search()
+        
+        # Center the dialog
+        self.update_idletasks()
+        width = 1000
+        height = 700
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
 
     def _build_ui(self):
         # Main frame
@@ -4358,254 +7089,475 @@ class EnhancedStringsDialog(tk.Toplevel):
 
 # GUI: Advanced Text Editor
 # -------------------------
-class AdvancedTextEditor(tk.Toplevel):
-    """Advanced text editor with search and replace functionality"""
-    def __init__(self, parent, initial_text: str = "", title: str = "Editor", callback=None):
-        super().__init__(parent)
-        self.title(title)
-        self.geometry("900x700")
-        self.callback = callback
-        self.current_match = None
-        self.matches = []
-        self.current_match_index = -1
-        self._build_ui(initial_text)
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-    
-    def _build_ui(self, initial_text):
-        # Menu
-        menubar = tk.Menu(self)
-        self.configure(menu=menubar)
-        
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Save", command=self.save)
-        file_menu.add_command(label="Save As...", command=self.save_as)
-        file_menu.add_separator()
-        file_menu.add_command(label="Close", command=self._on_close)
-        
-        edit_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Edit", menu=edit_menu)
-        edit_menu.add_command(label="Undo", command=lambda: self.text.event_generate("<<Undo>>"))
-        edit_menu.add_command(label="Redo", command=lambda: self.text.event_generate("<<Redo>>"))
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Cut", command=lambda: self.text.event_generate("<<Cut>>"))
-        edit_menu.add_command(label="Copy", command=lambda: self.text.event_generate("<<Copy>>"))
-        edit_menu.add_command(label="Paste", command=lambda: self.text.event_generate("<<Paste>>"))
-        edit_menu.add_command(label="Select All", command=lambda: self.text.event_generate("<<SelectAll>>"))
-        
-        # Main text area
-        frame = ttk.Frame(self)
-        frame.pack(fill='both', expand=True, padx=5, pady=5)
-        
-        self.text = scrolledtext.ScrolledText(frame, wrap='word', undo=True,
-                                              font=('Consolas', 10))
-        self.text.pack(fill='both', expand=True)
-        self.text.insert('1.0', initial_text)
-        
-        # Search bar
-        search_frame = ttk.Frame(self)
-        search_frame.pack(fill='x', padx=5, pady=5)
 
-        ttk.Label(search_frame, text="Find:").pack(side='left', padx=2)
-        self.find_entry = ttk.Entry(search_frame, width=25)
-        self.find_entry.pack(side='left', padx=2)
-        self.find_entry.bind('<Return>', lambda e: self.find_next())
+# Samsung firmware porting steps - comprehensive list based on research of:
+# - XDA Forums (xdaforums.com) porting guides
+# - Android Source vendor_boot partition documentation
+# - Magisk patching documentation
+# - AVB documentation (source.android.com)
+# - Heimdall/Odin protocols
+# - chinmayasharma super.img repackaging guide
+PORT_ROM_STEPS = [
+    # Phase 1: Preparation & Source Acquisition
+    (1,  "Identify & Download Source/Target Firmware",  "firmware_download",
+     "Download the source firmware (ROM to port) and target firmware (stock for your device) using Frija, SamFW, or SamloaderKotlin."),
+    (2,  "Decrypt OZIP/OMC (Samsung Protection)",  "samsung_decrypt",
+     "Some Samsung firmwares are encrypted (OZIP) or have CSC encoded (OMC). Decrypt these before extraction."),
+    (3,  "Extract Tar/MD5 Firmware Files",  "rom_extract",
+     "Extract BL, AP, CP, CSC, HOME_CSC tar.md5 files. Use bsdtar or 7z. Verify MD5 checksums."),
+    (4,  "Decompress LZ4 Partition Images",  "lz4_decompress",
+     "Samsung compresses boot.img, vbmeta.img, super.img as .lz4. Decompress them with lz4 -d."),
+    # Phase 2: Component Extraction
+    (5,  "Unpack Super Partition (Dynamic Partitions)",  "lpunpack",
+     "Use lpunpack to extract system, vendor, product, odm, system_ext from super.img."),
+    (6,  "Convert Sparse Images to Raw",  "sparse_to_raw",
+     "Samsung uses sparse format. Use simg2img to convert to raw EXT4/EROFS images."),
+    (7,  "Unpack Boot Image (kernel + ramdisk + DTB)",  "boot_unpack",
+     "Use magiskboot unpack or AIK to extract kernel, ramdisk, dtb from boot.img."),
+    (8,  "Extract DTBs from Kernel Image",  "extract_dtb",
+     "Use extract-dtb to extract all Device Tree Blobs from the kernel image."),
+    (9,  "Decompile DTB to DTS for Analysis",  "dtb_decompile",
+     "Use dtc -O dts to decompile DTBs to source DTS for hardware analysis and comparison."),
+    (10, "Extract Ramdisk (CPIO)",  "ramdisk_extract",
+     "Use bsdtar or cpio to extract ramdisk.cpio(.gz/.lz4) contents for modification."),
+    (11, "Analyze PIT (Partition Info Table)",  "pit_analyze",
+     "Use heimdall print-pit to read block counts for proper super partition sizing."),
+    (12, "Analyze Boot Image Header",  "boot_header_analyze",
+     "Parse boot header to check version, OS version, patch level, page size for compatibility."),
+    # Phase 3: Analysis & Comparison
+    (13, "Compare Build.prop Files",  "buildprop_compare",
+     "Diff build.prop between base and port to identify device-specific properties to change."),
+    (14, "Decompile APKs (for inspection)",  "apk_decompile",
+     "Use apktool to decode APKs to smali for app analysis and signature verification."),
+    (15, "Baksmali Classes.dex",  "baksmali_dex",
+     "Use baksmali to disassemble classes.dex files for code analysis."),
+    (16, "Debloat Port ROM",  "debloater",
+     "Remove unnecessary Samsung/OEM apps from system, priv-app, product based on whitelist/blacklist."),
+    # Phase 4: Modifications
+    (17, "Modify Build.prop Values",  "buildprop_modify",
+     "Replace device-specific properties (ro.product.model, ro.build.fingerprint, etc.) in port build.prop."),
+    (18, "Modify init.rc & fstab",  "initrc_modify",
+     "Update init.rc, fstab.<device> with target device paths and security flags."),
+    (19, "Patch SELinux Contexts (sepolicy)",  "selinux_patch",
+     "Patch sepolicy file_contexts for port-specific paths. Use magiskinit or sefcontext_compile."),
+    (20, "Patch DTB (verity/AVB disable)",  "dtb_patch",
+     "Use magiskboot dtb patch to remove verity/avb flags from fstab entries in DTB."),
+    (21, "Hex Patch Kernel/Binaries",  "hex_patch",
+     "Use magiskboot hexpatch to patch any specific binary patterns (e.g., bootloader unlock, security flags)."),
+    (22, "Replace Hardware HALs/Drivers (vendor/firmware)",  "vendor_replace",
+     "Copy target device vendor/, firmware/ HALs and binaries from stock to maintain hardware compatibility."),
+    (23, "Add System Apps (priv-app)",  "app_add",
+     "Add necessary system apps (priv-app) from base to port with correct permissions and signatures."),
+    (24, "Patch vbmeta (disable verification)",  "vbmeta_patch",
+     "Use avbtool make_vbmeta_image with --flags 2 (VERIFICATION_DISABLED) for custom boot to work."),
+    # Phase 5: Repack & Build
+    (25, "Repack Ramdisk (CPIO + compress)",  "ramdisk_repack",
+     "Use bsdtar/--format newc or cpio to repack ramdisk, then compress with lz4 for boot.img."),
+    (26, "Repack Boot Image",  "boot_repack",
+     "Use magiskboot repack or AIK repackimg to create new boot.img with modified kernel and ramdisk."),
+    (27, "Rebuild EXT4 Images (system/vendor/product)",  "ext4_rebuild",
+     "Use make_ext4fs to rebuild modified system, vendor, product partitions with proper permissions."),
+    (28, "Convert Raw Images to Sparse",  "raw_to_sparse",
+     "Use img2simg to convert raw images back to sparse format for Samsung firmware."),
+    (29, "Rebuild Super Partition (lpmake)",  "lpmake_rebuild",
+     "Use lpmake to rebuild super.img with all dynamic partitions using PIT block counts."),
+    (30, "Compile SELinux Contexts Binary",  "sefcontext_compile",
+     "Use sefcontext_compile to compile modified file_contexts to binary format for system.img."),
+    # Phase 6: Package & Validate
+    (31, "Build Odin-Flashable TAR Packages",  "odin_package",
+     "Create BL.tar, AP.tar, CP.tar, CSC.tar Odin-flashable packages with proper structure."),
+    (32, "Build Heimdall Flash Package",  "heimdall_package",
+     "Use heimdall to create flashable package or flash individual partitions directly."),
+    (33, "Verify AVB Signatures",  "avb_verify",
+     "Use avbtool verify_image on the final vbmeta.img to ensure structure is correct."),
+    (34, "Verify MD5 Checksums",  "md5_verify",
+     "Use bsdtar to verify the MD5 checksums in tar.md5 files match the included images."),
+    (35, "Generate Build Manifest",  "manifest_generate",
+     "Generate a final report with all files, sizes, hashes, and notes about the port."),
+]
 
-        ttk.Label(search_frame, text="Replace:").pack(side='left', padx=2)
-        self.replace_entry = ttk.Entry(search_frame, width=25)
-        self.replace_entry.pack(side='left', padx=2)
+# Build dependencies dict from steps
+# Most steps depend on the previous step (sequential workflow)
+# Phase 1-2 are mostly sequential. Phase 3-4 can be more parallel but typically sequential.
+# Phase 5 needs Phase 4. Phase 6 needs Phase 5.
+PORT_ROM_STEP_DEPENDENCIES = {
+    1: [],          # Download (independent)
+    2: [1],         # Decrypt needs firmware
+    3: [2],         # Extract tar needs decrypted firmware
+    4: [3],         # Decompress LZ4 needs tar files
+    5: [4],         # lpunpack needs decompressed super.img
+    6: [4],         # simg2img needs decompressed images
+    7: [4],         # Unpack boot needs decompressed boot.img
+    8: [7],         # extract-dtb needs kernel
+    9: [8],         # Decompile DTB needs extracted DTBs
+    10: [7],        # Extract ramdisk needs boot.img
+    11: [3],        # PIT from tar
+    12: [4],        # Boot header from decompressed boot.img
+    13: [5, 6],     # build.prop comparison needs extracted partitions
+    14: [5, 6],     # APK decompile needs system images
+    15: [5, 6],     # baksmali needs dex
+    16: [5, 6],     # Debloat needs extracted partitions
+    17: [13, 16],   # build.prop modify needs analysis
+    18: [10, 12],   # init.rc modify needs extracted ramdisk and header
+    19: [10, 11],   # SELinux patch needs ramdisk and PIT
+    20: [9],        # DTB patch needs decompiled DTS
+    21: [7],        # Hex patch needs boot image
+    22: [5, 6],     # Vendor replace needs extracted images
+    23: [14, 16],   # Add apps needs APK analysis
+    24: [3, 11],    # vbmeta patch needs BL tar and PIT
+    25: [18, 19, 20, 21],  # Repack ramdisk needs modifications
+    26: [25],       # Repack boot needs ramdisk
+    27: [17, 18, 22, 23],  # Rebuild EXT4 needs modifications
+    28: [27],       # Sparse conversion needs rebuilt EXT4
+    29: [11, 28],   # lpmake needs PIT and sparse images
+    30: [19, 27],   # SELinux compile needs modified contexts and system
+    31: [26, 29, 30],  # Odin package needs all components
+    32: [31],       # Heimdall needs Odin package
+    33: [24, 31],   # AVB verify needs vbmeta and package
+    34: [31],       # MD5 verify needs final package
+    35: [33, 34],   # Manifest needs all validations
+}
 
-        # Options frame
-        options_frame = ttk.Frame(search_frame)
-        options_frame.pack(side='left', padx=5)
+# Phases for grouping
+PORT_ROM_PHASES = {
+    1: "Phase 1: Preparation & Source Acquisition",
+    2: "Phase 1: Preparation & Source Acquisition",
+    3: "Phase 1: Preparation & Source Acquisition",
+    4: "Phase 1: Preparation & Source Acquisition",
+    5: "Phase 2: Component Extraction",
+    6: "Phase 2: Component Extraction",
+    7: "Phase 2: Component Extraction",
+    8: "Phase 2: Component Extraction",
+    9: "Phase 2: Component Extraction",
+    10: "Phase 2: Component Extraction",
+    11: "Phase 2: Component Extraction",
+    12: "Phase 2: Component Extraction",
+    13: "Phase 3: Analysis & Comparison",
+    14: "Phase 3: Analysis & Comparison",
+    15: "Phase 3: Analysis & Comparison",
+    16: "Phase 3: Analysis & Comparison",
+    17: "Phase 4: Modifications",
+    18: "Phase 4: Modifications",
+    19: "Phase 4: Modifications",
+    20: "Phase 4: Modifications",
+    21: "Phase 4: Modifications",
+    22: "Phase 4: Modifications",
+    23: "Phase 4: Modifications",
+    24: "Phase 4: Modifications",
+    25: "Phase 5: Repack & Build",
+    26: "Phase 5: Repack & Build",
+    27: "Phase 5: Repack & Build",
+    28: "Phase 5: Repack & Build",
+    29: "Phase 5: Repack & Build",
+    30: "Phase 5: Repack & Build",
+    31: "Phase 6: Package & Validate",
+    32: "Phase 6: Package & Validate",
+    33: "Phase 6: Package & Validate",
+    34: "Phase 6: Package & Validate",
+    35: "Phase 6: Package & Validate",
+}
 
-        self.case_sensitive_var = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Case", variable=self.case_sensitive_var).pack(side='top', anchor='w')
+SYNTAX_HIGHLIGHTING_COLORS = {
+    'keyword': '#FF79C6',
+    'string': '#F1FA8C',
+    'number': '#BD93F9',
+    'comment': '#6272A4',
+    'function': '#50FA7B',
+    'class_name': '#8BE9FD',
+    'operator': '#FF79C6',
+    'decorator': '#FFB86C',
+    'type': '#8BE9FD',
+    'constant': '#BD93F9',
+    'xml_tag': '#FF79C6',
+    'xml_attr': '#50FA7B',
+    'xml_value': '#F1FA8C',
+    'smali_method': '#50FA7B',
+    'smali_field': '#8BE9FD',
+    'smali_register': '#FFB86C',
+    'instruction': '#FF5555',
+    'register': '#FFB86C',
+    'hex': '#6272A4',
+    'path': '#50FA7B',
+    'separator': '#F8F8F2',
+    'error': '#FF5555',
+    'warning': '#FFB86C',
+}
 
-        self.whole_word_var = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Whole word", variable=self.whole_word_var).pack(side='top', anchor='w')
+LANGUAGE_PATTERNS = {
+    'java': {
+        'name': 'Java',
+        'extensions': ['.java'],
+        'patterns': {
+            'comment': [(r'//.*',), (r'/\*\*[\s\S]*?\*/',), (r'/\*[\s\S]*?\*/',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'\b(abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|goto|if|implements|import|instanceof|int|interface|long|native|new|package|private|protected|public|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|void|volatile|while|true|false|null)\b'],
+            'decorator': [r'@\w+'],
+            'number': [r'\b\d+\.?\d*[fFdDlL]?\b', r'\b0x[0-9A-Fa-f]+\b'],
+            'function': [r'\b[A-Z]\w*(?=\s*\()'],
+            'class_name': [r'\b[A-Z][a-zA-Z0-9_]*\b'],
+            'constant': [r'\b[A-Z_][A-Z0-9_]*\b'],
+        }
+    },
+    'kotlin': {
+        'name': 'Kotlin',
+        'extensions': ['.kt', '.kts'],
+        'patterns': {
+            'comment': [(r'//.*',), (r'/\*\*[\s\S]*?\*/',), (r'/\*[\s\S]*?\*/',)],
+            'string': [(r'"""[\s\S]*?"""',), (r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'\b(fun|val|var|if|else|when|for|while|do|return|break|continue|class|interface|object|package|import|public|private|protected|internal|open|final|override|abstract|sealed|data|enum|annotation|companion|init|constructor|this|super|it|null|true|false|is|as|in|out|by|lazy|lateinit|inline|crossinline|noinline|reified|throws|vararg|tailrec|operator|infix|inline|external|annotation|typealias| suspend|yield|get|set)\b'],
+            'decorator': [r'@\w+'],
+            'number': [r'\b\d+\.?\d*[fFdDlL]?\b', r'\b0x[0-9A-Fa-f]+\b'],
+            'function': [r'\b[a-z]\w*(?=\s*\()'],
+            'class_name': [r'\b[A-Z]\w*\b'],
+            'constant': [r'\b[A-Z_][A-Z0-9_]*\b'],
+        }
+    },
+    'python': {
+        'name': 'Python',
+        'extensions': ['.py', '.pyw'],
+        'patterns': {
+            'comment': [(r'#.*',)],
+            'string': [(r'"""[\s\S]*?"""',), (r"'''[\s\S]*?'''",), (r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'\b(and|as|assert|async|await|break|class|continue|def|del|elif|else|except|exec|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|print|raise|return|try|while|with|yield|True|False|None)\b'],
+            'decorator': [r'@\w+'],
+            'number': [r'\b\d+\.?\d*\b', r'\b0x[0-9A-Fa-f]+\b', r'\b0b[01]+\b', r'\b0o[0-7]+\b'],
+            'function': [r'\b[a-z_]\w*(?=\s*\()'],
+            'class_name': [r'\b[A-Z][a-zA-Z0-9_]*\b'],
+            'constant': [r'\b[A-Z_][A-Z0-9_]*\b'],
+        }
+    },
+    'smali': {
+        'name': 'Smali',
+        'extensions': ['.smali'],
+        'patterns': {
+            'comment': [(r'#.*',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',)],
+            'keyword': [r'\b(class|super|annotation|method|field|end|registers|locals|restart|return|throw|catch|catchall|if|switch|data|array-data|packed-switch|sparse-switch)\b', r'\b(public|private|protected|static|final|synchronized|bridge|varargs|native|abstract|volatile|transient|enum|annotation|inner|interface|abstract|constructor)\b'],
+            'instruction': [r'\b(invoke|return|move|move-wide|move-object|const|const-wide|const-string|new-instance|check-cast|array-length|aget|aput|add|sub|mul|div|rem|and|or|xor|shl|shr|ushr|neg|not|add-int|layout|packed-switch|sparse-switch|if-eq|if-ne|if-lt|if-ge|if-gt|if-le|if-eqz|if-nez|if-ltz|if-gez|if-gtz|if-lez)\b'],
+            'register': [r'\b(v[0-9]+|p[0-9]+|r[0-9]+)\b'],
+            'number': [r'\b-?\d+\.?\d*\b', r'\b0x[0-9A-Fa-f]+\b'],
+            'function': [r'\b[L][a-zA-Z0-9_/;]+;->[a-zA-Z0-9_<>]+\(.*?\)\s*[VZBSCIJFDL\[\]]+\b'],
+            'class_name': [r'\bL[a-zA-Z0-9_/;]+;\b'],
+            'field': [r'\b[A-Za-z0-9_]+:\s*[BZCSIJVFDL\[\]]+\b'],
+            'type': [r'\b[VZBSCIJFDL\[\]]+\b'],
+            'label': [r'^:[\w]+\b', r'^\\w+:$'],
+        }
+    },
+    'cpp': {
+        'name': 'C++',
+        'extensions': ['.cpp', '.hpp', '.cxx', '.hxx', '.cc', '.c', '.h'],
+        'patterns': {
+            'comment': [(r'//.*',), (r'/\*\*[\s\S]*?\*/',), (r'/\*[\s\S]*?\*/',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",), (r'R"([^"]*)"',)],
+            'keyword': [r'\b(alignas|alignof|and|and_eq|asm|auto|bitand|bitor|bool|break|case|catch|char|char16_t|char32_t|class|compl|const|constexpr|const_cast|continue|decltype|default|delete|do|double|dynamic_cast|else|enum|explicit|export|extern|false|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|noexcept|not|not_eq|nullptr|operator|or|or_eq|private|protected|public|register|reinterpret_cast|return|short|signed|sizeof|static|static_assert|static_cast|struct|switch|template|this|thread_local|throw|true|try|typedef|typeid|typename|union|unsigned|using|virtual|void|volatile|wchar_t|while|xor|xor_eq|override|final|nullptr|char8_t|char16_t|char32_t|concept|requires|co_await|co_return|co_yield|requires)\b'],
+            'number': [r'\b\d+\.?\d*[fFlLuU]*\b', r'\b0x[0-9A-Fa-f]+[fFlLuU]*\b', r'\b0b[01]+[fFlLuU]*\b'],
+            'function': [r'\b[a-zA-Z_]\w*(?=\s*\()'],
+            'class_name': [r'\b[A-Z][a-zA-Z0-9_]*\b'],
+            'constant': [r'\b[A-Z_][A-Z0-9_]*\b'],
+            'decorator': [r'#\s*\w+'],
+            'type': [r'\b(std|vector|string|map|set|unordered_map|unordered_set|pair|queue|stack|list|deque|array|unique_ptr|shared_ptr|weak_ptr|optional|variant|any|span|string_view)\b'],
+        }
+    },
+    'xml': {
+        'name': 'XML',
+        'extensions': ['.xml', '.axml', '.smali', '.褪去、、脱衣、啦啦啦、', '.xhtml'],
+        'patterns': {
+            'xml_tag': [(r'</?[\w:\-]+',), (r'/?>',)],
+            'xml_attr': [r'\b[\w:\-]+(?==)'],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'comment': [(r'<!--[\s\S]*?-->',)],
+            'number': [r'\b\d+\.?\d*\b'],
+            'decorator': [r'<\?[^?]*\?>', r'<![^>]*>'],
+            'instruction': [r'&[\w]+;'],
+        }
+    },
+    'json': {
+        'name': 'JSON',
+        'extensions': ['.json', '.jsonc'],
+        'patterns': {
+            'string': [(r'"(?:[^"\\]|\\.)*"',)],
+            'number': [r'\b-?\d+\.?\d*([eE][+-]?\d+)?\b'],
+            'keyword': [r'\b(true|false|null)\b'],
+            'constant': [r'\b[A-Z_][A-Z0-9_]*\b'],
+        }
+    },
+    'yaml': {
+        'name': 'YAML',
+        'extensions': ['.yaml', '.yml'],
+        'patterns': {
+            'comment': [(r'#.*',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'^[\s]*[\w\-]+:', r'\b(yes|no|true|false|null|on|off)\b', r'^---\s*$'],
+            'number': [r'\b-?\d+\.?\d*\b'],
+            'decorator': [r'^[\s]*-[\s]+'],
+        }
+    },
+    'makefile': {
+        'name': 'Makefile',
+        'extensions': ['Makefile', '.mk'],
+        'patterns': {
+            'comment': [(r'#.*',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'\b(include|define|endef|override|export|private|vpath|if|else|endif|for|endfor|warning|error|shell|origin|flavor)\b', r'^\.\w+(?=:?)'],
+            'function': [r'\$\{?\w+\}?', r'\$\(.*?\)'],
+            'variable': [r'\$\{?\w+\}?(?==)'],
+        }
+    },
+    'shell': {
+        'name': 'Shell',
+        'extensions': ['.sh', '.bash', '.zsh'],
+        'patterns': {
+            'comment': [(r'#.*',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'\b(if|then|else|elif|fi|for|while|do|done|case|esac|in|function|select|until|return|exit|break|continue|local|export|readonly|declare|typeset|unset|shift|source|alias|unalias|set|shopt|trap|eval|exec|let)\b'],
+            'function': [r'\b[a-zA-Z_]\w*(?=\s*\(\))'],
+            'variable': [r'\$\{?\w+\}?', r'\$[0-9@#?$!*-]'],
+            'number': [r'\b\d+\b'],
+        }
+    },
+    'prop': {
+        'name': 'Properties',
+        'extensions': ['.prop', '.properties', '.conf', '.config'],
+        'patterns': {
+            'comment': [(r'#.*',), (r'!.*',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'keyword': [r'^[\w.\-]+(?==)'],
+            'number': [r'\b\d+\.?\d*\b'],
+            'separator': [r'[=:]'],
+        }
+    },
+    'android_xml': {
+        'name': 'Android XML',
+        'extensions': ['.xml'],
+        'patterns': {
+            'xml_tag': [(r'</?[\w:]+',), (r'/?>',)],
+            'xml_attr': [r'\b(android:|app:|tools:|xmlns:|aapt:)[a-zA-Z0-9_\-:]+(?==)', r'\b[a-zA-Z_\-:]+(?==)'],
+            'string': [(r'"(?:[^"\\]|\\.)*"',), (r"'(?:[^'\\]|\\.)*'",)],
+            'comment': [(r'<!--[\s\S]*?-->',)],
+            'number': [r'\b@\+?[\w.]+:\w+\b', r'\b0x[0-9A-Fa-f]+\b', r'\b\d+\b'],
+            'decorator': [r'<\?[^?]*\?>', r'<![^>]*>'],
+            'instruction': [r'&[\w]+;', r'@[\w]+/'],
+        }
+    },
+    'samsung_firmware': {
+        'name': 'Samsung Firmware',
+        'extensions': ['.pit', '.rfs', '.md5', '.qct'],
+        'patterns': {
+            'comment': [(r'#.*',), (r'<!--[\s\S]*?-->',)],
+            'string': [(r'"(?:[^"\\]|\\.)*"',)],
+            'number': [r'\b0x[0-9A-Fa-f]+\b', r'\b\d+\b'],
+            'hex': [r'\b[0-9A-Fa-f]{8,}\b'],
+            'path': [r'[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*', r'/(?:[^/\0]+/)*[^/\0]*'],
+            'keyword': [r'\b(PIT|QCImage|MBranch|Flash|Partition|File|Size|Offset|Type|Name|Make|Model|Region|Carrier|CSC|AP|CP|BootLoader|CSCVersion|ModemVersion|HomeCSCVersion|Antenna|SalesCode|CarrierCode|Platform|Chipset|Board|Storage|IMEI|Version)\b'],
+            'separator': [r'[|\-=:]'],
+        }
+    },
+    'binary': {
+        'name': 'Binary/Hex',
+        'extensions': ['.bin', '.dat', '.img', '.efs', '.modem', '.boot', '.recovery', '.system', '.vendor', '.product'],
+        'patterns': {
+            'number': [r'\b[0-9A-Fa-f]{2,}\b'],
+            'hex': [r'\b0x[0-9A-Fa-f]+\b'],
+        }
+    },
+}
 
-        self.regex_var = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Regex", variable=self.regex_var).pack(side='top', anchor='w')
+FILE_TYPE_EXTENSIONS = {}
+for lang_data in LANGUAGE_PATTERNS.values():
+    for ext in lang_data['extensions']:
+        if ext not in FILE_TYPE_EXTENSIONS:
+            FILE_TYPE_EXTENSIONS[ext] = []
+        FILE_TYPE_EXTENSIONS[ext].append(lang_data['name'])
 
-        # Buttons frame
-        buttons_frame = ttk.Frame(search_frame)
-        buttons_frame.pack(side='left', padx=5)
+DEFAULT_LANGUAGE = 'text'
 
-        ttk.Button(buttons_frame, text="Find Next", command=self.find_next).pack(side='top', pady=1)
-        ttk.Button(buttons_frame, text="Find Prev", command=self.find_prev).pack(side='top', pady=1)
-        ttk.Button(buttons_frame, text="Replace", command=self.replace_current).pack(side='top', pady=1)
-        ttk.Button(buttons_frame, text="Replace All", command=self.replace_all).pack(side='top', pady=1)
+def detect_language(filename: str) -> str:
+    """Detect language from filename extension"""
+    if not filename:
+        return DEFAULT_LANGUAGE
 
-        # Status label
-        self.search_status_label = ttk.Label(search_frame, text="")
-        self.search_status_label.pack(side='right', padx=10)
+    ext = '.' + filename.split('.')[-1].lower() if '.' in filename else ''
 
-        # Configure highlight tags
-        self.text.tag_config("search_highlight", background="#FFFF00", foreground="#000000")  # Yellow highlight
-        self.text.tag_config("current_match", background="#FFA500", foreground="#000000")     # Orange highlight for current
-    
-    def _find_matches(self, search_text):
-        """Find all matches based on current options"""
-        if not search_text:
-            return []
+    if ext in FILE_TYPE_EXTENSIONS:
+        return FILE_TYPE_EXTENSIONS[ext][0]
 
-        content = self.text.get("1.0", tk.END)
-        flags = 0
+    name_lower = filename.lower()
+    if 'smali' in name_lower:
+        return 'smali'
+    elif 'android' in name_lower or 'layout' in name_lower:
+        return 'android_xml'
+    elif 'pit' in name_lower:
+        return 'samsung_firmware'
+    elif 'build' in name_lower and 'prop' in name_lower:
+        return 'prop'
+    elif name_lower.startswith('file_contexts') or 'file_contexts' in name_lower:
+        return 'samsung_firmware'
+    elif '.rfs' in name_lower or '.md5' in name_lower:
+        return 'samsung_firmware'
 
-        if not self.case_sensitive_var.get():
-            flags |= re.IGNORECASE
+    return DEFAULT_LANGUAGE
 
-        if self.whole_word_var.get():
-            search_text = r'\b' + re.escape(search_text) + r'\b'
+class SyntaxHighlighter:
+    """Syntax highlighter for multiple languages"""
 
-        try:
-            if self.regex_var.get():
-                pattern = re.compile(search_text, flags)
-            else:
-                pattern = re.compile(re.escape(search_text), flags)
-        except re.error:
-            messagebox.showerror("Regex Error", "Invalid regular expression")
-            return []
+    def __init__(self):
+        self.languages = LANGUAGE_PATTERNS
+        self.colors = SYNTAX_HIGHLIGHTING_COLORS
 
-        matches = []
-        for match in pattern.finditer(content):
-            matches.append((match.start(), match.end()))
-        return matches
+    def get_patterns(self, language: str) -> dict:
+        """Get regex patterns for a language"""
+        return self.languages.get(language, {}).get('patterns', {})
 
-    def _highlight_matches(self):
-        """Highlight all current matches"""
-        # Clear previous highlights
-        self.text.tag_remove("search_highlight", "1.0", tk.END)
-        self.text.tag_remove("current_match", "1.0", tk.END)
+    def highlight(self, text: str, language: str) -> List[Tuple[str, str]]:
+        """Highlight text and return list of (tag_name, text) tuples"""
+        if language == 'text' or not text:
+            return [('', text)]
 
-        if not self.matches:
-            return
+        patterns = self.get_patterns(language)
+        if not patterns:
+            return [('', text)]
 
-        # Highlight all matches
-        for start, end in self.matches:
-            self.text.tag_add("search_highlight", f"1.0+{start}c", f"1.0+{end}c")
+        highlighted = []
+        pattern_ranges = []
 
-        # Highlight current match
-        if self.current_match_index >= 0 and self.current_match_index < len(self.matches):
-            start, end = self.matches[self.current_match_index]
-            self.text.tag_add("current_match", f"1.0+{start}c", f"1.0+{end}c")
-            self.text.see(f"1.0+{start}c")
+        for tag, pattern_list in patterns.items():
+            for pattern in pattern_list:
+                try:
+                    if isinstance(pattern, tuple):
+                        pattern = pattern[0]
+                    for match in re.finditer(pattern, text, re.MULTILINE):
+                        pattern_ranges.append((match.start(), match.end(), tag))
+                except re.error:
+                    continue
 
-    def find_next(self):
-        search = self.find_entry.get()
-        if not search:
-            return
+        pattern_ranges.sort(key=lambda x: x[0])
 
-        # If this is a new search or no matches, find all matches
-        if not self.matches or search != getattr(self, '_last_search', ''):
-            self.matches = self._find_matches(search)
-            self._last_search = search
-            self.current_match_index = -1
+        filtered_ranges = []
+        for start, end, tag in pattern_ranges:
+            overlaps = False
+            for f_start, f_end, _ in filtered_ranges:
+                if start < f_end and end > f_start:
+                    overlaps = True
+                    break
+            if not overlaps:
+                filtered_ranges.append((start, end, tag))
 
-        if not self.matches:
-            self.search_status_label.config(text="No matches found")
-            return
+        pos = 0
+        for start, end, tag in filtered_ranges:
+            if start > pos:
+                highlighted.append(('', text[pos:start]))
+            highlighted.append((tag, text[start:end]))
+            pos = end
 
-        # Move to next match
-        self.current_match_index = (self.current_match_index + 1) % len(self.matches)
-        self._highlight_matches()
-        self.search_status_label.config(text=f"Match {self.current_match_index + 1} of {len(self.matches)}")
+        if pos < len(text):
+            highlighted.append(('', text[pos:]))
 
-    def find_prev(self):
-        search = self.find_entry.get()
-        if not search:
-            return
+        return highlighted if highlighted else [('', text)]
 
-        # If this is a new search or no matches, find all matches
-        if not self.matches or search != getattr(self, '_last_search', ''):
-            self.matches = self._find_matches(search)
-            self._last_search = search
-            self.current_match_index = len(self.matches)  # Start from end
 
-        if not self.matches:
-            self.search_status_label.config(text="No matches found")
-            return
 
-        # Move to previous match
-        self.current_match_index = (self.current_match_index - 1) % len(self.matches)
-        self._highlight_matches()
-        self.search_status_label.config(text=f"Match {self.current_match_index + 1} of {len(self.matches)}")
-
-    def replace_current(self):
-        if self.current_match_index < 0 or self.current_match_index >= len(self.matches):
-            messagebox.showinfo("No Selection", "Please find a match first")
-            return
-
-        replace_with = self.replace_entry.get()
-        start, end = self.matches[self.current_match_index]
-
-        # Replace the current match
-        self.text.delete(f"1.0+{start}c", f"1.0+{end}c")
-        self.text.insert(f"1.0+{start}c", replace_with)
-
-        # Update matches after replacement
-        search = self.find_entry.get()
-        self.matches = self._find_matches(search)
-
-        # Adjust current index if needed
-        if self.current_match_index >= len(self.matches):
-            self.current_match_index = len(self.matches) - 1
-
-        self._highlight_matches()
-        if self.matches:
-            self.search_status_label.config(text=f"Match {self.current_match_index + 1} of {len(self.matches)}")
-        else:
-            self.search_status_label.config(text="No matches found")
-
-    def replace_all(self):
-        search = self.find_entry.get()
-        replace_with = self.replace_entry.get()
-        if not search:
-            return
-
-        matches = self._find_matches(search)
-        if not matches:
-            self.search_status_label.config(text="No matches found")
-            return
-
-        # Replace all matches from end to beginning to maintain positions
-        content = self.text.get("1.0", tk.END)
-        new_content = content
-        offset = 0
-
-        for start, end in reversed(matches):
-            actual_start = start + offset
-            actual_end = end + offset
-            new_content = new_content[:actual_start] + replace_with + new_content[actual_end:]
-            offset += len(replace_with) - (end - start)
-
-        self.text.delete("1.0", tk.END)
-        self.text.insert("1.0", new_content)
-
-        # Clear highlights and reset
-        self.matches = []
-        self.current_match_index = -1
-        self.text.tag_remove("search_highlight", "1.0", tk.END)
-        self.text.tag_remove("current_match", "1.0", tk.END)
-        self.search_status_label.config(text=f"Replaced {len(matches)} occurrence(s)")
-    
-    def save(self):
-        if self.callback:
-            self.callback(self.text.get("1.0", tk.END).strip())
-        self.destroy()
-    
-    def save_as(self):
-        path = filedialog.asksaveasfilename(defaultextension=".txt")
-        if path:
-            with open(path, 'w') as f:
-                f.write(self.text.get("1.0", tk.END))
-    
-    def _on_close(self):
-        if self.callback:
-            self.callback(None)  # Cancel
-        self.destroy()
-
+# -------------------------
+# Main Application
 # -------------------------
 # Main Application
 # -------------------------
@@ -4615,16 +7567,52 @@ class SmartphoneFirmwareScrews(tk.Tk):
         super().__init__()
         startup_logger.info("SmartphoneFirmwareScrews: __init__ started.")
         self.title(f"{APP_TITLE} v{VERSION}")
-        self.geometry("1400x900")
         self.configure(bg=COLORS['bg_primary'])
+        
+        # Center window on screen
+        width = 1400
+        height = 900
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # Ensure window opens above other windows
+        self.lift()
+        self.attributes('-topmost', True)
+        self.after(100, lambda: self.attributes('-topmost', False))
 
         self.current_project: Optional[Project] = None
         self.port_rom_config: Optional[PortRomConfig] = None
+        
+        # Port ROM step tracking for validation and dependency checking
+        self.port_rom_step_status = {step: "pending" for step, _, _, _ in PORT_ROM_STEPS}
+        self.port_rom_step_overrides = {
+            step: {"skip": False, "done": False} for step, _, _, _ in PORT_ROM_STEPS
+        }
+        self.port_rom_step_skip_vars: Dict[int, tk.BooleanVar] = {}
+        self.port_rom_step_done_vars: Dict[int, tk.BooleanVar] = {}
+        self.port_rom_step_results = {}
+        self.port_rom_step_labels: Dict[int, Tuple[ttk.Label, ttk.Label]] = {}
+        self.port_rom_step_progress: Dict[int, ttk.Progressbar] = {}
+        # Use the dynamic step dependencies dict
+        self.port_rom_step_dependencies = PORT_ROM_STEP_DEPENDENCIES
+        # Store full step info for UI
+        self.port_rom_step_info = {step: (title, handler, desc) for step, title, handler, desc in PORT_ROM_STEPS}
+        
         self.hex_editor_widget_ref: Optional['HexEditorWidget'] = None # Added type hint for Pylance
         # Initialize a placeholder progress bar so type checkers know it's always set
         self.progress: ttk.Progressbar = ttk.Progressbar(self, length=200, mode='indeterminate')
-        # Initialize main_pane to None, will be set in _build_workspace
+        # Initialize main_pane and main_notebook to None, will be set in _build_workspace
         self.main_pane = None
+        self.main_notebook: Optional[ttk.Notebook] = None # Initialize main_notebook
+
+        # Initialize APK project state early so tab builds can reference it
+        self.apk_project = ApkProject()
+        self.apk_current_path: Optional[str] = None
+        self.apk_extract_dir: Optional[str] = None
+
+        # Initialize syntax highlighter for file editor
+        self.syntax_highlighter = SyntaxHighlighter()
 
         startup_logger.info("SmartphoneFirmwareScrews: Calling _setup_style.")
         self._setup_style()
@@ -4636,6 +7624,15 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self._build_statusbar()
         startup_logger.info("SmartphoneFirmwareScrews: Calling _build_workspace.")
         self._build_workspace()
+
+        # Stage AIK tools (boot/recovery/ramdisk unpackers) from already-downloaded
+        # binaries. Best-effort: silently skips any tool that's not yet present.
+        try:
+            staged, skipped = self.setup_aik_workspace()
+            if staged:
+                self.log(f"AIK workspace: staged {staged} new tools (already had {skipped})", 'info')
+        except Exception as e:
+            self.log(f"AIK workspace setup error: {e}", 'warning')
 
         self.bind('<Control-o>', lambda e: self.open_firmware())
         self.bind('<Control-s>', lambda e: self.save_project())
@@ -4701,6 +7698,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         rom_menu.add_command(label="Sign APK", command=self.sign_apk_menu)
         rom_menu.add_command(label="Create Keystore", command=self.create_keystore_menu)
         rom_menu.add_separator()
+        rom_menu.add_command(label="Unpack Boot/Recovery Image", command=self.unpack_boot_img_menu)
         rom_menu.add_command(label="Extract Boot Image", command=self.extract_boot_menu)
         rom_menu.add_command(label="Extract Ramdisk", command=self.extract_ramdisk_menu)
         rom_menu.add_command(label="Create Ramdisk", command=self.create_ramdisk_menu)
@@ -4723,19 +7721,22 @@ class SmartphoneFirmwareScrews(tk.Tk):
         port_rom_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Port ROM", menu=port_rom_menu)
 
-        # Create a cascading submenu for Porting Steps
+        # Create a cascading submenu for Porting Steps - dynamic from PORT_ROM_STEPS
         porting_steps_menu = tk.Menu(port_rom_menu, tearoff=0)
         port_rom_menu.add_cascade(label="Porting Steps", menu=porting_steps_menu)
-        porting_steps_menu.add_command(label="Step 1: Extract Firmware", command=self.switch_to_port_rom_tab, accelerator="Ctrl+1")
-        porting_steps_menu.add_command(label="Step 2: Unpack Boot Images", command=lambda: self.switch_to_port_rom_tab(step=2), accelerator="Ctrl+2")
-        porting_steps_menu.add_command(label="Step 3: Modify Ramdisk", command=lambda: self.switch_to_port_rom_tab(step=3), accelerator="Ctrl+3")
-        porting_steps_menu.add_command(label="Step 4: Repack Boot Image", command=lambda: self.switch_to_port_rom_tab(step=4), accelerator="Ctrl+4")
-        porting_steps_menu.add_command(label="Step 5: Extract System/Vendor Images", command=lambda: self.switch_to_port_rom_tab(step=5), accelerator="Ctrl+5")
-        porting_steps_menu.add_command(label="Step 6: Modify Vendor Partition", command=lambda: self.switch_to_port_rom_tab(step=6), accelerator="Ctrl+6")
-        porting_steps_menu.add_command(label="Step 7: Modify System Partition", command=lambda: self.switch_to_port_rom_tab(step=7), accelerator="Ctrl+7")
-        porting_steps_menu.add_command(label="Step 8: Repack Images", command=lambda: self.switch_to_port_rom_tab(step=8), accelerator="Ctrl+8")
-        porting_steps_menu.add_command(label="Step 9: Create Odin Package", command=lambda: self.switch_to_port_rom_tab(step=9), accelerator="Ctrl+9")
-        porting_steps_menu.add_command(label="Step 10: Validate Package", command=lambda: self.switch_to_port_rom_tab(step=10), accelerator="Ctrl+0")
+        # Map of porting steps to keyboard shortcuts (only for first 10)
+        accelerators = {1: "Ctrl+1", 2: "Ctrl+2", 3: "Ctrl+3", 4: "Ctrl+4", 5: "Ctrl+5",
+                         6: "Ctrl+6", 7: "Ctrl+7", 8: "Ctrl+8", 9: "Ctrl+9", 0: "Ctrl+0"}
+        for step_num, title, _, _ in sorted(PORT_ROM_STEPS, key=lambda item: item[0]):
+            if step_num == 1:
+                cmd = lambda s=step_num: self.switch_to_port_rom_tab(step=s)
+            else:
+                cmd = lambda s=step_num: self.switch_to_port_rom_tab(step=s)
+            accel = accelerators.get(step_num) if step_num < 10 else None
+            if accel:
+                porting_steps_menu.add_command(label=f"Step {step_num}: {title}", command=cmd, accelerator=accel)
+            else:
+                porting_steps_menu.add_command(label=f"Step {step_num}: {title}", command=cmd)
         
         port_rom_menu.add_separator()
         port_rom_menu.add_command(label="Extract Source Firmware", command=self.extract_source_firmware, accelerator="Ctrl+Shift+S")
@@ -4768,19 +7769,119 @@ class SmartphoneFirmwareScrews(tk.Tk):
         tools_menu.add_command(label="Tool Status", command=self.show_tool_status)
         tools_menu.add_command(label="Open Tools Folder", command=self.open_tools_folder)
         tools_menu.add_separator()
-        tools_menu.add_command(label="Magisk: Patch boot.img", command=self.patch_boot_with_magisk_menu)
+        # Magiskboot submenu
+        magisk_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="Magisk", menu=magisk_menu)
+        magisk_menu.add_command(label="Patch boot.img", command=self.patch_boot_with_magisk_menu)
+        magisk_menu.add_command(label="Hex Patch Binary", command=self.magisk_hex_patch_menu)
+        magisk_menu.add_command(label="CPIO Edit (ramdisk)", command=self.magisk_cpio_menu)
+        magisk_menu.add_command(label="DTB Patch (verity/avb)", command=self.magisk_dtb_patch_menu)
+        magisk_menu.add_separator()
+        magisk_menu.add_command(label="Unpack boot.img (UI)", command=self.magisk_unpack_ui_menu)
+        magisk_menu.add_command(label="Repack boot.img (UI)", command=self.magisk_repack_ui_menu)
+        magisk_menu.add_command(label="Verify AVB signature", command=self.magisk_verify_menu)
+        magisk_menu.add_command(label="Sign with AVB", command=self.magisk_sign_menu)
+        magisk_menu.add_command(label="Split kernel.dtb", command=self.magisk_split_dtb_menu)
+        magisk_menu.add_command(label="SHA1 of file", command=self.magisk_sha1_menu)
+        magisk_menu.add_command(label="Compress (auto)", command=self.magisk_compress_menu)
+        magisk_menu.add_command(label="Decompress (auto)", command=self.magisk_decompress_menu)
+        magisk_menu.add_separator()
+        magisk_menu.add_command(label="Extract from payload.bin", command=self.avb_extract_menu)
         tools_menu.add_separator()
-        tools_menu.add_command(label="APK: Zipalign", command=self.zipalign_apk_menu)
-        tools_menu.add_command(label="DEX → JAR (d2j-dex2jar)", command=self.dex_to_jar_menu)
-        tools_menu.add_command(label="JAR → DEX (smali)", command=self.jar_to_dex_menu)
-        tools_menu.add_command(label="Baksmali classes.dex", command=self.baksmali_menu)
-        tools_menu.add_command(label="Smali → classes.dex", command=self.smali_menu)
+        # APK submenu
+        apk_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="APK/Apps", menu=apk_menu)
+        apk_menu.add_command(label="Apktool Decode (Advanced)", command=self.apktool_decode_advanced_menu)
+        apk_menu.add_command(label="Apktool Build (Advanced)", command=self.apktool_build_advanced_menu)
+        apk_menu.add_command(label="Apktool Install Framework", command=self.apktool_install_framework_menu)
+        apk_menu.add_command(label="Apksigner Verify", command=self.apksigner_verify_menu)
+        apk_menu.add_command(label="AAPT2: Dump Badging", command=self.aapt2_dump_badging_menu)
+        apk_menu.add_command(label="AAPT2: Dump Permissions", command=self.aapt2_dump_permissions_menu)
+        apk_menu.add_command(label="AAPT2: Dump XMLTree", command=self.aapt2_dump_xmltree_menu)
+        apk_menu.add_command(label="AAPT2: Dump Resources", command=self.aapt2_dump_resources_menu)
+        apk_menu.add_command(label="AAPT2: Dump Strings", command=self.aapt2_dump_strings_menu)
+        apk_menu.add_separator()
+        apk_menu.add_command(label="DEX → JAR (d2j-dex2jar)", command=self.dex_to_jar_menu)
+        apk_menu.add_command(label="JAR → DEX (smali)", command=self.jar_to_dex_menu)
+        apk_menu.add_command(label="Baksmali classes.dex", command=self.baksmali_menu)
+        apk_menu.add_command(label="Smali → classes.dex", command=self.smali_menu)
+        apk_menu.add_separator()
+        apk_menu.add_command(label="Zipalign APK", command=self.zipalign_apk_menu)
         tools_menu.add_separator()
-        tools_menu.add_command(label="simg2img (sparse → raw)", command=self.sparse_to_raw_menu)
-        tools_menu.add_command(label="img2simg (raw → sparse)", command=self.raw_to_sparse_menu)
+        # OTA submenu
+        ota_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="OTA/Firmware", menu=ota_menu)
+        ota_menu.add_command(label="Dump payload.bin", command=self.payload_dumper_menu)
+        ota_menu.add_command(label="Extract ROM ZIP/tar.md5", command=self.extract_rom_zip_menu)
+        ota_menu.add_command(label="Verify ROM checksums", command=self.verify_firmware_checksums_menu)
+        ota_menu.add_command(label="Decrypt OZIP (Samsung)", command=self.ozip_decrypt_menu)
+        ota_menu.add_command(label="Decode OMC/CSC (Samsung)", command=self.omc_decode_menu)
         tools_menu.add_separator()
-        tools_menu.add_command(label="AVB: Verify vbmeta", command=self.verify_vbmeta_menu)
-        tools_menu.add_command(label="AVB: Make vbmeta (advanced)", command=self.create_vbmeta_menu)
+        # Image submenu
+        image_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="Images", menu=image_menu)
+        image_menu.add_command(label="sparse → raw (simg2img)", command=self.sparse_to_raw_menu)
+        image_menu.add_command(label="raw → sparse (img2simg)", command=self.raw_to_sparse_menu)
+        image_menu.add_command(label="Resize EXT4 (resize2fs)", command=self.resize_ext4_menu)
+        image_menu.add_command(label="Show EXT4 mount cmd", command=self.mount_ext4_menu)
+        image_menu.add_command(label="Build EXT4 from folder (make_ext4fs)", command=self.make_ext4fs_menu)
+        image_menu.add_command(label="Pack to sparse", command=self.pack_sparse_menu)
+        image_menu.add_command(label="Unpack Allwinner (imgrepacker)", command=self.imgrepacker_unpack_menu)
+        image_menu.add_command(label="Pack Allwinner (imgrepacker)", command=self.imgrepacker_pack_menu)
+        image_menu.add_command(label="Unpack Amlogic (amlogic)", command=self.amlogic_unpack_menu)
+        image_menu.add_command(label="Pack Amlogic (amlogic)", command=self.amlogic_pack_menu)
+        image_menu.add_command(label="Unpack Super (lpunpack)", command=self.lpunpack_menu)
+        image_menu.add_command(label="Build Super (lpmake)", command=self.lpmake_menu)
+        image_menu.add_command(label="Unpack DTBO (mkdtboimg)", command=self.mkdtboimg_unpack_menu)
+        image_menu.add_command(label="Pack DTBO (mkdtboimg)", command=self.mkdtboimg_pack_menu)
+        image_menu.add_command(label="Extract DTB (extract-dtb)", command=self.extract_dtb_tool_menu)
+        image_menu.add_command(label="DTB ↔ DTS (dtb-converter)", command=self.dtb_converter_menu)
+        image_menu.add_command(label="DTS → DTB (dtc)", command=self.dtc_compile_menu)
+        image_menu.add_command(label="DTB → DTS (dtc)", command=self.dtc_decompile_menu)
+        tools_menu.add_separator()
+        # Samsung submenu
+        samsung_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="Samsung", menu=samsung_menu)
+        samsung_menu.add_command(label="OPS Decrypt (opscrypto)", command=self.opscrypto_menu)
+        samsung_menu.add_command(label="Build ROM ZIP", command=self.build_rom_menu)
+        samsung_menu.add_command(label="Create OTA Package", command=self.create_ota_package)
+        samsung_menu.add_command(label="Create Update ZIP", command=self.create_update_zip)
+        tools_menu.add_separator()
+        # AVB submenu
+        avb_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="AVB", menu=avb_menu)
+        avb_menu.add_command(label="Verify vbmeta", command=self.verify_vbmeta_menu)
+        avb_menu.add_command(label="Make vbmeta (advanced)", command=self.create_vbmeta_menu)
+        avb_menu.add_command(label="info_footer / info_image", command=self.avb_info_menu)
+        avb_menu.add_command(label="Add Hash Footer", command=self.avb_add_hash_footer_menu)
+        avb_menu.add_command(label="Add Hashtree Footer", command=self.avb_add_hashtree_footer_menu)
+        tools_menu.add_separator()
+        # SELinux submenu
+        selinux_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="SELinux", menu=selinux_menu)
+        selinux_menu.add_command(label="Compile file_contexts (sefcontext)", command=self.sefcontext_compile_menu)
+        selinux_menu.add_command(label="Decode file_contexts", command=self.sefcontext_decode_menu)
+        selinux_menu.add_command(label="Patch boot sepolicy (magiskinit)", command=self.magisk_selinux_patch_menu)
+        tools_menu.add_separator()
+        # Firmware Analysis submenu
+        analysis_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="Analysis", menu=analysis_menu)
+        analysis_menu.add_command(label="Analyze boot.img header", command=self.analyze_boot_img_menu)
+        analysis_menu.add_command(label="Compare two ROMs", command=self.compare_firmware_menu)
+        analysis_menu.add_command(label="AIK Unpack", command=self.aik_unpack_menu)
+        analysis_menu.add_command(label="AIK Repack", command=self.aik_repack_menu)
+        analysis_menu.add_command(label="AIK Cleanup", command=self.aik_cleanup_menu)
+        tools_menu.add_separator()
+        # Compression submenu
+        comp_menu = tk.Menu(tools_menu, tearoff=0)
+        tools_menu.add_cascade(label="Compression", menu=comp_menu)
+        comp_menu.add_command(label="Zstandard", command=self.zstd_compress_menu)
+        comp_menu.add_command(label="Brotli", command=self.brotli_compress_menu)
+        comp_menu.add_command(label="LZ4", command=self.lz4_compress_tool_menu)
+        comp_menu.add_command(label="tar (bsdtar create)", command=self.bsdtar_create_menu)
+        comp_menu.add_command(label="tar (bsdtar extract)", command=self.bsdtar_extract_menu)
+        comp_menu.add_command(label="cpio extract", command=self.cpio_extract_menu)
+        comp_menu.add_command(label="cpio create", command=self.cpio_create_menu)
         
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
@@ -4795,6 +7896,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         open_tab_menu.add_command(label="ROM Building", command=lambda: self.open_tab("ROM Building"))
         open_tab_menu.add_command(label="Hex Editor", command=lambda: self.open_tab("Hex Editor"))
         open_tab_menu.add_command(label="File Editor", command=lambda: self.open_tab("File Editor"))
+        open_tab_menu.add_command(label="APK/XAPK", command=lambda: self.open_tab("APK/XAPK"))
         open_tab_menu.add_command(label="Port ROM", command=lambda: self.open_tab("Port ROM"))
         open_tab_menu.add_command(label="Tools", command=lambda: self.open_tab("Tools"))
         
@@ -4879,6 +7981,10 @@ class SmartphoneFirmwareScrews(tk.Tk):
         fw_frame = ttk.Frame(notebook)
         notebook.add(fw_frame, text="Firmware")
         self._build_firmware_ui(fw_frame)
+        
+        # Store the notebook reference if it's the main one
+        if notebook == self.main_notebook:
+            self.main_notebook = notebook
 
         # ROM tab
         rom_frame = ttk.Frame(notebook)
@@ -4897,6 +8003,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
         # Store progress bar reference for hex editor
         self.hex_editor_progress = self.progress
+
+        # APK/XAPK tab (comprehensive APK wrangling)
+        apk_frame = ttk.Frame(notebook)
+        notebook.add(apk_frame, text="APK/XAPK")
+        self._build_apk_tab(apk_frame)
 
         # Port ROM tab
         port_rom_frame = ttk.Frame(notebook)
@@ -4931,16 +8042,15 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 try:
                     if widget.select():  # Has a selected tab
                         return widget
-                except:
+                except Exception:
                     pass
-            
             # Recursively search children
             try:
                 for child in widget.winfo_children():
                     result = find_notebook_with_selection(child)
                     if result:
                         return result
-            except:
+            except tk.TclError:
                 pass
             return None
         
@@ -4948,14 +8058,96 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if notebook:
             return notebook
         
-        # Fallback to main notebook
-        return self.main_notebook if hasattr(self, 'main_notebook') else None
+        # Fallback to main notebook, ensuring it's not None
+        if self.main_notebook and self.main_notebook.winfo_exists():
+            return self.main_notebook
+        return None
     
 
 
     def _replace_with_split(self, notebook: ttk.Notebook, orientation: str):
         """Replace notebook with a split pane containing the notebook and a new notebook"""
         if not notebook:
+            return
+
+        # Keep the existing tab widgets intact. Rebuilding tab frames here
+        # loses their state and can leave callbacks pointing at destroyed
+        # notebooks, especially after a second split.
+        try:
+            all_tabs = list(notebook.tabs())
+            if not all_tabs or not notebook.winfo_exists():
+                return
+            selected_id = notebook.select()
+            selected_index = all_tabs.index(selected_id) if selected_id in all_tabs else 0
+            parent = notebook.master
+            pack_info = None
+            grid_info = None
+            if not isinstance(parent, ttk.PanedWindow):
+                try:
+                    pack_info = notebook.pack_info()
+                except tk.TclError:
+                    pass
+                try:
+                    grid_info = notebook.grid_info()
+                except tk.TclError:
+                    pass
+
+            pane = ttk.PanedWindow(
+                parent,
+                orient=tk.VERTICAL if orientation == "horizontal" else tk.HORIZONTAL,
+                style="Colored.TPanedwindow",
+            )
+
+            if isinstance(parent, ttk.PanedWindow):
+                pane_ids = list(parent.panes())
+                pane_index = next(
+                    (i for i, pane_id in enumerate(pane_ids)
+                     if pane_id == str(notebook)),
+                    None,
+                )
+                parent.forget(notebook)
+                if pane_index is not None and pane_index <= len(parent.panes()):
+                    parent.insert(pane_index, pane, weight=1)
+                else:
+                    parent.add(pane, weight=1)
+            elif pack_info:
+                notebook.pack_forget()
+                pane.pack(**pack_info)
+            elif grid_info:
+                notebook.grid_forget()
+                pane.grid(**grid_info)
+            else:
+                notebook.pack_forget()
+                pane.pack(fill="both", expand=True)
+
+            pane.add(notebook, weight=1)
+            right_notebook = ttk.Notebook(pane)
+            pane.add(right_notebook, weight=1)
+            self._enable_tab_dnd(right_notebook)
+
+            # Move only tabs after the selected tab. The original tab frames
+            # remain alive, so editor state and widget bindings are preserved.
+            for tab_id in all_tabs[selected_index + 1:]:
+                tab_widget = self.nametowidget(tab_id)
+                tab_text = notebook.tab(tab_id, "text")
+                notebook.forget(tab_id)
+                right_notebook.add(tab_widget, text=tab_text)
+
+            if right_notebook.tabs():
+                right_notebook.select(0)
+            else:
+                placeholder = ttk.Frame(right_notebook)
+                right_notebook.add(placeholder, text="Empty")
+                ttk.Label(placeholder, text="<- Drag tabs here", font=("Segoe UI", 11)).pack(expand=True)
+
+            remaining_tabs = notebook.tabs()
+            if remaining_tabs:
+                notebook.select(min(selected_index, len(remaining_tabs) - 1))
+            if self.main_notebook is notebook:
+                self.main_notebook = notebook
+            return
+        except tk.TclError as exc:
+            self.log(f"Split failed: {exc}", "error")
             return
         
         # Get all tabs from the notebook being split
@@ -4973,13 +8165,6 @@ class SmartphoneFirmwareScrews(tk.Tk):
             if tab_id == notebook.select():
                 selected_tab_index = i
         
-        # Split tabs: selected and left tabs stay, right tabs move
-        left_tabs = tab_info[:selected_tab_index + 1]  # Include selected tab
-        right_tabs = tab_info[selected_tab_index + 1:]  # Tabs to the right
-        
-        # Fix orientation
-        orient_fixed: Literal["vertical", "horizontal"] = "horizontal" if orientation == "vertical" else "vertical"
-        
         # Get the parent of the notebook being split
         parent = notebook.master
         
@@ -4988,19 +8173,72 @@ class SmartphoneFirmwareScrews(tk.Tk):
         grid_info = None
         pane_info = None
         
-        try:
-            pack_info = notebook.pack_info()
-        except:
-            pass
-        try:
-            grid_info = notebook.grid_info()
-        except:
-            pass
+        # Only check pack/grid info if not in a PanedWindow
+        if not isinstance(parent, ttk.PanedWindow):
+            try:
+                pack_info = notebook.pack_info()
+            except tk.TclError:
+                pass
+            try:
+                grid_info = notebook.grid_info()
+            except tk.TclError:
+                pass
+        
+        # Fix orientation
+        orient_fixed: Literal["vertical", "horizontal"] = "horizontal" if orientation == "vertical" else "vertical"
         
         # Create new pane
         new_pane = ttk.PanedWindow(parent, orient=orient_fixed)
         
-        # Handle different parent types
+        # Split tabs: if only one tab OR last tab selected, preserve original notebook completely as-is
+        if len(tab_info) == 1 or selected_tab_index == len(tab_info) - 1:
+            # Last tab selected - keep entire notebook with ALL tabs/content on left, empty on right
+            # Replace parent with new split pane
+            if isinstance(parent, ttk.PanedWindow):
+                panes = parent.panes()
+                pane_index = None
+                for i, pane_id in enumerate(panes):
+                    if self.nametowidget(pane_id) == notebook:
+                        pane_index = i
+                        break
+                parent.forget(notebook)
+                # After forget, check if index is still valid
+                if pane_index is not None and pane_index <= len(parent.panes()):
+                    parent.insert(pane_index, new_pane, weight=1)
+                else:
+                    parent.add(new_pane, weight=1)
+            else:
+                if pack_info:
+                    notebook.pack_forget()
+                    new_pane.pack(**pack_info)
+                elif grid_info:
+                    notebook.grid_forget()
+                    new_pane.grid(**grid_info)
+                else:
+                    try:
+                        notebook.pack_forget()
+                    except tk.TclError:
+                        pass
+                    new_pane.pack(fill='both', expand=True)
+            
+            # Add original notebook to left (preserves ALL tabs, children, and content)
+            new_pane.add(notebook, weight=1)
+            
+            # Create empty notebook on right
+            right_notebook = ttk.Notebook(new_pane)
+            new_pane.add(right_notebook, weight=1)
+            self._enable_tab_dnd(right_notebook)
+            placeholder = ttk.Frame(right_notebook)
+            right_notebook.add(placeholder, text="Empty")
+            ttk.Label(placeholder, text="← Drag tabs here", font=('Segoe UI', 11)).pack(expand=True)
+            
+            return
+        else:
+            # Normal case - selected and left tabs stay, right tabs move
+            left_tabs = tab_info[:selected_tab_index + 1]
+            right_tabs = tab_info[selected_tab_index + 1:]
+        
+        # Handle different parent types (for normal split case)
         if isinstance(parent, ttk.PanedWindow):
             # Store pane position and weight
             panes = parent.panes()
@@ -5011,7 +8249,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     break
             
             parent.forget(notebook)
-            if pane_index is not None:
+            # After forget, check if index is still valid
+            if pane_index is not None and pane_index <= len(parent.panes()):
                 parent.insert(pane_index, new_pane, weight=1)
             else:
                 parent.add(new_pane, weight=1)
@@ -5092,10 +8331,21 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if hasattr(self, 'main_notebook') and notebook == self.main_notebook:
             self.main_notebook = left_notebook
         
-        # Destroy old tab frames and then the notebook
-        for tab_widget, _ in tab_info:
-            tab_widget.destroy()
+        # Destroy the old notebook (tabs already removed)
         notebook.destroy()
+
+    def _has_splits(self):
+        def has_paned(widget):
+            if isinstance(widget, ttk.PanedWindow):
+                return True
+            try:
+                for child in widget.winfo_children():
+                    if has_paned(child):
+                        return True
+            except tk.TclError:
+                pass
+            return False
+        return has_paned(self.content_frame)
 
     def split_horizontal(self):
         """Split current view horizontally"""
@@ -5112,7 +8362,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log("Split view vertically", 'info')
     
     def close_pane(self):
-        """Close the current pane and collapse split if needed"""
+        """Close the current pane and undo one split, keeping all tabs in the remaining pane"""
         notebook = self._get_current_notebook()
         if not notebook:
             self.log("No notebook to close", 'warning')
@@ -5120,19 +8370,23 @@ class SmartphoneFirmwareScrews(tk.Tk):
         
         try:
             parent = notebook.master
-        except:
+        except tk.TclError:
             self.log("Notebook parent no longer exists", 'warning')
             return
-        
-        # Don't allow closing if not in a split pane
-        if not isinstance(parent, ttk.PanedWindow):
+
+        # Don't allow closing if not in a split pane (but allow if there are other splits)
+        if not isinstance(parent, ttk.PanedWindow) and not self._has_splits():
             self.log("Cannot close main notebook", 'warning')
             messagebox.showwarning("Cannot Close", "Cannot close the main notebook. Split the view first.")
             return
-        
+
         try:
-            panes = list(parent.panes())
-        except:
+            if isinstance(parent, ttk.PanedWindow):
+                panes = list(parent.panes())
+            else:
+                self.log("Parent is not a PanedWindow", 'warning')
+                return
+        except tk.TclError:
             self.log("Parent pane no longer exists", 'warning')
             return
             
@@ -5148,7 +8402,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log("Cannot close - only pane remaining", 'warning')
             return
         
-        # Get the other pane
+        # Get the other pane (the one to keep)
         other_paths = [p for p in panes if p != notebook_path]
         if not other_paths:
             return
@@ -5156,29 +8410,101 @@ class SmartphoneFirmwareScrews(tk.Tk):
         try:
             other_widget = self.nametowidget(other_paths[0])
             grandparent = parent.master
-        except:
+        except tk.TclError:
             self.log("Cannot access other widgets", 'warning')
             return
         
-        try:
-            # Remove both widgets from parent
-            parent.forget(notebook)
-            parent.forget(other_widget)
+        # Update main_notebook reference if we're closing the main notebook
+        if hasattr(self, 'main_notebook') and notebook == self.main_notebook:
+            # Find a notebook in the remaining widget to use as main_notebook
+            def find_notebook_in_widget(widget):
+                if isinstance(widget, ttk.Notebook):
+                    return widget
+                for child in widget.winfo_children():
+                    result = find_notebook_in_widget(child)
+                    if result:
+                        return result
+                return None
             
-            # Replace parent with remaining widget
+            new_main = find_notebook_in_widget(other_widget)
+            if new_main:
+                self.main_notebook = new_main
+        
+        try:
+            # Get weight of the parent pane if it's in a grandparent PanedWindow
+            weight = 1
             if isinstance(grandparent, ttk.PanedWindow):
                 try:
                     pane_config = grandparent.pane(parent)
                     weight = pane_config.get('weight', 1)
-                except:
-                    weight = 1
-                
-                grandparent.forget(parent)
-                grandparent.add(other_widget, weight=weight)
+                except tk.TclError:
+                    pass
             
-            # Destroy the closed notebook and parent pane
-            notebook.destroy()
-            parent.destroy()
+            # Remove the parent PanedWindow from grandparent
+            if isinstance(grandparent, ttk.PanedWindow):
+                # Find the index of parent in grandparent
+                grandparent_panes = list(grandparent.panes())
+                parent_path = str(parent)
+                parent_index = None
+                for i, pane_id in enumerate(grandparent_panes):
+                    if pane_id == parent_path:
+                        parent_index = i
+                        break
+                
+                # Remove parent from grandparent
+                grandparent.forget(parent)
+                
+                # Remove other_widget from parent (so we can re-add it to grandparent)
+                if isinstance(parent, ttk.PanedWindow):
+                    parent.forget(other_widget)
+                
+                # Add other_widget to grandparent at the same position
+                if parent_index is not None:
+                    grandparent.insert(parent_index, other_widget, weight=weight)
+                else:
+                    grandparent.add(other_widget, weight=weight)
+            else:
+                # Parent is not in a PanedWindow, replace it directly
+                # Get geometry info from parent
+                pack_info = None
+                grid_info = None
+                if hasattr(parent, 'pack_info'):
+                    try:
+                        pack_info = parent.pack_info()
+                    except tk.TclError:
+                        pass
+                if hasattr(parent, 'grid_info'):
+                    try:
+                        grid_info = parent.grid_info()
+                    except tk.TclError:
+                        pass
+                
+                # Remove other_widget from parent before destroying
+                if isinstance(parent, ttk.PanedWindow):
+                    parent.forget(other_widget)
+                
+                # Remove parent from grandparent
+                if pack_info and hasattr(parent, 'pack_forget'):
+                    parent.pack_forget()
+                elif grid_info and hasattr(parent, 'grid_forget'):
+                    parent.grid_forget()
+                
+                # Destroy parent and notebook
+                notebook.destroy()
+                parent.destroy()
+                
+                # Add other_widget to grandparent with same geometry
+                if pack_info:
+                    other_widget.pack(**pack_info)
+                elif grid_info:
+                    other_widget.grid(**grid_info)
+                else:
+                    other_widget.pack(fill='both', expand=True)
+            
+            # Destroy the closed notebook and parent pane (already done in else branch)
+            if isinstance(grandparent, ttk.PanedWindow):
+                notebook.destroy()
+                parent.destroy()
             
             self.log("Pane closed successfully", 'success')
         except Exception as e:
@@ -5186,14 +8512,24 @@ class SmartphoneFirmwareScrews(tk.Tk):
     
     def open_tab(self, tab_name: str):
         """Open a tab in the current notebook"""
-        notebook = self._get_current_notebook()
-        if not notebook:
-            # Recreate the main view if no notebook exists
-            self._recreate_main_view()
+        notebook = None
+        
+        # Try to get current notebook, but handle destroyed widgets
+        try:
             notebook = self._get_current_notebook()
-            if not notebook:
-                self.log("Failed to recreate main view", 'error')
-                return
+            if notebook and not notebook.winfo_exists():
+                notebook = None
+        except tk.TclError:
+            notebook = None
+        
+        # If no valid notebook exists, recreate main view
+        if not notebook:
+            self._recreate_main_view()
+            notebook = self.main_notebook
+        
+        if not notebook:
+            self.log("Failed to get or create notebook", 'error')
+            return
         
         try:
             # Check if tab already exists
@@ -5225,6 +8561,9 @@ class SmartphoneFirmwareScrews(tk.Tk):
             elif tab_name == "File Editor":
                 notebook.add(new_frame, text="File Editor")
                 self._build_file_editor_ui(new_frame)
+            elif tab_name == "APK/XAPK":
+                notebook.add(new_frame, text="APK/XAPK")
+                self._build_apk_tab(new_frame)
             elif tab_name == "Port ROM":
                 notebook.add(new_frame, text="Port ROM")
                 self._build_port_rom_ui(new_frame)
@@ -5239,13 +8578,19 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log(f"Opened {tab_name} tab", 'success')
         except Exception as e:
             self.log(f"Error opening {tab_name} tab: {e}", 'error')
+            # Last resort: recreate everything
+            self._recreate_main_view()
+            self.open_tab(tab_name)
     
     def _recreate_main_view(self):
         """Recreate the main view when all notebooks are destroyed"""
         try:
-            # Clear content frame
-            for widget in self.content_frame.winfo_children():
-                widget.destroy()
+            # Clear content frame safely
+            for widget in list(self.content_frame.winfo_children()):
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
             
             # Recreate main notebook
             self.main_notebook = ttk.Notebook(self.content_frame)
@@ -5267,18 +8612,25 @@ class SmartphoneFirmwareScrews(tk.Tk):
         index = None
         try:
             # Validate coordinates before using them
-            if hasattr(event, 'x') and hasattr(event, 'y') and event.x != '' and event.y != '':
-                x_coord = int(event.x) if str(event.x).isdigit() or (str(event.x).startswith('-') and str(event.x)[1:].isdigit()) else 0
-                y_coord = int(event.y) if str(event.y).isdigit() or (str(event.y).startswith('-') and str(event.y)[1:].isdigit()) else 0
-                index = notebook.index(f'@{x_coord},{y_coord}')
+            if hasattr(event, 'x') and hasattr(event, 'y'):
+                try:
+                    # Ensure coordinates are valid integers
+                    x_coord = int(event.x) if event.x != '' else 0
+                    y_coord = int(event.y) if event.y != '' else 0
+                    index = notebook.index(f'@{x_coord},{y_coord}')
+                except (ValueError, tk.TclError, TypeError):
+                    pass
         except:
-            # If that fails, try to get the currently selected tab
+            pass
+        
+        # If that fails, try to get the currently selected tab
+        if index is None:
             try:
                 selected = notebook.select()
                 if selected:
                     tabs = notebook.tabs()
                     index = tabs.index(selected)
-            except:
+            except Exception:
                 index = None
         self._drag_data = {
             'source_nb': notebook,
@@ -5330,7 +8682,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         x_int = int(target_x) if str(target_x).isdigit() or (str(target_x).startswith('-') and str(target_x)[1:].isdigit()) else 0
                         y_int = int(target_y) if str(target_y).isdigit() or (str(target_y).startswith('-') and str(target_y)[1:].isdigit()) else 0
                         target_index = target_nb.index('@%d,%d' % (x_int, y_int))
-                except:
+                except Exception:
                     # If coordinates fail, move to end (+1 fix)
                     target_index = len(target_nb.tabs())
                 
@@ -5351,7 +8703,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         # Get tab info before moving
         try:
             tab_text = source_nb.tab(tab_widget, 'text')
-        except:
+        except tk.TclError:
             return
 
         # Remove placeholder if exists in target
@@ -5405,8 +8757,17 @@ class SmartphoneFirmwareScrews(tk.Tk):
         try:
             x = getattr(event, 'x', None)
             y = getattr(event, 'y', None)
-            if x is not None and y is not None and str(x).isdigit() and str(y).isdigit():
-                index = notebook.index('@%d,%d' % (int(x), int(y)))
+            
+            # Validate coordinates are not None or empty strings
+            if (x is not None and y is not None and 
+                str(x) != '' and str(y) != '' and
+                (str(x).isdigit() or (str(x).startswith('-') and str(x)[1:].isdigit())) and
+                (str(y).isdigit() or (str(y).startswith('-') and str(y)[1:].isdigit()))):
+                
+                x_int = int(x)
+                y_int = int(y)
+                index = notebook.index('@%d,%d' % (x_int, y_int))
+                
                 if index is not None:
                     tabs = notebook.tabs()
                     if 0 <= index < len(tabs):
@@ -5443,7 +8804,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log(f"Error closing tab: {e}", 'error')
     
     def _try_undo_split(self, empty_notebook: ttk.Notebook):
-        """Try to undo split if the other half only has Empty tab"""
+        """Undo split by removing empty notebook and promoting the other side"""
         try:
             parent = empty_notebook.master
             if not isinstance(parent, ttk.PanedWindow):
@@ -5453,71 +8814,94 @@ class SmartphoneFirmwareScrews(tk.Tk):
             if len(panes) != 2:
                 return
             
-            # Find the other notebook
+            # Find the other pane (could be notebook or nested PanedWindow)
             empty_path = str(empty_notebook)
             other_path = next((p for p in panes if p != empty_path), None)
             if not other_path:
                 return
             
-            other_notebook = self.nametowidget(other_path)
-            if not isinstance(other_notebook, ttk.Notebook):
-                return
+            other_widget = self.nametowidget(other_path)
+            grandparent = parent.master
             
-            # Check if other notebook only has Empty tab
-            other_tabs = other_notebook.tabs()
-            if len(other_tabs) == 1:
-                tab_text = other_notebook.tab(other_tabs[0], 'text')
-                if tab_text == "Empty":
-                    # Both sides are empty, collapse the split
-                    grandparent = parent.master
-                    
-                    # Remove both notebooks from parent
+            # Check if other side is a notebook with only Empty tab
+            if isinstance(other_widget, ttk.Notebook):
+                other_tabs = other_widget.tabs()
+                if len(other_tabs) == 1 and other_widget.tab(other_tabs[0], 'text') == "Empty":
+                    # Both sides empty - remove split entirely
                     parent.forget(empty_notebook)
-                    parent.forget(other_notebook)
-                    
-                    # Destroy the empty notebook and its Empty tab
+                    parent.forget(other_widget)
                     empty_notebook.destroy()
+                    other_widget.destroy()
                     
-                    # Replace parent with the other notebook
                     if isinstance(grandparent, ttk.PanedWindow):
                         grandparent.forget(parent)
-                        grandparent.add(other_notebook, weight=1)
                     else:
                         parent.pack_forget()
-                        other_notebook.pack(fill='both', expand=True)
-                    
                     parent.destroy()
                     
-                    # Update main_notebook reference if needed
-                    if empty_notebook == self.main_notebook:
-                        self.main_notebook = other_notebook
+                    if empty_notebook == self.main_notebook or other_widget == self.main_notebook:
+                        self._recreate_main_view()
                     
-                    self.log("Split undone - both sides were empty", 'info')
+                    self.log("Split undone - both sides empty", 'info')
                     return
             
-            # Other side has real tabs, just destroy the empty notebook
+            # Other side has content - promote it to replace the split
+            # Get parent's geometry info before destroying
+            pack_info = parent.pack_info() if parent.winfo_manager() == 'pack' else None
+            grid_info = parent.grid_info() if parent.winfo_manager() == 'grid' else None
+            pane_info = None
+            if isinstance(grandparent, ttk.PanedWindow):
+                try:
+                    pane_info = grandparent.pane(parent)
+                except tk.TclError:
+                    pane_info = None
+            
+            # Remove both from parent
             parent.forget(empty_notebook)
+            parent.forget(other_widget)
             empty_notebook.destroy()
             
-            # Replace parent with the other notebook that has content
-            grandparent = parent.master
+            # Replace parent with other_widget in grandparent
             if isinstance(grandparent, ttk.PanedWindow):
                 grandparent.forget(parent)
-                grandparent.add(other_notebook, weight=1)
+                if pane_info:
+                    grandparent.add(other_widget, **{k: v for k, v in pane_info.items() if k != 'minsize'})
+                else:
+                    grandparent.add(other_widget)
+            elif pack_info:
+                parent.pack_forget()
+                other_widget.pack(**pack_info)
+            elif grid_info:
+                parent.grid_forget()
+                other_widget.grid(**grid_info)
             else:
                 parent.pack_forget()
-                other_notebook.pack(fill='both', expand=True)
+                other_widget.pack(fill='both', expand=True)
             
             parent.destroy()
             
             # Update main_notebook reference if needed
             if empty_notebook == self.main_notebook:
-                self.main_notebook = other_notebook
+                if isinstance(other_widget, ttk.Notebook):
+                    self.main_notebook = other_widget
+                else:
+                    # Find first notebook in the tree
+                    self.main_notebook = self._find_first_notebook(other_widget)
             
             self.log("Split undone - empty side removed", 'info')
             
         except Exception as e:
             self.log(f"Error undoing split: {e}", 'error')
+    
+    def _find_first_notebook(self, widget):
+        """Find the first notebook widget in the tree"""
+        if isinstance(widget, ttk.Notebook):
+            return widget
+        for child in widget.winfo_children():
+            result = self._find_first_notebook(child)
+            if result:
+                return result
+        return None
     
     def _build_firmware_ui(self, parent):
         # Specific UI for firmware
@@ -5647,6 +9031,41 @@ class SmartphoneFirmwareScrews(tk.Tk):
         ttk.Button(editor_toolbar, text="📋 Copy All", command=self._copy_all_to_clipboard).pack(side='left', padx=2)
         ttk.Button(editor_toolbar, text="📝 Notepad++", command=self._open_in_notepad_pp).pack(side='left', padx=2)
 
+        # Modified indicator
+        self.file_modified_label = ttk.Label(editor_toolbar, text="", foreground='#4E7BFF', font=('Segoe UI', 9, 'bold'))
+        self.file_modified_label.pack(side='left', padx=(5, 2))
+
+        # Load settings first
+        self.editor_settings = load_editor_settings()
+
+        # Word wrap toggle
+        self.file_editor_wrap_var = tk.BooleanVar(value=False)
+        wrap_toggle = ttk.Checkbutton(editor_toolbar, text="Wrap", variable=self.file_editor_wrap_var,
+                                      command=self._toggle_editor_wrap)
+        wrap_toggle.pack(side='left', padx=2)
+
+        # Zoom controls
+        zoom_frame = tk.Frame(editor_toolbar)
+        zoom_frame.pack(side='left', padx=2)
+        ttk.Button(zoom_frame, text="−", width=2, command=self._zoom_editor_out).pack(side='left')
+        self.zoom_label = ttk.Label(zoom_frame, text="100%")
+        self.zoom_label.pack(side='left', padx=2)
+        ttk.Button(zoom_frame, text="+", width=2, command=self._zoom_editor_in).pack(side='left')
+
+        # Syntax highlighting toggle
+        self.syntax_highlight_var = tk.BooleanVar(value=self.editor_settings.get('syntax_highlighting', True))
+        syntax_toggle = ttk.Button(editor_toolbar, text="Highlight: ON" if self.editor_settings.get('syntax_highlighting', True) else "Highlight: OFF",
+                                   command=self._toggle_syntax_highlighting)
+        syntax_toggle.pack(side='left', padx=2)
+        self.syntax_toggle_btn = syntax_toggle
+
+        # Language indicator
+        lang_frame = tk.Frame(editor_toolbar)
+        lang_frame.pack(side='left', padx=2)
+        ttk.Label(lang_frame, text="Lang:").pack(side='left', padx=(0,2))
+        self.language_label = ttk.Label(lang_frame, text="Plain Text", foreground='#4E7BFF', font=('Segoe UI', 9, 'bold'))
+        self.language_label.pack(side='left')
+
         # Font size controls
         ttk.Label(editor_toolbar, text="Font:").pack(side='right', padx=2)
         self.font_size_var = tk.StringVar(value="10")
@@ -5656,132 +9075,731 @@ class SmartphoneFirmwareScrews(tk.Tk):
         font_combo.pack(side='right', padx=2)
         font_combo.bind("<<ComboboxSelected>>", self._change_font_size)
 
-        self.file_editor = scrolledtext.ScrolledText(self.file_editor_frame, wrap='word', undo=True,
+        # Line numbers toggle
+        self.line_numbers_var = tk.BooleanVar(value=False)
+        line_toggle = ttk.Button(editor_toolbar, text="Lines: OFF",
+                                 command=self._toggle_line_numbers)
+        line_toggle.pack(side='right', padx=2)
+        self.line_toggle_btn = line_toggle
+
+        # Editor with line numbers using grid for predictable layout
+        editor_container = tk.Frame(self.file_editor_frame, bg='#2D2D2D')
+        editor_container.pack(fill='both', expand=True)
+
+        # Line number frame - column 0
+        self.line_number_frame = tk.Frame(editor_container, bg='#2D2D2D', width=45)
+        self.line_number_frame.grid(row=0, column=0, sticky='ns')
+        self.line_number_frame.grid_propagate(False)
+
+        self.line_number_canvas = tk.Canvas(self.line_number_frame, width=45, bg='#2D2D2D', highlightthickness=0)
+        self.line_number_canvas.pack(side='left', fill='both', expand=True)
+        self.line_number_frame.grid_remove()  # Hidden until file opened with line numbers
+
+        # Editor frame - column 1, takes remaining space
+        editor_frame = tk.Frame(editor_container, bg='#2D2D2D')
+        editor_frame.grid(row=0, column=1, sticky='nsew')
+        editor_container.grid_columnconfigure(1, weight=1)
+        editor_container.grid_rowconfigure(0, weight=1)
+
+        self.file_editor = scrolledtext.ScrolledText(editor_frame, wrap='word', undo=True,
                                                       font=('Consolas', 10),
                                                       bg=COLORS['log_bg'], fg=COLORS['log_fg'],
                                                       state=tk.NORMAL, insertbackground=COLORS['text_primary'])
         self.file_editor.pack(fill='both', expand=True)
 
+        # Bind to redraw line numbers on scroll and resize
+        self.file_editor.bind('<Configure>', lambda e: self._after_idle_redraw())
+        self.file_editor.vbar.bind('<B1-Motion>', lambda e: self._after_idle_redraw())
+        self.file_editor.bind('<MouseWheel>', self._on_editor_scroll)
+        self.file_editor.bind('<Button-4>', self._on_editor_scroll)
+        self.file_editor.bind('<Button-5>', self._on_editor_scroll)
+        self.file_editor.bind('<KeyRelease>', lambda e: self._after_idle_redraw())
+        self.file_editor.bind('<<Modified>>', lambda e: self._after_idle_redraw())
+
         # Comprehensive syntax highlighting tags for multiple languages
-        # Keywords and control structures
-        self.file_editor.tag_config('keyword', foreground='#CC7832', font=('Consolas', 10, 'bold'))  # Orange bold
-        self.file_editor.tag_config('control', foreground='#CC7832', font=('Consolas', 10, 'italic'))  # Orange italic
-        self.file_editor.tag_config('modifier', foreground='#CC7832')  # Orange
-
-        # Data types and primitives
-        self.file_editor.tag_config('datatype', foreground='#4E7BFF', font=('Consolas', 10, 'bold'))  # Blue bold
-        self.file_editor.tag_config('primitive', foreground='#4E7BFF')  # Blue
-
-        # Literals and values
-        self.file_editor.tag_config('string', foreground='#6A8759')  # Green
-        self.file_editor.tag_config('number', foreground='#6897BB')  # Blue
-        self.file_editor.tag_config('boolean', foreground='#CC7832')  # Orange
-        self.file_editor.tag_config('null', foreground='#CC7832')  # Orange
-
-        # Identifiers and declarations
-        self.file_editor.tag_config('class', foreground='#FFC66D', font=('Consolas', 10, 'bold'))  # Yellow bold
-        self.file_editor.tag_config('interface', foreground='#FFC66D', font=('Consolas', 10, 'italic'))  # Yellow italic
-        self.file_editor.tag_config('function', foreground='#A9B7C6', font=('Consolas', 10, 'bold'))  # Light Blue bold
-        self.file_editor.tag_config('method', foreground='#A9B7C6')  # Light Blue
-        self.file_editor.tag_config('variable', foreground='#9876AA')  # Purple
-        self.file_editor.tag_config('constant', foreground='#9876AA', font=('Consolas', 10, 'bold'))  # Purple bold
-
-        # Annotations and decorators
-        self.file_editor.tag_config('annotation', foreground='#BBB529')  # Yellow-green
-        self.file_editor.tag_config('decorator', foreground='#BBB529', font=('Consolas', 10, 'italic'))  # Yellow-green italic
-
-        # Comments and documentation
-        self.file_editor.tag_config('comment', foreground='#808080', font=('Consolas', 10, 'italic'))  # Grey italic
-        self.file_editor.tag_config('docstring', foreground='#629755', font=('Consolas', 10, 'italic'))  # Green italic
-        self.file_editor.tag_config('javadoc', foreground='#629755', font=('Consolas', 10, 'bold'))  # Green bold
-
-        # Operators and symbols
-        self.file_editor.tag_config('operator', foreground='#A9B7C6')  # Light Blue
-        self.file_editor.tag_config('bracket', foreground='#A9B7C6', font=('Consolas', 10, 'bold'))  # Light Blue bold
-        self.file_editor.tag_config('punctuation', foreground='#A9B7C6')  # Light Blue
-
-        # Special Android/Smali constructs
-        self.file_editor.tag_config('directive', foreground='#FFC66D', font=('Consolas', 10, 'bold'))  # Yellow bold
-        self.file_editor.tag_config('register', foreground='#FF6B6B')  # Red
-        self.file_editor.tag_config('opcode', foreground='#FF6B6B', font=('Consolas', 10, 'bold'))  # Red bold
-
-        # XML/HTML tags (for Android manifests and layouts)
-        self.file_editor.tag_config('xml_tag', foreground='#E8BF6A')  # Gold
-        self.file_editor.tag_config('xml_attr', foreground='#BABABA')  # Light grey
-        self.file_editor.tag_config('xml_value', foreground='#6A8759')  # Green
-
-        # JSON keys and values
-        self.file_editor.tag_config('json_key', foreground='#BABABA', font=('Consolas', 10, 'bold'))  # Light grey bold
-        self.file_editor.tag_config('json_string', foreground='#6A8759')  # Green
-
-        # Error and warning highlights
-        self.file_editor.tag_config('error', background='#FF6B6B', foreground='white')  # Red background
-        self.file_editor.tag_config('warning', background='#FFEB3B', foreground='black')  # Yellow background
-
-        # Special highlighting for common patterns
-        self.file_editor.tag_config('todo', background='#FF6B6B', foreground='white', font=('Consolas', 10, 'bold'))  # Red background bold
-        self.file_editor.tag_config('fixme', background='#FF6B6B', foreground='white', font=('Consolas', 10, 'bold'))  # Red background bold
-        self.file_editor.tag_config('hack', background='#FFEB3B', foreground='black', font=('Consolas', 10, 'italic'))  # Yellow background italic
+        # Use initial font size from settings
+        initial_size = self.editor_settings.get('font_size', 10)
+        base_font = ('Consolas', initial_size)
+        self._configure_syntax_tags(base_font)
 
         self.file_editor.bind("<KeyRelease>", self._on_editor_key_release)
+        self.file_editor.bind("<Double-Button-1>", self._on_editor_double_click)
+
+        self._create_file_editor_context_menu()
+        self.file_editor.bind("<Button-3>", self._show_file_editor_context_menu)
 
         # Track current file
         self.current_file = None
         self.file_editor_base_folder = None
+        self._editor_click_count = 0
+        self._editor_last_click_pos = None
 
-    def _on_editor_key_release(self, event):
-        self._apply_syntax_highlighting()
+        # Additional editor state (from AdvancedTextEditor)
+        self.file_editor_word_wrap = False
+        self.file_editor_bookmarks = set()
+        self.file_editor_matches = []
+        self.file_editor_current_match_index = -1
+        self.file_editor_modified = False
+        self.file_editor_last_save_content = ""
+        self.bracket_pairs = {'(': ')', '[': ']', '{': '}', '"': '"', "'": "'"}
 
-    def _apply_syntax_highlighting(self):
-        # Skip syntax highlighting for large files to prevent UI freezing
-        content = self.file_editor.get('1.0', tk.END)
-        if len(content) > 1000000:  # 1MB limit for syntax highlighting
+        # Tags for search highlighting
+        self.file_editor.tag_configure('search_highlight', background='#FFFF00', foreground='#000000')
+        self.file_editor.tag_configure('current_match', background='#FFA500', foreground='#000000')
+        self.file_editor.tag_configure('bookmark_line', background='#44475A')
+        self.file_editor.tag_configure('bracket_match', background='#00FF00', foreground='#000000')
+        self.file_editor.tag_configure('current_line', background='#2D2D2D')
+
+        # Bind editor events
+        self.file_editor.bind('<Control-f>', lambda e: self._show_find_dialog())
+        self.file_editor.bind('<Control-h>', lambda e: self._show_find_replace_dialog())
+        self.file_editor.bind('<Control-g>', lambda e: self._goto_line_in_editor())
+        self.file_editor.bind('<Control-b>', lambda e: self._toggle_editor_bookmark())
+        self.file_editor.bind('<F3>', lambda e: self._find_next_in_editor())
+        self.file_editor.bind('<Shift-F3>', lambda e: self._find_prev_in_editor())
+        self.file_editor.bind('<Control-plus>', lambda e: self._zoom_editor_in())
+        self.file_editor.bind('<Control-minus>', lambda e: self._zoom_editor_out())
+        self.file_editor.bind('<Control-0>', lambda e: self._zoom_editor_reset())
+
+        # Track modification for modified indicator
+        self.file_editor.bind('<<Modified>>', self._on_editor_modified)
+
+    def _create_file_editor_context_menu(self):
+        self.file_editor_context_menu = tk.Menu(self.file_editor, tearoff=0)
+        self.file_editor_context_menu.add_command(label="Undo", command=lambda: self.file_editor.event_generate("<<Undo>>"), accelerator='Ctrl+Z')
+        self.file_editor_context_menu.add_command(label="Redo", command=lambda: self.file_editor.event_generate("<<Redo>>"), accelerator='Ctrl+Y')
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Cut", command=lambda: self.file_editor.event_generate("<<Cut>>"), accelerator='Ctrl+X')
+        self.file_editor_context_menu.add_command(label="Copy", command=lambda: self.file_editor.event_generate("<<Copy>>"), accelerator='Ctrl+C')
+        self.file_editor_context_menu.add_command(label="Paste", command=lambda: self.file_editor.event_generate("<<Paste>>"), accelerator='Ctrl+V')
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Select All", command=lambda: self.file_editor.tag_add("sel", "1.0", tk.END), accelerator='Ctrl+A')
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Find...", command=self._show_find_dialog, accelerator='Ctrl+F')
+        self.file_editor_context_menu.add_command(label="Go to Line...", command=self._goto_line_in_editor, accelerator='Ctrl+G')
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Comment Lines", command=lambda: self._comment_lines_in_editor(), accelerator='Ctrl+/')
+        self.file_editor_context_menu.add_command(label="Uncomment Lines", command=lambda: self._uncomment_lines_in_editor())
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Indent", command=lambda: self._indent_editor_selection(), accelerator='Tab')
+        self.file_editor_context_menu.add_command(label="Unindent", command=lambda: self._unindent_editor_selection(), accelerator='Shift+Tab')
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Delete Line", command=lambda: self._delete_line_in_editor(), accelerator='Ctrl+Shift+D')
+        self.file_editor_context_menu.add_command(label="Duplicate Line", command=lambda: self._duplicate_line_in_editor(), accelerator='Ctrl+D')
+        self.file_editor_context_menu.add_command(label="Join Lines", command=lambda: self._join_lines_in_editor())
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Select Word", command=self._select_word_in_editor)
+        self.file_editor_context_menu.add_command(label="Select Line", command=self._select_line_in_editor)
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Toggle Bookmark", command=self._toggle_editor_bookmark, accelerator='Ctrl+B')
+        self.file_editor_context_menu.add_command(label="Next Bookmark", command=self._next_editor_bookmark, accelerator='Alt+Down')
+        self.file_editor_context_menu.add_command(label="Previous Bookmark", command=self._prev_editor_bookmark, accelerator='Alt+Up')
+        self.file_editor_context_menu.add_command(label="Clear Bookmarks", command=self._clear_editor_bookmarks)
+        self.file_editor_context_menu.add_separator()
+        self.file_editor_context_menu.add_command(label="Find Matching Bracket", command=self._find_matching_bracket_in_editor)
+        self.file_editor_context_menu.add_separator()
+        highlight_menu = tk.Menu(self.file_editor_context_menu, tearoff=0)
+        self.file_editor_context_menu.add_cascade(label="Syntax Highlighting", menu=highlight_menu)
+        highlight_menu.add_command(label="Toggle Highlighting", command=self._toggle_syntax_highlighting, accelerator='F5')
+        highlight_menu.add_separator()
+        highlight_menu.add_command(label="Auto Detect (Recommended)", command=lambda: self._set_language_mode('auto'))
+        highlight_menu.add_command(label="Smali", command=lambda: self._set_language_mode('smali'))
+        highlight_menu.add_command(label="Java/AIDL", command=lambda: self._set_language_mode('java'))
+        highlight_menu.add_command(label="Kotlin", command=lambda: self._set_language_mode('kotlin'))
+        highlight_menu.add_command(label="Python", command=lambda: self._set_language_mode('python'))
+        highlight_menu.add_command(label="C/C++/Obj-C", command=lambda: self._set_language_mode('cpp'))
+        highlight_menu.add_command(label="JavaScript/TypeScript", command=lambda: self._set_language_mode('javascript'))
+        highlight_menu.add_command(label="HTML", command=lambda: self._set_language_mode('html'))
+        highlight_menu.add_command(label="CSS", command=lambda: self._set_language_mode('css'))
+        highlight_menu.add_command(label="XML/Android Manifest", command=lambda: self._set_language_mode('xml'))
+        highlight_menu.add_command(label="JSON", command=lambda: self._set_language_mode('json'))
+        highlight_menu.add_command(label="YAML", command=lambda: self._set_language_mode('yaml'))
+        highlight_menu.add_command(label="Shell/Bash", command=lambda: self._set_language_mode('shell'))
+        highlight_menu.add_command(label="SQL", command=lambda: self._set_language_mode('sql'))
+        highlight_menu.add_command(label="Makefile", command=lambda: self._set_language_mode('makefile'))
+        highlight_menu.add_command(label="Gradle", command=lambda: self._set_language_mode('gradle'))
+        highlight_menu.add_command(label="Android init.rc", command=lambda: self._set_language_mode('android_rc'))
+        highlight_menu.add_separator()
+        highlight_menu.add_command(label="Samsung Prop", command=lambda: self._set_language_mode('prop'))
+        highlight_menu.add_command(label="Samsung PIT", command=lambda: self._set_language_mode('pit'))
+        highlight_menu.add_command(label="Samsung Image/Modem", command=lambda: self._set_language_mode('samsung_img'))
+        highlight_menu.add_command(label="Samsung CSC", command=lambda: self._set_language_mode('samsung_csc'))
+        highlight_menu.add_command(label="Edify (updater-script)", command=lambda: self._set_language_mode('edify'))
+        highlight_menu.add_command(label="SELinux Context", command=lambda: self._set_language_mode('secontext'))
+        highlight_menu.add_command(label="SELinux Policy (.te)", command=lambda: self._set_language_mode('sepolicy'))
+        highlight_menu.add_command(label="Plain Text", command=lambda: self._set_language_mode('text'))
+
+        self.language_label.config(text="—")  # No file open
+
+    def _show_file_editor_context_menu(self, event):
+        self.file_editor_context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _toggle_line_numbers(self):
+        """Toggle line numbers on/off"""
+        self.line_numbers_var.set(not self.line_numbers_var.get())
+        if self.line_numbers_var.get():
+            self.line_toggle_btn.config(text="Lines: ON")
+            self.line_number_frame.grid()
+            self._update_line_numbers()
+        else:
+            self.line_toggle_btn.config(text="Lines: OFF")
+            self.line_number_frame.grid_remove()
+        mode = getattr(self, 'current_language_mode', 'auto')
+        code_languages = {'java', 'kotlin', 'python', 'cpp', 'xml', 'json', 'yaml', 'shell', 'makefile', 'gradle', 'javascript', 'smali'}
+        samsung_languages = {'prop', 'pit', 'secontext', 'samsung_img'}
+        if mode in code_languages:
+            self.editor_settings['line_numbers_for_code'] = self.line_numbers_var.get()
+        elif mode in samsung_languages:
+            self.editor_settings['line_numbers_for_samsung'] = self.line_numbers_var.get()
+        else:
+            self.editor_settings['line_numbers_for_text'] = self.line_numbers_var.get()
+        save_editor_settings(self.editor_settings)
+
+    def _configure_syntax_tags(self, base_font):
+        """Configure all syntax highlighting tags with consistent base font size"""
+        # base_font is a tuple like ('Consolas', 10)
+        # Each tag uses this font with optional weight/style
+        family, size = base_font[0], base_font[1]
+
+        # Keywords and control structures
+        self.file_editor.tag_config('keyword', foreground='#CC7832', font=(family, size, 'bold'))
+        self.file_editor.tag_config('control', foreground='#CC7832', font=(family, size, 'italic'))
+        self.file_editor.tag_config('modifier', foreground='#CC7832', font=(family, size))
+
+        # Data types and primitives
+        self.file_editor.tag_config('datatype', foreground='#4E7BFF', font=(family, size, 'bold'))
+        self.file_editor.tag_config('primitive', foreground='#4E7BFF', font=(family, size))
+
+        # Literals and values
+        self.file_editor.tag_config('string', foreground='#6A8759', font=(family, size))
+        self.file_editor.tag_config('number', foreground='#6897BB', font=(family, size))
+        self.file_editor.tag_config('boolean', foreground='#CC7832', font=(family, size, 'bold'))
+        self.file_editor.tag_config('null', foreground='#CC7832', font=(family, size, 'bold'))
+
+        # Identifiers and declarations
+        self.file_editor.tag_config('class', foreground='#FFC66D', font=(family, size, 'bold'))
+        self.file_editor.tag_config('interface', foreground='#FFC66D', font=(family, size, 'italic'))
+        self.file_editor.tag_config('function', foreground='#A9B7C6', font=(family, size, 'bold'))
+        self.file_editor.tag_config('method', foreground='#A9B7C6', font=(family, size))
+        self.file_editor.tag_config('variable', foreground='#9876AA', font=(family, size))
+        self.file_editor.tag_config('constant', foreground='#9876AA', font=(family, size, 'bold'))
+
+        # Annotations and decorators
+        self.file_editor.tag_config('annotation', foreground='#BBB529', font=(family, size))
+        self.file_editor.tag_config('decorator', foreground='#BBB529', font=(family, size, 'italic'))
+
+        # Comments and documentation
+        self.file_editor.tag_config('comment', foreground='#808080', font=(family, size, 'italic'))
+        self.file_editor.tag_config('docstring', foreground='#629755', font=(family, size, 'italic'))
+        self.file_editor.tag_config('javadoc', foreground='#629755', font=(family, size, 'bold'))
+
+        # Operators and symbols
+        self.file_editor.tag_config('operator', foreground='#A9B7C6', font=(family, size))
+        self.file_editor.tag_config('bracket', foreground='#A9B7C6', font=(family, size, 'bold'))
+        self.file_editor.tag_config('punctuation', foreground='#A9B7C6', font=(family, size))
+
+        # Special Android/Smali constructs
+        self.file_editor.tag_config('directive', foreground='#FFC66D', font=(family, size, 'bold'))
+        self.file_editor.tag_config('register', foreground='#FF6B6B', font=(family, size))
+        self.file_editor.tag_config('opcode', foreground='#FF6B6B', font=(family, size, 'bold'))
+
+        # XML/HTML tags
+        self.file_editor.tag_config('xml_tag', foreground='#E8BF6A', font=(family, size))
+        self.file_editor.tag_config('xml_attr', foreground='#BABABA', font=(family, size))
+        self.file_editor.tag_config('xml_value', foreground='#6A8759', font=(family, size))
+
+        # JSON keys and values
+        self.file_editor.tag_config('json_key', foreground='#BABABA', font=(family, size, 'bold'))
+        self.file_editor.tag_config('json_string', foreground='#6A8759', font=(family, size))
+
+        # Samsung firmware file types
+        self.file_editor.tag_config('samsung_keyword', foreground='#CC7832', font=(family, size, 'bold'))
+        self.file_editor.tag_config('samsung_section', foreground='#FFC66D', font=(family, size, 'bold'))
+        self.file_editor.tag_config('samsung_value', foreground='#6A8759', font=(family, size))
+        self.file_editor.tag_config('samsung_partition', foreground='#8BE9FD', font=(family, size))
+        self.file_editor.tag_config('edify_keyword', foreground='#CC7832', font=(family, size, 'bold'))
+        self.file_editor.tag_config('edify_function', foreground='#50FA7B', font=(family, size))
+        self.file_editor.tag_config('edify_string', foreground='#F1FA8C', font=(family, size))
+        self.file_editor.tag_config('selinux_type', foreground='#8BE9FD', font=(family, size, 'bold'))
+        self.file_editor.tag_config('selinux_role', foreground='#BD93F9', font=(family, size))
+        self.file_editor.tag_config('selinux_user', foreground='#FFB86C', font=(family, size))
+        self.file_editor.tag_config('selinux_path', foreground='#50FA7B', font=(family, size))
+        self.file_editor.tag_config('selinux_context', foreground='#F1FA8C', font=(family, size))
+        self.file_editor.tag_config('hex_region', foreground='#FF79C6', font=(family, size, 'bold'))
+        self.file_editor.tag_config('fs_config_key', foreground='#FFC66D', font=(family, size, 'bold'))
+
+        # Error and warning highlights
+        self.file_editor.tag_config('error', background='#FF6B6B', foreground='white', font=(family, size, 'bold'))
+        self.file_editor.tag_config('warning', background='#FFEB3B', foreground='black', font=(family, size, 'bold'))
+
+        # Special highlighting for common patterns
+        self.file_editor.tag_config('todo', background='#FF6B6B', foreground='white', font=(family, size, 'bold'))
+        self.file_editor.tag_config('fixme', background='#FF6B6B', foreground='white', font=(family, size, 'bold'))
+        self.file_editor.tag_config('hack', background='#FFEB3B', foreground='black', font=(family, size, 'italic'))
+
+    def _update_line_numbers(self, event=None):
+        """Update the line number gutter - wrap-aware, visible-only for performance"""
+        if not self.line_numbers_var.get():
             return
+        self.line_number_canvas.delete('all')
+        self.line_number_canvas.config(bg='#2D2D2D')
+        font = ('Consolas', self.editor_settings.get('font_size', 10))
+        line_height = font[1] + 3
+        bookmarks = getattr(self, 'file_editor_bookmarks', set())
 
-        # Clear all existing tags
+        # Get total logical lines
+        total_lines = int(self.file_editor.index('end').split('.')[0]) - 1
+        if total_lines < 1:
+            total_lines = 1
+
+        # Get canvas height for visible range
+        canvas_height = self.line_number_canvas.winfo_height()
+        if canvas_height < 1:
+            canvas_height = 400
+
+        # Iterate over all lines, but only draw those visible
+        for line_num in range(1, total_lines + 1):
+            dline = self.file_editor.dlineinfo(f'{line_num}.0')
+            if dline is None:
+                continue
+
+            y_pixel = dline[1]  # Y coordinate of line top
+
+            # Only draw if within visible canvas area (with small margin)
+            if y_pixel < -line_height or y_pixel > canvas_height + line_height:
+                continue
+
+            fill = '#FF79C6' if line_num in bookmarks else '#6272A4'
+            self.line_number_canvas.create_text(38, y_pixel, text=str(line_num), anchor='ne',
+                                               fill=fill, font=font)
+
+        # Set scrollregion to cover all content area
+        self.line_number_canvas.config(scrollregion=(0, 0, 45, max(canvas_height, 100)))
+
+    def _after_idle_redraw(self):
+        """Schedule line number redraw when idle to avoid lag"""
+        if hasattr(self, '_redraw_after_id'):
+            try:
+                self.after_cancel(self._redraw_after_id)
+            except Exception:
+                pass
+        self._redraw_after_id = self.after_idle(self._update_line_numbers)
+
+    def _sync_line_numbers_scroll(self):
+        """Sync line number canvas scroll position with editor"""
+        try:
+            if not self.line_numbers_var.get():
+                return
+            # Redraw line numbers based on current visible area
+            self._update_line_numbers()
+        except Exception:
+            pass
+
+    def _on_editor_scroll(self, event):
+        """Handle scroll event to sync line numbers"""
+        if event.delta:
+            self.file_editor.yview_scroll(-1 * (event.delta // 120), 'units')
+        elif hasattr(event, 'num'):
+            if event.num == 4:
+                self.file_editor.yview_scroll(-3, 'units')
+            elif event.num == 5:
+                self.file_editor.yview_scroll(3, 'units')
+        self._sync_line_numbers_scroll()
+        return 'break'
+
+    def _on_editor_double_click(self, event):
+        """Triple-state selection on double-click: word -> identifier -> line"""
+        pos = self.file_editor.index(tk.INSERT)
+        click_pos = self.file_editor.index(f"@{event.x},{event.y}")
+
+        if self._editor_last_click_pos != click_pos:
+            self._editor_click_count = 0
+
+        self._editor_last_click_pos = click_pos
+        self._editor_click_count += 1
+
+        line, col = click_pos.split('.')
+        col = int(col)
+        line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend")
+
+        if self._editor_click_count == 1:
+            self._select_word_at_cursor(line, col)
+        elif self._editor_click_count == 2:
+            self._select_identifier_block(line, col)
+        elif self._editor_click_count >= 3:
+            self._select_full_line(int(line))
+            self._editor_click_count = 0
+
+        return 'break'
+
+    def _select_word_at_cursor(self, line: str, col: int):
+        """Select the word at the given position"""
+        line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend")
+        word_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+        start = col
+        end = col
+        while start > 0 and line_content[start - 1] in word_chars:
+            start -= 1
+        while end < len(line_content) and line_content[end] in word_chars:
+            end += 1
+        if start != end:
+            self.file_editor.tag_remove("sel", "1.0", tk.END)
+            self.file_editor.tag_add("sel", f"{line}.{start}", f"{line}.{end}")
+
+    def _select_identifier_block(self, line: str, col: int):
+        """Select the full identifier block (e.g., javax.crypto.Cipher)"""
+        line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend")
+        word_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.')
+        if col >= len(line_content) or line_content[col] not in word_chars:
+            if col > 0:
+                col -= 1
+        start = col
+        end = col
+        while start > 0 and line_content[start - 1] in word_chars:
+            start -= 1
+        while end < len(line_content) and line_content[end] in word_chars:
+            end += 1
+        if start < end:
+            self.file_editor.tag_remove("sel", "1.0", tk.END)
+            self.file_editor.tag_add("sel", f"{line}.{start}", f"{line}.{end}")
+
+    def _select_full_line(self, line: int):
+        """Select the entire line"""
+        line_end = self.file_editor.index(f"{line}.0 lineend+1c")
+        self.file_editor.tag_remove("sel", "1.0", tk.END)
+        self.file_editor.tag_add("sel", f"{line}.0", line_end)
+
+    def _toggle_syntax_highlighting(self):
+        self.syntax_highlight_var.set(not self.syntax_highlight_var.get())
+        if self.syntax_highlight_var.get():
+            self._apply_syntax_highlighting()
+            self.syntax_toggle_btn.config(text="Highlight: ON")
+        else:
+            self._clear_all_highlighting()
+            self.syntax_toggle_btn.config(text="Highlight: OFF")
+        self.editor_settings['syntax_highlighting'] = self.syntax_highlight_var.get()
+        save_editor_settings(self.editor_settings)
+
+    def _set_language_mode(self, mode):
+        self.current_language_mode = mode
+        self.editor_settings['last_language_mode'] = mode
+        lang_names = {
+            'auto': 'Auto Detect', 'smali': 'Smali', 'java': 'Java', 'kotlin': 'Kotlin',
+            'python': 'Python', 'cpp': 'C/C++', 'xml': 'XML', 'json': 'JSON', 'yaml': 'YAML',
+            'shell': 'Shell', 'makefile': 'Makefile', 'prop': 'Samsung Prop', 'pit': 'Samsung PIT',
+            'secontext': 'SELinux Context', 'text': 'Plain Text', 'html': 'HTML', 'css': 'CSS',
+            'javascript': 'JavaScript', 'sql': 'SQL', 'gradle': 'Gradle',
+            'android_manifest': 'Android Manifest', 'android_rc': 'Android init.rc',
+            'samsung_img': 'Samsung Image', 'samsung_csc': 'Samsung CSC',
+            'sepolicy': 'SELinux Policy', 'selinux': 'SELinux',
+            'edify': 'Edify Script'
+        }
+        self.language_label.config(text=lang_names.get(mode, 'Unknown'))
+        save_editor_settings(self.editor_settings)
+        if self.syntax_highlight_var.get():
+            self._apply_syntax_highlighting()
+
+    def _clear_all_highlighting(self):
         for tag in self.file_editor.tag_names():
-            if tag != 'sel':  # Don't remove selection tag
+            if tag != 'sel':
                 self.file_editor.tag_remove(tag, '1.0', tk.END)
 
-        # Determine file type from content for better highlighting
-        file_ext = self._detect_file_type(content)
+    def _highlight_current_line_editor(self):
+        self.file_editor.tag_remove("current_line", "1.0", tk.END)
+        cursor = self.file_editor.index(tk.INSERT)
+        line = cursor.split('.')[0]
+        self.file_editor.tag_add("current_line", f"{line}.0", f"{line}.0 lineend+1c")
 
-        if file_ext == 'smali':
-            self._highlight_smali(content)
-        elif file_ext == 'java':
-            self._highlight_java(content)
-        elif file_ext == 'xml':
-            self._highlight_xml(content)
-        elif file_ext == 'json':
-            self._highlight_json(content)
-        else:
-            self._highlight_generic(content)
+    def _on_editor_key_release(self, event):
+        self._highlight_current_line_editor()
+        if self.syntax_highlight_var.get():
+            self._apply_syntax_highlighting()
 
-    def _detect_file_type(self, content: str) -> str:
-        """Detect file type based on content patterns"""
-        lines = content.split('\n')[:10]  # Check first 10 lines
+    def _detect_language_from_filename(self, filename: str) -> str:
+        """Detect language/file type from filename"""
+        if not filename:
+            return 'text'
+        filename_lower = filename.lower()
+        basename = os.path.basename(filename_lower)
+
+        # Samsung firmware files
+        if basename.endswith('.prop') or 'build.prop' in basename or 'system.prop' in basename:
+            return 'prop'
+        if basename.endswith('.pit') or 'partition' in basename:
+            return 'pit'
+        if 'file_contexts' in basename or basename.endswith('.fc'):
+            return 'secontext'
+        if basename.endswith('.rfs') or basename.endswith('.img') or '.md5' in basename:
+            return 'samsung_img'
+        if basename.endswith('.dat'):
+            return 'binary'
+
+        # Standard extensions
+        ext = '.' + basename.split('.')[-1] if '.' in basename else ''
+
+        # Source code files
+        if ext in ['.java', '.aidl']:
+            return 'java'
+        if ext in ['.kt', '.kts']:
+            return 'kotlin'
+        if ext in ['.smali']:
+            return 'smali'
+        if ext in ['.py', '.pyw']:
+            return 'python'
+        if ext in ['.c', '.h', '.cpp', '.hpp', '.cc', '.cxx', '.m', '.mm']:
+            return 'cpp'
+        if ext in ['.xml', '.axml', '.xaml']:
+            return 'xml'
+        if ext in ['.json']:
+            return 'json'
+        if ext in ['.yaml', '.yml']:
+            return 'yaml'
+        if ext in ['.sh', '.bash', '.zsh']:
+            return 'shell'
+        if 'makefile' in basename or basename == 'makefile' or basename.endswith('.mk'):
+            return 'makefile'
+        if ext in ['.gradle']:
+            return 'gradle'
+        if ext in ['.pro', '.properties']:
+            return 'prop'
+        if ext in ['.html', '.htm']:
+            return 'html'
+        if ext in ['.css', '.scss', '.sass', '.less']:
+            return 'css'
+        if ext in ['.js', '.mjs', '.jsx', '.ts', '.tsx']:
+            return 'javascript'
+        if ext in ['.sql']:
+            return 'sql'
+        if ext in ['.log', '.txt', '.cfg', '.conf', '.ini']:
+            return 'text'
+
+        # Android-specific files
+        if basename in ['androidmanifest.xml'] or 'androidmanifest' in basename:
+            return 'android_manifest'
+        if basename in ['.aidl']:
+            return 'java'
+        if ext in ['.arsc', '.dex', '.odex', '.vdex']:
+            return 'binary'
+        if ext in ['.arsc']:
+            return 'text'
+        if basename.startswith('arsc') or basename == 'resources.arsc':
+            return 'xml'
+
+        # Samsung firmware files
+        if basename in ['updater-script', 'updater-script.sh', 'updater.sh']:
+            return 'edify'
+        if ext in ['.edify', '.sh']:
+            return 'edify'
+        if basename in ['sepolicy', 'sepolicy.conf']:
+            return 'sepolicy'
+        if ext in ['.te', '.if', '.fc']:
+            return 'selinux'
+        if 'sepolicy' in basename or basename.endswith('.te'):
+            return 'sepolicy'
+        if 'property_contexts' in basename or 'service_contexts' in basename:
+            return 'secontext'
+        if basename in ['file_contexts', 'file_contexts.bin']:
+            return 'secontext'
+        if basename == 'genfs_contexts' or 'genfs_contexts' in basename:
+            return 'secontext'
+        if basename.endswith('.rfs') or basename == 'modem.img' or '.img' in basename:
+            return 'samsung_img'
+        if basename.endswith('.pit') or 'partition' in basename:
+            return 'pit'
+        if basename.endswith('.lfs') or 'csc' in basename.lower():
+            return 'samsung_csc'
+        if basename.endswith('.md5') or basename.endswith('.md5sum'):
+            return 'samsung_img'
+        if basename.endswith('.dat') or basename.endswith('.efs'):
+            return 'samsung_img'
+        if basename == 'param.bin' or basename.endswith('.bin') and 'param' in basename:
+            return 'samsung_img'
+        if basename == 'cscfeature.xml' or 'cscfeature' in basename:
+            return 'xml'
+        if basename in ['boot.img', 'recovery.img', 'system.img', 'vendor.img']:
+            return 'samsung_img'
+
+        # Android ROM files
+        if basename.endswith('.dex'):
+            return 'text'
+        if basename in ['init.rc', 'init.goldfish.rc', 'ueventd.rc'] or basename.endswith('.rc'):
+            return 'android_rc'
+        if basename in ['vold.fstab', 'fstab.goldfish']:
+            return 'android_fstab'
+        if basename in ['seapp_contexts', 'mac_permissions.xml']:
+            return 'xml'
+
+        # Build files
+        if basename in ['build.gradle', 'build.gradle.kts', 'settings.gradle']:
+            return 'gradle'
+        if basename in ['local.properties', 'gradle.properties']:
+            return 'prop'
+        if basename.endswith('.config') or basename in ['BoardConfig.mk', 'device.mk']:
+            return 'makefile'
+        if basename in ['cm.dependencies', 'proprietary-blobs.txt']:
+            return 'text'
+
+        # Recovery and boot files
+        if basename in ['default.prop', 'prop.default']:
+            return 'prop'
+        if basename.endswith('.rc') and 'init' in basename:
+            return 'android_rc'
+        if basename in ['meta_init.rc', 'init.environ.rc']:
+            return 'android_rc'
+
+        # Content-based detection as fallback
+        try:
+            with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(4096)
+            return self._detect_language_from_content(content)
+        except Exception:
+            pass
+
+        return 'text'
+
+    def _detect_language_from_content(self, content: str) -> str:
+        """Detect language based on content patterns"""
+        if not content:
+            return 'text'
+
+        lines = content.split('\n')[:20]
 
         # Smali detection
-        if any('.class' in line or '.method' in line or '.field' in line for line in lines):
-            return 'smali'
+        if any('.class' in line or '.method' in line or '.field' in line or '.annotation' in line for line in lines):
+            if any('.end method' in line or '.end class' in line for line in lines):
+                return 'smali'
+
+        # Java detection
+        if any('public class' in line or 'private class' in line or 'package ' in line or 'import ' in line for line in lines):
+            if any('extends ' in line or 'implements ' in line for line in lines):
+                return 'java'
+
+        # Kotlin detection
+        if any('fun ' in line and '=' in line for line in lines):
+            if any('val ' in line or 'var ' in line for line in lines):
+                return 'kotlin'
+
+        # Python detection
+        if any('def ' in line and ':' in line for line in lines):
+            if any('import ' in line or 'from ' in line for line in lines):
+                return 'python'
+        if any(line.strip().startswith('#!') for line in lines):
+            return 'python'
+
+        # C/C++ detection
+        if any('#include' in line or '#define' in line for line in lines):
+            if any('.h' in line or '.hpp' in line or '.cpp' in line for line in lines):
+                return 'cpp'
+        if any('std::' in line or 'cout <<' in line or 'cin >>' in line for line in lines):
+            return 'cpp'
 
         # XML detection
         if content.strip().startswith('<?xml') or content.strip().startswith('<'):
-            return 'xml'
+            if '</' in content:
+                return 'xml'
 
         # JSON detection
         if content.strip().startswith('{') or content.strip().startswith('['):
-            try:
-                json.loads(content)
+            if ':' in content and ',' in content:
                 return 'json'
-            except:
-                pass
 
-        # Java detection (basic)
-        if any('public class' in line or 'package ' in line or 'import ' in line for line in lines):
-            return 'java'
+        # YAML detection
+        if any(':' in line and not line.strip().startswith('#') for line in lines):
+            if any(line.startswith(' ') or line.startswith('\t') or ': ' in line for line in lines[:5]):
+                if not any('{' in line or '}' in line for line in lines[:5]):
+                    return 'yaml'
 
-        return 'generic'
+        # Shell detection
+        if any(line.strip().startswith('#!/bin/bash') or line.strip().startswith('#!/bin/sh') for line in lines):
+            return 'shell'
+        if any('$' in line and ('echo ' in line or 'if [' in line or 'for ' in line) for line in lines):
+            return 'shell'
+
+        # Samsung prop file detection
+        if all('=' in line and not line.strip().startswith('#') for line in lines[:10] if line.strip()):
+            non_empty = [l for l in lines[:10] if l.strip()]
+            if len(non_empty) > 3 and all('=' in l for l in non_empty):
+                return 'prop'
+
+        # SELinux context file detection
+        if any('/' in line and 'u:object_r:' in line for line in lines):
+            return 'secontext'
+
+        return 'text'
+
+    def _apply_syntax_highlighting(self):
+        if not self.syntax_highlight_var.get():
+            return
+        content = self.file_editor.get('1.0', tk.END)
+        if len(content) > 1000000:
+            return
+
+        for tag in self.file_editor.tag_names():
+            if tag != 'sel':
+                self.file_editor.tag_remove(tag, '1.0', tk.END)
+
+        mode = getattr(self, 'current_language_mode', 'auto')
+        if mode == 'auto':
+            mode = self._detect_language_from_filename(self.current_file) if self.current_file else 'text'
+
+        if mode == 'smali':
+            self._highlight_smali(content)
+        elif mode == 'java':
+            self._highlight_java(content)
+        elif mode == 'kotlin':
+            self._highlight_kotlin(content)
+        elif mode == 'python':
+            self._highlight_python(content)
+        elif mode == 'cpp':
+            self._highlight_cpp(content)
+        elif mode in ('xml', 'android_manifest', 'html'):
+            self._highlight_xml(content)
+        elif mode == 'json':
+            self._highlight_json(content)
+        elif mode == 'yaml':
+            self._highlight_yaml(content)
+        elif mode == 'shell':
+            self._highlight_shell(content)
+        elif mode == 'makefile':
+            self._highlight_makefile(content)
+        elif mode in ('prop', 'gradle'):
+            self._highlight_prop(content)
+        elif mode == 'pit':
+            self._highlight_pit(content)
+        elif mode in ('secontext', 'selinux'):
+            self._highlight_secontext(content)
+        elif mode == 'sepolicy':
+            self._highlight_sepolicy(content)
+        elif mode == 'edify':
+            self._highlight_edify(content)
+        elif mode == 'android_rc':
+            self._highlight_android_rc(content)
+        elif mode == 'samsung_img':
+            self._highlight_samsung_img(content)
+        elif mode == 'samsung_csc':
+            self._highlight_samsung_csc(content)
+        elif mode == 'javascript':
+            self._highlight_javascript(content)
+        elif mode == 'css':
+            self._highlight_css(content)
+        elif mode == 'sql':
+            self._highlight_sql(content)
+        else:
+            self._highlight_generic(content)
+
+        self._highlight_common_patterns(content)
+
+    def _highlight_common_patterns(self, content: str):
+        """Apply common patterns like URLs and email addresses using SyntaxHighlighter patterns"""
+        patterns = self.syntax_highlighter.get_patterns('common')
+        for tag, pattern_list in patterns.items():
+            for pattern in pattern_list:
+                try:
+                    for match in re.finditer(pattern, content):
+                        start, end = match.span()
+                        self.file_editor.tag_add(tag, f"1.0+{start}c", f"1.0+{end}c")
+                except re.error:
+                    pass
 
     def _highlight_smali(self, content: str):
         """Highlight Smali assembly code"""
@@ -6007,18 +10025,661 @@ class SmartphoneFirmwareScrews(tk.Tk):
             start, end = match.span()
             self.file_editor.tag_add('operator', f"1.0+{start}c", f"1.0+{end}c")
 
+    def _highlight_python(self, content: str):
+        """Highlight Python source code"""
+        # Keywords
+        keywords = ['and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
+                   'def', 'del', 'elif', 'else', 'except', 'False', 'finally', 'for',
+                   'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'None',
+                   'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'True', 'try',
+                   'while', 'with', 'yield']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Built-in functions
+        builtins = ['abs', 'all', 'any', 'bin', 'bool', 'bytes', 'callable', 'chr', 'dict',
+                   'dir', 'divmod', 'enumerate', 'eval', 'exec', 'filter', 'float', 'format',
+                   'frozenset', 'getattr', 'hasattr', 'hash', 'hex', 'id', 'input', 'int',
+                   'isinstance', 'issubclass', 'iter', 'len', 'list', 'map', 'max', 'min',
+                   'next', 'object', 'oct', 'open', 'ord', 'pow', 'print', 'property',
+                   'range', 'repr', 'reversed', 'round', 'set', 'setattr', 'slice', 'sorted',
+                   'staticmethod', 'str', 'sum', 'super', 'tuple', 'type', 'vars', 'zip']
+        for name in builtins:
+            for match in re.finditer(r'\b' + name + r'(?=\s*\()', content):
+                start, end = match.span()
+                self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Decorators
+        for match in re.finditer(r'@\w+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('decorator', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Docstrings and multiline strings
+        for match in re.finditer(r'"""\s*[\s\S]*?"""|\'\'\'\s*[\s\S]*?\'\'\'', content):
+            start, end = match.span()
+            self.file_editor.tag_add('docstring', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings
+        for match in re.finditer(r'f"[^"]*"|f\'[^\']*\'|r"[^"]*"|r\'[^\']*\'|"[^"]*"|\'[^\']*\'', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b0[xX][0-9a-fA-F]+\b|\b0[oO][0-7]+\b|\b0[bB][01]+\b|\b\d+(\.\d+)?\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Class names (PascalCase)
+        for match in re.finditer(r'\b[A-Z][a-zA-Z0-9_]+\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('class', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Function definitions
+        for match in re.finditer(r'\bdef\s+(\w+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Operators
+        for match in re.finditer(r'[+\-*/%=<>!&|^~@:]', content):
+            start, end = match.span()
+            self.file_editor.tag_add('operator', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_kotlin(self, content: str):
+        """Highlight Kotlin source code"""
+        # Keywords
+        keywords = ['as', 'break', 'class', 'continue', 'do', 'else', 'false', 'for',
+                   'fun', 'if', 'in', 'interface', 'is', 'null', 'object', 'package',
+                   'return', 'super', 'this', 'throw', 'true', 'try', 'typealias',
+                   'typeof', 'val', 'var', 'when', 'while', 'by', 'catch', 'constructor',
+                   'delegate', 'dynamic', 'field', 'file', 'finally', 'get', 'import',
+                   'init', 'param', 'property', 'receiver', 'set', 'setparam', 'where',
+                   'actual', 'abstract', 'annotation', 'companion', 'const', 'crossinline',
+                   'data', 'enum', 'expect', 'external', 'final', 'infix', 'inline',
+                   'inner', 'internal', 'lateinit', 'noinline', 'open', 'operator', 'out',
+                   'override', 'private', 'protected', 'public', 'reified', 'sealed',
+                   'suspend', 'tailrec', 'vararg']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Built-in types
+        types = ['Any', 'Boolean', 'Byte', 'Char', 'Double', 'Float', 'Int', 'Long',
+                'Nothing', 'Short', 'String', 'Unit']
+        for t in types:
+            for match in re.finditer(r'\b' + t + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('datatype', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Annotations
+        for match in re.finditer(r'@\w+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('annotation', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'//.*|/\*[\s\S]*?\*/', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings with string templates
+        for match in re.finditer(r'"""[\s\S]*?"""|"[^"\\]*(?:\\.[^"\\]*)*"|\'[^\']*\'', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b0[xX][0-9a-fA-F_]+[lL]?\b|\b0[bB][01_]+[lL]?\b|\b\d[\d_]*(\.[\d_]+)?[fFlL]?\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Function definitions
+        for match in re.finditer(r'\bfun\s+(\w+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Class names
+        for match in re.finditer(r'\bclass\s+(\w+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('class', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_cpp(self, content: str):
+        """Highlight C/C++ source code"""
+        # Keywords
+        keywords = ['alignas', 'alignof', 'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor',
+                   'bool', 'break', 'case', 'catch', 'char', 'char8_t', 'char16_t', 'char32_t',
+                   'class', 'compl', 'concept', 'const', 'consteval', 'constexpr', 'constinit',
+                   'const_cast', 'continue', 'co_await', 'co_return', 'co_yield', 'decltype',
+                   'default', 'delete', 'do', 'double', 'dynamic_cast', 'else', 'enum',
+                   'explicit', 'export', 'extern', 'false', 'float', 'for', 'friend', 'goto',
+                   'if', 'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept',
+                   'not', 'not_eq', 'nullptr', 'operator', 'or', 'or_eq', 'private',
+                   'protected', 'public', 'register', 'reinterpret_cast', 'requires', 'return',
+                   'short', 'signed', 'sizeof', 'static', 'static_assert', 'static_cast',
+                   'struct', 'switch', 'template', 'this', 'thread_local', 'throw', 'true',
+                   'try', 'typedef', 'typeid', 'typename', 'union', 'unsigned', 'using',
+                   'virtual', 'void', 'volatile', 'wchar_t', 'while', 'xor', 'xor_eq',
+                   # C++ specific
+                   'override', 'final', 'nullptr', 'constexpr', 'decltype', 'auto',
+                   'typename', 'namespace', 'class', 'public', 'private', 'protected',
+                   'virtual', 'override', 'final', 'friend', 'explicit', 'inline', 'static']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Preprocessor directives
+        for match in re.finditer(r'#\w+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('directive', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Standard library types
+        types = ['string', 'vector', 'map', 'set', 'list', 'deque', 'array', 'tuple',
+                'pair', 'unique_ptr', 'shared_ptr', 'weak_ptr', 'optional', 'variant',
+                'any', 'span', 'string_view', 'cout', 'cin', 'cerr', 'clog',
+                'std', 'ios', 'iostream', 'fstream', 'sstream', 'vector', 'algorithm']
+        for t in types:
+            for match in re.finditer(r'\bstd::|::' + t + r'\b|\b' + t + r'(?=\s*<)', content):
+                start, end = match.span()
+                self.file_editor.tag_add('datatype', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'//.*|/\*[\s\S]*?\*/', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings
+        for match in re.finditer(r'R"[^"]*"|"[^"\\]*(?:\\.[^"\\]*)*"|\'[^\'\\]*(?:\\.[^\'\\]*)*\'', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b0[xX][0-9a-fA-F]+[uUlL]*\b|\b0[0-7]+[uUlL]*\b|\b\d+\.?\d*[fFlL]?\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Function names
+        for match in re.finditer(r'\b\w+(?=\s*\()', content):
+            start, end = match.span()
+            self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Class names (PascalCase)
+        for match in re.finditer(r'\b[A-Z][a-zA-Z0-9_]*\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('class', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Macros
+        for match in re.finditer(r'\b[A-Z_][A-Z0-9_]*\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('constant', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_shell(self, content: str):
+        """Highlight Shell/Bash scripts"""
+        # Keywords and built-ins
+        keywords = ['if', 'then', 'else', 'elif', 'fi', 'case', 'esac', 'for', 'while',
+                   'until', 'do', 'done', 'in', 'function', 'select', 'time', 'coproc',
+                   'return', 'exit', 'break', 'continue', 'shift', 'trap', 'eval', 'exec',
+                   'export', 'readonly', 'local', 'declare', 'typeset', 'unset', 'shift',
+                   'source', 'alias', 'unalias', 'cd', 'pwd', 'echo', 'printf', 'read',
+                   'test', 'true', 'false']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings
+        for match in re.finditer(r'"[^"]*"|\'[^\']*\'', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Variables
+        for match in re.finditer(r'\$\{?\w+\}?|\$\d+|\$#|\$\*|\$@|\$\?|\$\$', content):
+            start, end = match.span()
+            self.file_editor.tag_add('variable', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b\d+\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Shebang
+        for match in re.finditer(r'^#!.*', content, re.MULTILINE):
+            start, end = match.span()
+            self.file_editor.tag_add('directive', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_yaml(self, content: str):
+        """Highlight YAML configuration"""
+        # Keys (before colon)
+        for match in re.finditer(r'^(\s*)([\w\-]+)(:)', content, re.MULTILINE):
+            start = match.start(2)
+            end = match.end(2)
+            self.file_editor.tag_add('json_key', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Document markers
+        for match in re.finditer(r'^---|^\\.\\.\\.', content, re.MULTILINE):
+            start, end = match.span()
+            self.file_editor.tag_add('directive', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings
+        for match in re.finditer(r'"[^"]*"|\'[^\']*\'', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Booleans and null
+        for match in re.finditer(r'\b(true|false|yes|no|on|off|null|~)\b', content, re.IGNORECASE):
+            start, end = match.span()
+            self.file_editor.tag_add('boolean', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b-?\d+(\.\d+)?([eE][+-]?\d+)?\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Anchors and aliases
+        for match in re.finditer(r'[&*]\w+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('annotation', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_makefile(self, content: str):
+        """Highlight Makefiles"""
+        # Targets
+        for match in re.finditer(r'^(\S+)(?=\s*:)', content, re.MULTILINE):
+            start, end = match.span(1)
+            self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Variables
+        for match in re.finditer(r'\$\{?\w+\}?|\$\(\w+\)', content):
+            start, end = match.span()
+            self.file_editor.tag_add('variable', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Make keywords
+        keywords = ['ifeq', 'ifneq', 'ifdef', 'ifndef', 'else', 'endif', 'include',
+                   'define', 'endef', 'undefine', 'override', 'export', 'private']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings
+        for match in re.finditer(r'"[^"]*"', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Built-in variables
+        builtins = ['CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'LDLIBS',
+                   'MAKE', 'MAKEFLAGS', 'MAKECMDGOALS', 'VPATH', 'SHELL', 'PATH']
+        for var in builtins:
+            for match in re.finditer(r'\b' + var + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('constant', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_prop(self, content: str):
+        """Highlight Samsung/Android .prop files"""
+        # Keys (before =)
+        for match in re.finditer(r'^([^=#\s]+)(=)', content, re.MULTILINE):
+            start, end = match.span(1)
+            self.file_editor.tag_add('json_key', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings (values with quotes)
+        for match in re.finditer(r'"[^"]*"', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers and paths
+        for match in re.finditer(r'\b\d+(\.\d+)*(\.\d+)*\b|/\S+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Booleans
+        for match in re.finditer(r'\b(true|false|yes|no)\b', content, re.IGNORECASE):
+            start, end = match.span()
+            self.file_editor.tag_add('boolean', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_pit(self, content: str):
+        """Highlight Samsung PIT partition files"""
+        # Section headers
+        for match in re.finditer(r'^\[([^\]]+)\]', content, re.MULTILINE):
+            start, end = match.span(1)
+            self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Keys
+        for match in re.finditer(r'^(\w+)(:)', content, re.MULTILINE):
+            start, end = match.span(1)
+            self.file_editor.tag_add('json_key', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b0x[0-9a-fA-F]+\b|\b\d+\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Hex values
+        for match in re.finditer(r'[0-9a-fA-F]{8}', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*|//.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_secontext(self, content: str):
+        """Highlight SELinux file_contexts files"""
+        # Context entries (u:object_r:...)
+        for match in re.finditer(r'(^[^#\n]+)', content, re.MULTILINE):
+            start, end = match.span(1)
+            self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # User roles
+        for match in re.finditer(r'\bu:\w+:', content):
+            start, end = match.span()
+            self.file_editor.tag_add('datatype', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Object classes
+        for match in re.finditer(r':\w+_t:', content):
+            start, end = match.span()
+            self.file_editor.tag_add('class', f"1.0+{start}c", f"1.0+{end}c")
+
+        # File types
+        for match in re.finditer(r':\w+(?:\s|$)', content):
+            start, end = match.span()
+            self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Paths (after parenthesis)
+        for match in re.finditer(r'\(/[^)]+\)', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_samsung_img(self, content: str):
+        """Highlight Samsung firmware image metadata files"""
+        # MD5 checksums
+        for match in re.finditer(r'\b[0-9a-fA-F]{32}\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('constant', f"1.0+{start}c", f"1.0+{end}c")
+
+        # File paths
+        for match in re.finditer(r'/[a-zA-Z0-9_/\-\.]+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Partition names
+        for match in re.finditer(r'(system|userdata|cache|boot|recovery|modem|kernel)(\.img)?', content, re.IGNORECASE):
+            start, end = match.span()
+            self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # File sizes
+        for match in re.finditer(r'\d+\s*(bytes?|kb|mb|gb|tb)', content, re.IGNORECASE):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_sepolicy(self, content: str):
+        """Highlight SELinux policy (.te) files"""
+        # Keywords
+        keywords = ['type', 'attribute', 'role', 'allow', 'dontaudit', 'deny', 'neverallow',
+                   'typeattribute', 'typealias', 'typebounds', 'typechange', 'typemember',
+                   'permissive', 'enforce', 'bool', 'tunable', 'rangelist', 'category',
+                   'sensitivity', 'level', 'mlsconstrain', 'validatetrans', 'validate',
+                   'common', 'class', 'classcommon', 'classorder', 'sid', 'fs_use',
+                   'genfscon', 'fscon', 'portcon', 'netifcon', 'nodecon', 'ibpkeycon',
+                   'ibendportcon', 'pirqcon', 'iomemcon', 'ioportcon', 'pcidevicecon',
+                   'devicetreecon', 'context', 'file_contexts', 'service_contexts']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Types (ending with _t)
+        for match in re.finditer(r'\b\w+_t\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('selinux_type', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Attributes
+        for match in re.finditer(r'attribute\s+(\w+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('class', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Roles
+        for match in re.finditer(r'\brole\s+(\w+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('selinux_role', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Permissions in { }
+        for match in re.finditer(r'\{([^}]*)\}', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_edify(self, content: str):
+        """Highlight Edify scripts (updater-script)"""
+        # Edify keywords
+        keywords = ['if', 'else', 'endif', 'then', 'assert', 'abort', 'show_progress',
+                   'set_progress', 'ui_print', 'package_extract_dir', 'package_extract_file',
+                   'delete', 'delete_recursive', 'symlink', 'mount', 'unmount', 'format',
+                   'run_program', 'set_perm', 'set_perm_recursive', 'write_raw_image',
+                   'getprop', 'file_getprop', 'apply_patch', 'apply_patch_check',
+                   'apply_patch_space', 'sha1_check', 'is_substring', 'less_than_int',
+                   'greater_than_int', 'concat', 'file_exists', 'read_file', 'write_file',
+                   'append_file', 'block_image_update', 'range_sha1', 'wipe_cache',
+                   'cache_recovery', 'add_lifestyle', 'set_lifestyle', 'set_booting']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('edify_keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Edify functions (followed by parens)
+        for match in re.finditer(r'(\w+)\s*\(', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('edify_function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings in quotes
+        for match in re.finditer(r'"[^"]*"', content):
+            start, end = match.span()
+            self.file_editor.tag_add('edify_string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_android_rc(self, content: str):
+        """Highlight Android init.rc files"""
+        # Commands
+        commands = ['on', 'service', 'import', 'export', 'chmod', 'chown', 'class',
+                   'class_start', 'class_stop', 'class_reset', 'console', 'critical',
+                   'disabled', 'domain', 'file', 'group', 'iap', 'init', 'ioprio',
+                   'keycodes', 'memcg', 'mount_all', 'mount', 'namespace', 'netd',
+                   'oneshot', 'restart', 'seclabel', 'setenv', 'setprop', 'setrlimit',
+                   'shutdown', 'socket', 'start', 'stop', 'swapon_all', 'trigger',
+                   'user', 'wait', 'write', 'symlink', 'mkdir', 'unlink', 'chdir',
+                   'loglevel', 'verity_load_state', 'load_system_props', 'restorecon',
+                   'load_persist_props', 'setprop', 'swapon_all', 'umount_all', 'insmod',
+                   'rmmod', 'modprobe']
+        for cmd in commands:
+            for match in re.finditer(r'\b' + cmd + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('samsung_keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Sections/imports
+        for match in re.finditer(r'^import\s+(/[\w/\.\-]+)', content, re.MULTILINE):
+            start, end = match.span(1)
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # File paths
+        for match in re.finditer(r'/[a-zA-Z0-9_/\-\.]+\.[a-zA-Z0-9]+', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'#.*', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_samsung_csc(self, content: str):
+        """Highlight Samsung CSC (Consumer Software Customization) files"""
+        # XML/JSON-style configs
+        for match in re.finditer(r'<[^>]+>', content):
+            start, end = match.span()
+            self.file_editor.tag_add('xml_tag', f"1.0+{start}c", f"1.0+{end}c")
+
+        # CSC codes (region/carrier codes)
+        for match in re.finditer(r'\b[A-Z]{3,4}\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('constant', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Phone model codes
+        for match in re.finditer(r'\bSM-[A-Z0-9]+\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_javascript(self, content: str):
+        """Highlight JavaScript/TypeScript code"""
+        # Keywords
+        keywords = ['var', 'let', 'const', 'function', 'return', 'if', 'else', 'for',
+                   'while', 'do', 'switch', 'case', 'break', 'continue', 'default',
+                   'new', 'delete', 'typeof', 'instanceof', 'in', 'of', 'this', 'super',
+                   'class', 'extends', 'static', 'get', 'set', 'async', 'await', 'yield',
+                   'import', 'export', 'from', 'as', 'try', 'catch', 'finally', 'throw',
+                   'true', 'false', 'null', 'undefined', 'void', 'with']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings (single, double, template)
+        for match in re.finditer(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|`(?:[^`\\]|\\.)*`', content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b\d+\.?\d*([eE][+-]?\d+)?\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Function definitions
+        for match in re.finditer(r'\bfunction\s+(\w+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('function', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'//.*|/\*[\s\S]*?\*/', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_css(self, content: str):
+        """Highlight CSS files"""
+        # Selectors (before {)
+        for match in re.finditer(r'([^{}\n]+)(\s*\{)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Properties (before :)
+        for match in re.finditer(r'([\w-]+)(\s*:)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('class', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Values
+        for match in re.finditer(r':\s*([^;\n]+)', content):
+            start, end = match.span(1)
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Color values
+        for match in re.finditer(r'#[0-9a-fA-F]{3,8}\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Units (px, em, %, etc.)
+        for match in re.finditer(r'\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|pt|cm|mm|in)?\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'/\*[\s\S]*?\*/', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
+    def _highlight_sql(self, content: str):
+        """Highlight SQL files"""
+        # Keywords
+        keywords = ['SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES', 'UPDATE',
+                   'SET', 'DELETE', 'CREATE', 'TABLE', 'DROP', 'ALTER', 'ADD', 'COLUMN',
+                   'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'INDEX', 'JOIN', 'INNER',
+                   'LEFT', 'RIGHT', 'OUTER', 'ON', 'AS', 'AND', 'OR', 'NOT', 'NULL',
+                   'IS', 'LIKE', 'IN', 'BETWEEN', 'EXISTS', 'HAVING', 'GROUP', 'BY',
+                   'ORDER', 'LIMIT', 'OFFSET', 'UNION', 'ALL', 'DISTINCT', 'COUNT',
+                   'SUM', 'AVG', 'MIN', 'MAX', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
+                   'BEGIN', 'COMMIT', 'ROLLBACK', 'TRANSACTION']
+        for keyword in keywords:
+            for match in re.finditer(r'\b' + keyword + r'\b', content, re.IGNORECASE):
+                start, end = match.span()
+                self.file_editor.tag_add('keyword', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Strings
+        for match in re.finditer(r"'(?:[^'\\]|\\.)*'", content):
+            start, end = match.span()
+            self.file_editor.tag_add('string', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Numbers
+        for match in re.finditer(r'\b\d+\.?\d*\b', content):
+            start, end = match.span()
+            self.file_editor.tag_add('number', f"1.0+{start}c", f"1.0+{end}c")
+
+        # Comments
+        for match in re.finditer(r'--.*|/\*[\s\S]*?\*/', content):
+            start, end = match.span()
+            self.file_editor.tag_add('comment', f"1.0+{start}c", f"1.0+{end}c")
+
     def _open_file_editor_file_thread(self, file_path: str):
         """Thread to open and display file content."""
         try:
             file_size = os.path.getsize(file_path)
-            self.after(0, lambda: self.status_label.config(text=f"Loading {os.path.basename(file_path)}..."))
-            self.after(0, lambda: self.progress.start())
+            self._worker_set_status(f"Loading {os.path.basename(file_path)}...")
+            self._worker_progress_start()
 
             # Check file size and handle large files differently
             if file_size > 50 * 1024 * 1024:  # 50MB limit
-                self.after(0, lambda: messagebox.showwarning("Large File Warning",
+                self._worker_showwarning(
+                    "Large File Warning",
                     f"File is {file_size / (1024*1024):.1f} MB. Loading may be slow.\n\n"
-                    "Consider using an external editor for files larger than 50MB."))
+                    "Consider using an external editor for files larger than 50MB.",
+                )
                 return
 
             # Read file in chunks to avoid UI freezing on large files
@@ -6038,13 +10699,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     # Limit content size to prevent memory issues
                     if len(content) > max_content_size:
                         content = content[:max_content_size] + "\n\n[FILE TRUNCATED - Content too large to display fully]"
-                        self.after(0, lambda: self.log(f"File truncated at {max_content_size} characters", 'warning'))
+                        self._call_on_ui(self.log, f"File truncated at {max_content_size} characters", 'warning')
                         break
 
                     # Update progress for large files (>1MB)
                     if file_size > 1024 * 1024:
                         progress = min(100, int((bytes_read / file_size) * 100))
-                        self.after(0, lambda p=progress: self.progress.config(value=p))
+                        self._call_on_ui(self.progress.config, value=progress)
 
                     # Yield control more frequently for very large files
                     if file_size > 10 * 1024 * 1024:  # >10MB
@@ -6052,13 +10713,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     else:
                         time.sleep(0.001)
 
-            self.after(0, lambda: self._display_file_content(file_path, content))
-            self.after(0, lambda: self.log(f"Opened file: {os.path.basename(file_path)} ({len(content)} chars)", 'info'))
+            self._call_on_ui(self._display_file_content, file_path, content)
+            self._call_on_ui(self.log, f"Opened file: {os.path.basename(file_path)} ({len(content)} chars)", 'info')
         except Exception as e:
-            self.after(0, lambda: self.log(f"Failed to open file {file_path}: {e}", 'error'))
+            self._call_on_ui(self.log, f"Failed to open file {file_path}: {e}", 'error')
         finally:
-            self.after(0, lambda: self.status_label.config(text="Ready"))
-            self.after(0, lambda: self.progress.stop())
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _display_file_content(self, file_path: str, content: str):
         """Display file content in the editor."""
@@ -6067,14 +10728,90 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.file_editor.delete('1.0', tk.END)
         self.file_editor.insert('1.0', content)
         self.current_file = file_path
+
+        # Detect language from filename
+        detected = self._detect_language_from_filename(file_path)
+        self.current_language_mode = detected
+        lang_names = {
+            'auto': 'Auto Detect', 'smali': 'Smali', 'java': 'Java', 'kotlin': 'Kotlin',
+            'python': 'Python', 'cpp': 'C/C++', 'xml': 'XML', 'json': 'JSON', 'yaml': 'YAML',
+            'shell': 'Shell', 'makefile': 'Makefile', 'prop': 'Samsung Prop', 'pit': 'Samsung PIT',
+            'secontext': 'SELinux Context', 'text': 'Plain Text', 'html': 'HTML', 'css': 'CSS',
+            'javascript': 'JavaScript', 'sql': 'SQL', 'gradle': 'Gradle',
+            'android_manifest': 'Android Manifest', 'android_rc': 'Android init.rc',
+            'samsung_img': 'Samsung Image', 'samsung_csc': 'Samsung CSC',
+            'sepolicy': 'SELinux Policy', 'selinux': 'SELinux',
+            'edify': 'Edify Script'
+        }
+        self.language_label.config(text=lang_names.get(detected, 'Plain Text'))
+
+        # Determine if this is a code file, text file, or Samsung firmware file
+        code_languages = {'java', 'kotlin', 'python', 'cpp', 'xml', 'json', 'yaml', 'shell',
+                         'makefile', 'gradle', 'javascript', 'smali', 'html', 'css', 'sql',
+                         'android_manifest', 'android_rc'}
+        samsung_languages = {'prop', 'pit', 'secontext', 'samsung_img', 'samsung_csc',
+                            'sepolicy', 'selinux', 'edify'}
+        is_code = detected in code_languages
+        is_samsung = detected in samsung_languages
+        is_text = detected == 'text' or detected not in code_languages.union(samsung_languages)
+
+        # Apply line number settings based on file type
+        settings = self.editor_settings
+        if is_code:
+            show_lines = settings.get('line_numbers_for_code', True)
+        elif is_samsung:
+            show_lines = settings.get('line_numbers_for_samsung', False)
+        else:  # text or unknown
+            show_lines = settings.get('line_numbers_for_text', False)
+
+        self.line_numbers_var.set(show_lines)
+        if show_lines:
+            self.line_toggle_btn.config(text="Lines: ON")
+            self.line_number_frame.grid()
+        else:
+            self.line_toggle_btn.config(text="Lines: OFF")
+            self.line_number_frame.grid_remove()
+
+        # Apply font size from settings
+        font_size = settings.get('font_size', 10)
+        self.font_size_var.set(str(font_size))
+        self.file_editor.config(font=('Consolas', font_size))
+
+        # Update line numbers after a small delay to ensure widget is rendered
+        self.after(10, lambda: self._update_line_numbers())
+
         # Only apply syntax highlighting for smaller files
-        if len(content) <= 1000000:  # 1MB limit
+        if len(content) <= 1000000 and self.syntax_highlight_var.get():  # 1MB limit
             self._apply_syntax_highlighting()
         # Ensure the editor remains editable and focused
         self.file_editor.config(state=tk.NORMAL)
         self.file_editor.focus_set()
         self.file_editor.mark_set(tk.INSERT, '1.0')
         self.log(f"File loaded: {os.path.basename(file_path)}", 'success')
+
+    def _open_file_editor_and_load_file(self, file_path: str):
+        """Switch to File Editor tab and load a file for editing."""
+        if not os.path.exists(file_path):
+            messagebox.showerror("Error", f"File not found: {file_path}")
+            return
+
+        # Switch to File Editor tab
+        nb = getattr(self, 'main_notebook', None)
+        if nb is not None:
+            for i, tab_id in enumerate(nb.tabs()):
+                if nb.tab(tab_id, 'text') == "File Editor":
+                    nb.select(i)
+                    break
+
+        # Check file size
+        file_size = os.path.getsize(file_path)
+        if file_size > 10 * 1024 * 1024:  # 10MB warning
+            if not messagebox.askyesno("Large File Warning",
+                f"File is {file_size / (1024*1024):.1f} MB. Continue?"):
+                return
+
+        # Load the file
+        self._open_file_editor_file_thread(file_path)
 
     def _open_file_editor_entry(self, item_id):
         file_path = self.file_editor_tree.item(item_id, "values")[0]
@@ -6099,7 +10836,10 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self._loading_file = False
 
     def _on_file_editor_file_double_click(self, event):
-        item = self.file_editor_tree.selection()[0]
+        selection = self.file_editor_tree.selection()
+        if not selection:
+            return
+        item = selection[0]
         if item:
             # Check if file is already being loaded to prevent multiple loads
             if hasattr(self, '_loading_file') and self._loading_file:
@@ -6157,7 +10897,9 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.progress.start()
 
             # Get content and handle large files efficiently
-            content = self.file_editor.get('1.0', tk.END).rstrip() + '\n'
+            # end-1c excludes Tk's synthetic trailing newline without
+            # changing the user's whitespace or line-ending content.
+            content = self.file_editor.get('1.0', 'end-1c')
 
             # Write in chunks for large files to prevent memory issues
             chunk_size = 65536  # 64KB chunks
@@ -6182,7 +10924,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def _find_and_replace(self, find_text: str, replace_text: str = ""):
         """Find and optionally replace text in the editor with improved functionality"""
-        content = self.file_editor.get('1.0', tk.END)
+        self._last_search_text = find_text
+        content = self.file_editor.get('1.0', 'end-1c')
 
         # Remove previous selection
         self.file_editor.tag_remove('sel', '1.0', tk.END)
@@ -6259,9 +11002,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
     def _create_odin_package_thread(self):
         """Create Odin package (AP/BL/CP/CSC) with correct tar.md5 footer."""
         try:
+            self._worker_set_status("Creating Odin package...")
+            self._worker_progress_start()
+            self.log("[*] Starting Odin package creation...", 'info')
+
             if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
                 raise RuntimeError("Port ROM configuration not initialized")
-
+            assert self.port_rom_config is not None
             cfg: PortRomConfig = self.port_rom_config
             work_dir = cfg.work_dir
             output_dir = os.path.join(work_dir, "output")
@@ -6275,6 +11022,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 with open(tar_path, 'ab') as f:
                     f.write(md5_hex)
 
+            self._worker_set_status("Creating AP package...")
             # 1) AP package from repacked output images
             ap_images_order = [
                 "boot.img", "vendor_boot.img", "dtbo.img", "recovery.img",
@@ -6287,45 +11035,72 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
             ap_tar = os.path.join(odin_dir, f"AP_{cfg.source_device}_to_{cfg.target_device}.tar")
             import tarfile
-            with tarfile.open(ap_tar, 'w') as tar:
+            archive_names = set()
+            with tarfile.open(ap_tar, 'w', format=tarfile.USTAR_FORMAT) as tar:
                 for img in ap_files:
                     arc = normalize_odin_arcname(img)
+                    if arc in archive_names:
+                        raise RuntimeError(f"Duplicate AP archive member: {arc}")
+                    archive_names.add(arc)
                     tar.add(os.path.join(output_dir, img), arcname=arc)
             append_md5_footer(ap_tar)
             ap_tar_md5 = ap_tar + ".md5"
             os.replace(ap_tar, ap_tar_md5)
             self.log(f"[*] AP created: {os.path.basename(ap_tar_md5)}", 'success')
 
+            self._worker_set_status("Copying BL/CP packages...")
             # 2) BL/CP from target device originals preserved during extraction
             # BL_original.tar.md5 and CP_original.tar.md5 are saved in device work dirs
             target_work = cfg.get_work_subdir(cfg.target_device, "")
             bl_path = os.path.join(target_work, "BL_original.tar.md5")
             cp_path = os.path.join(target_work, "CP_original.tar.md5")
+            def validate_source_package(path: str, label: str) -> None:
+                valid, detail = verify_tar_md5(path)
+                if not valid:
+                    raise RuntimeError(f"{label} is not a valid TAR.MD5 package: {detail}")
+                with tempfile.NamedTemporaryFile(suffix='.tar', delete=False) as raw:
+                    raw_path = raw.name
+                try:
+                    strip_md5_footer(path, raw_path)
+                    with tarfile.open(raw_path, 'r:') as source_tar:
+                        members = source_tar.getmembers()
+                        if not members or any(member.issym() or member.islnk() for member in members):
+                            raise RuntimeError(f"{label} contains no valid regular TAR members")
+                finally:
+                    try:
+                        os.remove(raw_path)
+                    except OSError:
+                        pass
+
             if os.path.isfile(bl_path):
+                validate_source_package(bl_path, "BL source")
                 bl_out = os.path.join(odin_dir, f"BL_{cfg.target_device}.tar.md5")
                 shutil.copy2(bl_path, bl_out)
                 self.log(f"[*] BL copied: {os.path.basename(bl_out)}", 'success')
             else:
-                self.log("[!] BL package not found in extraction output", 'warning')
+                raise FileNotFoundError("BL package not found in extraction output")
             if os.path.isfile(cp_path):
+                validate_source_package(cp_path, "CP source")
                 cp_out = os.path.join(odin_dir, f"CP_{cfg.target_device}.tar.md5")
                 shutil.copy2(cp_path, cp_out)
                 self.log(f"[*] CP copied: {os.path.basename(cp_out)}", 'success')
             else:
-                self.log("[!] CP package not found in extraction output", 'warning')
+                raise FileNotFoundError("CP package not found in extraction output")
 
+            self._worker_set_status("Selecting CSC package...")
             # 3) CSC/HOME_CSC from target device extracted originals (PIT-aware note)
             import glob
-            csc_candidates = glob.glob(os.path.join(cfg.get_work_subdir(cfg.target_device, ""), "CSC_*.tar.md5"))
+            csc_candidates = sorted(glob.glob(os.path.join(cfg.get_work_subdir(cfg.target_device, ""), "CSC_*.tar.md5")))
             if not csc_candidates:
-                csc_candidates = glob.glob(os.path.join(cfg.get_work_subdir(cfg.target_device, ""), "HOME_CSC_*.tar.md5"))
+                csc_candidates = sorted(glob.glob(os.path.join(cfg.get_work_subdir(cfg.target_device, ""), "HOME_CSC_*.tar.md5")))
             if csc_candidates:
                 csc_src = csc_candidates[0]
+                validate_source_package(csc_src, "CSC source")
                 csc_out = os.path.join(odin_dir, os.path.basename(csc_src))
                 shutil.copy2(csc_src, csc_out)
                 self.log(f"[*] CSC selected: {os.path.basename(csc_out)}", 'success')
             else:
-                self.log("[!] CSC/HOME_CSC not found; device may require manual CSC selection", 'warning')
+                raise FileNotFoundError("CSC or HOME_CSC package not found in extraction output")
 
             # 3b) PIT awareness: surface PIT discovered during extraction; ensure it resides with BL
             # We do not repack BL here, but provide PIT path and validation to user.
@@ -6335,6 +11110,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             else:
                 self.log("[!] No PIT file found in extracted firmware; BL should still be flashable if unchanged", 'warning')
 
+            self._worker_set_status("Verifying package integrity...")
             # 4) Post-build verification
             # Verify md5 footer by stripping and recomputing
             issues = []
@@ -6359,9 +11135,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
             else:
                 self.log("[*] All Odin packages passed footer verification", 'success')
 
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
             self.after(0, lambda: messagebox.showinfo("Odin Package", f"Created in:\n{odin_dir}"))
 
         except Exception as e:
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
             self.after(0, lambda: messagebox.showerror("Odin Package Error", str(e)))
             self.log(f"Odin package creation failed: {e}", 'error')
 
@@ -6371,6 +11151,432 @@ class SmartphoneFirmwareScrews(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(content)
         self.log("Content copied to clipboard", 'info')
+
+    def _goto_line_in_editor(self):
+        """Go to specific line in editor"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Go to Line")
+        dialog.geometry("250x80")
+        dialog.transient(self)
+        dialog.grab_set()
+        ttk.Label(dialog, text="Line number:").pack(side='left', padx=5, pady=10)
+        entry = ttk.Entry(dialog, width=10)
+        entry.pack(side='left', pady=10)
+        entry.focus_set()
+        def do_goto():
+            try:
+                line_num = int(entry.get())
+                total_lines = int(self.file_editor.index('end').split('.')[0]) - 1
+                line_num = max(1, min(line_num, total_lines))
+                self.file_editor.mark_set(tk.INSERT, f"{line_num}.0")
+                self.file_editor.see(f"{line_num}.0")
+                dialog.destroy()
+            except ValueError:
+                pass
+        entry.bind('<Return>', lambda e: do_goto())
+        entry.bind('<Escape>', lambda e: dialog.destroy())
+        ttk.Button(dialog, text="Go", command=do_goto).pack(side='left', padx=5, pady=10)
+
+    def _comment_lines_in_editor(self):
+        """Comment selected lines or current line"""
+        if self.file_editor.tag_ranges("sel"):
+            sel_ranges = self.file_editor.tag_ranges("sel")
+            start_line = int(self.file_editor.index(f"{sel_ranges[0]}").split('.')[0])
+            end_line = int(self.file_editor.index(f"{sel_ranges[1]}").split('.')[0])
+            for line in range(start_line, end_line + 1):
+                line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend+1c")
+                if line_content.startswith('# '):
+                    self.file_editor.delete(f"{line}.0", f"{line}.2c")
+                else:
+                    self.file_editor.insert(f"{line}.0", '# ')
+        else:
+            cursor = self.file_editor.index(tk.INSERT)
+            line = int(cursor.split('.')[0])
+            line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend+1c")
+            if line_content.startswith('# '):
+                self.file_editor.delete(f"{line}.0", f"{line}.2c")
+            else:
+                self.file_editor.insert(f"{line}.0", '# ')
+        self._apply_syntax_highlighting()
+
+    def _uncomment_lines_in_editor(self):
+        """Uncomment selected lines or current line"""
+        if self.file_editor.tag_ranges("sel"):
+            sel_ranges = self.file_editor.tag_ranges("sel")
+            start_line = int(self.file_editor.index(f"{sel_ranges[0]}").split('.')[0])
+            end_line = int(self.file_editor.index(f"{sel_ranges[1]}").split('.')[0])
+            for line in range(start_line, end_line + 1):
+                line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend+1c")
+                if line_content.startswith('# '):
+                    self.file_editor.delete(f"{line}.0", f"{line}.2c")
+                elif line_content.startswith('#'):
+                    self.file_editor.delete(f"{line}.0", f"{line}.1c")
+        else:
+            cursor = self.file_editor.index(tk.INSERT)
+            line = int(cursor.split('.')[0])
+            line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend+1c")
+            if line_content.startswith('# '):
+                self.file_editor.delete(f"{line}.0", f"{line}.2c")
+            elif line_content.startswith('#'):
+                self.file_editor.delete(f"{line}.0", f"{line}.1c")
+        self._apply_syntax_highlighting()
+
+    def _indent_editor_selection(self):
+        """Indent selected lines or insert indent at cursor"""
+        if self.file_editor.tag_ranges("sel"):
+            sel_ranges = self.file_editor.tag_ranges("sel")
+            start_line = int(self.file_editor.index(f"{sel_ranges[0]}").split('.')[0])
+            end_line = int(self.file_editor.index(f"{sel_ranges[1]}").split('.')[0])
+            for line in range(start_line, end_line + 1):
+                self.file_editor.insert(f"{line}.0", '    ')
+        else:
+            cursor = self.file_editor.index(tk.INSERT)
+            line = int(cursor.split('.')[0])
+            self.file_editor.insert(f"{line}.0", '    ')
+
+    def _unindent_editor_selection(self):
+        """Unindent selected lines or current line"""
+        if self.file_editor.tag_ranges("sel"):
+            sel_ranges = self.file_editor.tag_ranges("sel")
+            start_line = int(self.file_editor.index(f"{sel_ranges[0]}").split('.')[0])
+            end_line = int(self.file_editor.index(f"{sel_ranges[1]}").split('.')[0])
+            for line in range(start_line, end_line + 1):
+                line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend")
+                if line_content.startswith('    '):
+                    self.file_editor.delete(f"{line}.0", f"{line}.4c")
+                elif line_content.startswith('\t'):
+                    self.file_editor.delete(f"{line}.0", f"{line}.1c")
+        else:
+            cursor = self.file_editor.index(tk.INSERT)
+            line = int(cursor.split('.')[0])
+            line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend")
+            if line_content.startswith('    '):
+                self.file_editor.delete(f"{line}.0", f"{line}.4c")
+            elif line_content.startswith('\t'):
+                self.file_editor.delete(f"{line}.0", f"{line}.1c")
+
+    def _delete_line_in_editor(self):
+        """Delete current line"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line = int(cursor.split('.')[0])
+        line_end = self.file_editor.index(f"{line}.0 lineend+1c")
+        self.file_editor.delete(f"{line}.0", line_end)
+
+    def _duplicate_line_in_editor(self):
+        """Duplicate current line"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line = int(cursor.split('.')[0])
+        line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend+1c")
+        self.file_editor.insert(f"{line}.0 lineend", '\n' + line_content.rstrip('\n'))
+
+    def _join_lines_in_editor(self):
+        """Join current line with next line"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line = int(cursor.split('.')[0])
+        next_line_content = self.file_editor.get(f"{line + 1}.0", f"{line + 1}.0 lineend").strip()
+        self.file_editor.delete(f"{line}.0 lineend", f"{line + 1}.0 lineend")
+        if next_line_content:
+            self.file_editor.insert(f"{line}.0 lineend", ' ' + next_line_content)
+
+    def _select_word_in_editor(self):
+        """Select word at cursor"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line, col = cursor.split('.')
+        col = int(col)
+        line_content = self.file_editor.get(f"{line}.0", f"{line}.0 lineend")
+        word_chars = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_')
+        start = col
+        end = col
+        while start > 0 and line_content[start - 1] in word_chars:
+            start -= 1
+        while end < len(line_content) and line_content[end] in word_chars:
+            end += 1
+        if start != end:
+            self.file_editor.tag_remove("sel", "1.0", tk.END)
+            self.file_editor.tag_add("sel", f"{line}.{start}", f"{line}.{end}")
+
+    def _select_line_in_editor(self):
+        """Select current line"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line = cursor.split('.')[0]
+        line_end = self.file_editor.index(f"{line}.0 lineend+1c")
+        self.file_editor.tag_remove("sel", "1.0", tk.END)
+        self.file_editor.tag_add("sel", f"{line}.0", line_end)
+
+    def _move_line_up(self):
+        """Move current line up"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line_num = int(cursor.split('.')[0])
+        if line_num <= 1:
+            return
+        line_start = f"{line_num}.0"
+        line_end = f"{line_num}.0 lineend+1c"
+        line_content = self.file_editor.get(line_start, line_end)
+        prev_line_start = f"{line_num - 1}.0"
+        prev_line_end = f"{line_num - 1}.0 lineend+1c"
+        prev_content = self.file_editor.get(prev_line_start, prev_line_end)
+        self.file_editor.delete(line_start, line_end)
+        self.file_editor.delete(prev_line_start, prev_line_end)
+        self.file_editor.insert(prev_line_start, line_content.rstrip('\n') + '\n')
+        self.file_editor.insert(line_start, prev_content)
+        self.file_editor.mark_set(tk.INSERT, line_start)
+
+    def _move_line_down(self):
+        """Move current line down"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line_num = int(cursor.split('.')[0])
+        total_lines = int(self.file_editor.index('end').split('.')[0]) - 1
+        if line_num >= total_lines:
+            return
+        line_start = f"{line_num}.0"
+        line_end = f"{line_num}.0 lineend+1c"
+        line_content = self.file_editor.get(line_start, line_end)
+        next_line_start = f"{line_num + 1}.0"
+        next_line_end = f"{line_num + 1}.0 lineend+1c"
+        next_content = self.file_editor.get(next_line_start, next_line_end)
+        self.file_editor.delete(line_start, line_end)
+        self.file_editor.delete(next_line_start, next_line_end)
+        self.file_editor.insert(next_line_start, line_content.rstrip('\n') + '\n')
+        self.file_editor.insert(line_start, next_content)
+        self.file_editor.mark_set(tk.INSERT, next_line_start)
+
+    # ========== Bookmark Methods ==========
+    def _toggle_editor_bookmark(self):
+        """Toggle bookmark on current line"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line = int(cursor.split('.')[0])
+        if line in self.file_editor_bookmarks:
+            self.file_editor_bookmarks.remove(line)
+            self.file_editor.tag_remove('bookmark_line', f"{line}.0", f"{line}.0 lineend+1c")
+        else:
+            self.file_editor_bookmarks.add(line)
+            self.file_editor.tag_add('bookmark_line', f"{line}.0", f"{line}.0 lineend+1c")
+        self._update_line_numbers()
+
+    def _next_editor_bookmark(self):
+        """Go to next bookmark"""
+        if not self.file_editor_bookmarks:
+            return
+        cursor = self.file_editor.index(tk.INSERT)
+        line = int(cursor.split('.')[0])
+        next_bookmark = min((b for b in self.file_editor_bookmarks if b > line), default=None)
+        if next_bookmark is None:
+            next_bookmark = min(self.file_editor_bookmarks)
+        self.file_editor.mark_set(tk.INSERT, f"{next_bookmark}.0")
+        self.file_editor.see(f"{next_bookmark}.0")
+
+    def _prev_editor_bookmark(self):
+        """Go to previous bookmark"""
+        if not self.file_editor_bookmarks:
+            return
+        cursor = self.file_editor.index(tk.INSERT)
+        line = int(cursor.split('.')[0])
+        prev_bookmark = max((b for b in self.file_editor_bookmarks if b < line), default=None)
+        if prev_bookmark is None:
+            prev_bookmark = max(self.file_editor_bookmarks)
+        self.file_editor.mark_set(tk.INSERT, f"{prev_bookmark}.0")
+        self.file_editor.see(f"{prev_bookmark}.0")
+
+    def _clear_editor_bookmarks(self):
+        """Clear all bookmarks"""
+        for line in list(self.file_editor_bookmarks):
+            self.file_editor.tag_remove('bookmark_line', f"{line}.0", f"{line}.0 lineend+1c")
+        self.file_editor_bookmarks.clear()
+        self._update_line_numbers()
+
+    # ========== Zoom Methods ==========
+    def _zoom_editor_in(self):
+        """Zoom in (increase font size)"""
+        current_size = int(self.font_size_var.get())
+        if current_size < 32:
+            new_size = current_size + 2
+            self.font_size_var.set(str(new_size))
+            self.file_editor.config(font=('Consolas', new_size))
+            if hasattr(self, 'zoom_label'):
+                self.zoom_label.config(text=f"{int(new_size / 10 * 100)}%")
+            self.editor_settings['font_size'] = new_size
+            save_editor_settings(self.editor_settings)
+            self._update_line_numbers()
+
+    def _zoom_editor_out(self):
+        """Zoom out (decrease font size)"""
+        current_size = int(self.font_size_var.get())
+        if current_size > 6:
+            new_size = current_size - 2
+            self.font_size_var.set(str(new_size))
+            self.file_editor.config(font=('Consolas', new_size))
+            if hasattr(self, 'zoom_label'):
+                self.zoom_label.config(text=f"{int(new_size / 10 * 100)}%")
+            self.editor_settings['font_size'] = new_size
+            save_editor_settings(self.editor_settings)
+            self._update_line_numbers()
+
+    def _zoom_editor_reset(self):
+        """Reset zoom to default"""
+        self.font_size_var.set("10")
+        self.file_editor.config(font=('Consolas', 10))
+        if hasattr(self, 'zoom_label'):
+            self.zoom_label.config(text="100%")
+        self.editor_settings['font_size'] = 10
+        save_editor_settings(self.editor_settings)
+        self._update_line_numbers()
+
+    # ========== Word Wrap Toggle ==========
+    def _toggle_editor_wrap(self):
+        """Toggle word wrap"""
+        self.file_editor_word_wrap = not self.file_editor_word_wrap
+        wrap_mode = 'word' if self.file_editor_word_wrap else 'none'
+        self.file_editor.config(wrap=wrap_mode)
+
+    # ========== Bracket Matching ==========
+    def _find_matching_bracket_in_editor(self):
+        """Find and highlight matching bracket"""
+        cursor = self.file_editor.index(tk.INSERT)
+        line, col = cursor.split('.')
+        col = int(col)
+
+        char = self.file_editor.get(f"{line}.{col}")
+        matching = None
+        if char in self.bracket_pairs:
+            matching = self.bracket_pairs[char]
+            direction = 1
+            start = f"{line}.{col + 1}"
+        elif char in self.bracket_pairs.values():
+            for k, v in self.bracket_pairs.items():
+                if v == char:
+                    matching = k
+                    break
+            direction = -1
+            start = f"{line}.{col}"
+        else:
+            return
+
+        self.file_editor.tag_remove('bracketMatch', '1.0', tk.END)
+        count = 1
+        pos = start
+        while count > 0:
+            next_char = self.file_editor.get(pos)
+            if not next_char:
+                break
+            if next_char == char:
+                count += 1
+            elif next_char == matching:
+                count -= 1
+            if count == 0:
+                self.file_editor.tag_add('bracketMatch', pos, f"{pos}+1c")
+                self.file_editor.tag_config('bracketMatch', background='#00FF00')
+                self.file_editor.see(pos)
+                break
+            if direction > 0:
+                col += 1
+                pos = f"{line}.{col}"
+            else:
+                col -= 1
+                pos = f"{line}.{col}"
+
+    # ========== Modified Indicator ==========
+    def _on_editor_modified(self, event=None):
+        """Handle editor modification for modified indicator"""
+        if self.file_editor.edit_modified():
+            self.file_editor_modified = True
+            if self.current_file:
+                basename = os.path.basename(self.current_file)
+                self.file_modified_label.config(text="*")
+        else:
+            self.file_editor_modified = False
+            self.file_modified_label.config(text="")
+
+    # ========== Find/Replace Dialog with Replace All ==========
+    def _show_find_replace_dialog(self):
+        """Show find and replace dialog"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Find & Replace")
+        dialog.geometry("400x150")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="Find:").pack(anchor='w', padx=5, pady=2)
+        find_entry = ttk.Entry(dialog, width=40)
+        find_entry.pack(padx=5, pady=2)
+        find_entry.focus()
+
+        ttk.Label(dialog, text="Replace:").pack(anchor='w', padx=5, pady=2)
+        replace_entry = ttk.Entry(dialog, width=40)
+        replace_entry.pack(padx=5, pady=2)
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=5)
+        ttk.Button(btn_frame, text="Find Next", command=lambda: self._find_next_in_editor()).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Replace", command=lambda: self._replace_next_in_editor(find_entry.get(), replace_entry.get())).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Replace All", command=lambda: self._replace_all_in_editor(find_entry.get(), replace_entry.get())).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Close", command=dialog.destroy).pack(side='left', padx=2)
+
+    def _find_next_in_editor(self):
+        """Find next occurrence"""
+        search_text = getattr(self, '_last_search_text', '')
+        if not search_text:
+            return
+        content = self.file_editor.get('1.0', 'end-1c')
+        cursor = self.file_editor.index(tk.INSERT)
+        line, column = map(int, cursor.split('.'))
+        start = sum(len(text) + 1 for text in content.splitlines()[:line - 1]) + column
+        pos = content.find(search_text, start)
+        if pos == -1:
+            pos = content.find(search_text, 0)
+        if pos != -1:
+            line = content[:pos].count('\n') + 1
+            column = pos - (content.rfind('\n', 0, pos) + 1)
+            start_index = f"{line}.{column}"
+            self.file_editor.mark_set(tk.INSERT, start_index)
+            self.file_editor.tag_remove('search_highlight', '1.0', tk.END)
+            self.file_editor.tag_add('search_highlight', start_index, f"{start_index}+{len(search_text)}c")
+            self.file_editor.see(start_index)
+
+    def _find_prev_in_editor(self):
+        """Find previous occurrence"""
+        search_text = getattr(self, '_last_search_text', '')
+        if not search_text:
+            return
+        content = self.file_editor.get('1.0', 'end-1c')
+        cursor = self.file_editor.index(tk.INSERT)
+        line, column = map(int, cursor.split('.'))
+        cursor_offset = sum(len(text) + 1 for text in content.splitlines()[:line - 1]) + column
+        before_cursor = content[:cursor_offset]
+        pos = before_cursor.rfind(search_text)
+        if pos != -1:
+            line = before_cursor[:pos].count('\n') + 1
+            column = pos - (before_cursor.rfind('\n', 0, pos) + 1)
+            start_index = f"{line}.{column}"
+            self.file_editor.mark_set(tk.INSERT, start_index)
+            self.file_editor.tag_remove('search_highlight', '1.0', tk.END)
+            self.file_editor.tag_add('search_highlight', start_index, f"{start_index}+{len(search_text)}c")
+            self.file_editor.see(start_index)
+
+    def _replace_next_in_editor(self, find_text, replace_text):
+        """Replace next occurrence"""
+        if not find_text:
+            return
+        self._last_search_text = find_text
+        content = self.file_editor.get('1.0', 'end-1c')
+        cursor = self.file_editor.index(tk.INSERT)
+        line, column = map(int, cursor.split('.'))
+        start = sum(len(text) + 1 for text in content.splitlines()[:line - 1]) + column
+        pos = content.find(find_text, start)
+        if pos != -1:
+            line = content[:pos].count('\n') + 1
+            column = pos - (content.rfind('\n', 0, pos) + 1)
+            start_index = f"{line}.{column}"
+            self.file_editor.delete(start_index, f"{start_index}+{len(find_text)}c")
+            self.file_editor.insert(start_index, replace_text)
+
+    def _replace_all_in_editor(self, find_text, replace_text):
+        """Replace all occurrences"""
+        if not find_text:
+            return
+        content = self.file_editor.get('1.0', tk.END)
+        new_content = content.replace(find_text, replace_text)
+        self.file_editor.delete('1.0', tk.END)
+        self.file_editor.insert('1.0', new_content)
 
     def _open_in_notepad_pp(self):
         """Open current file in Notepad++"""
@@ -6409,14 +11615,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
             current_font = font.Font(font=self.file_editor['font'])
             current_font.configure(size=size)
             self.file_editor.configure(font=current_font)
-            # Update syntax highlighting fonts
-            for tag in self.file_editor.tag_names():
-                if tag != 'sel':
-                    current_tag_font = self.file_editor.tag_cget(tag, 'font')
-                    if current_tag_font:
-                        tag_font = font.Font(font=current_tag_font)
-                        tag_font.configure(size=size)
-                        self.file_editor.tag_config(tag, font=tag_font)
+            self.editor_settings['font_size'] = size
+            save_editor_settings(self.editor_settings)
+            # Reconfigure all syntax tags with new font size
+            self._configure_syntax_tags(('Consolas', size))
+            self._update_line_numbers()
         except ValueError:
             pass
 
@@ -6552,10 +11755,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
         try:
             # Create notebook for tools tabs
             tools_notebook = ttk.Notebook(parent)
+            self.tools_notebook = tools_notebook
             tools_notebook.pack(fill='both', expand=True, padx=5, pady=5)
 
             # Tool Status Tab
             status_frame = ttk.Frame(tools_notebook)
+            self.tools_status_frame = status_frame
             tools_notebook.add(status_frame, text="Tool Status")
 
             # Treeview for tool status and mapping
@@ -6569,6 +11774,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.tools_tree.heading('path', text='Location')
             self.tools_tree.column('status', width=100)
             self.tools_tree.column('path', width=400)
+            # Keep status colors stable across every refresh. Missing tools use
+            # the same dark orange as the original status view.
+            self.tools_tree.tag_configure('missing', foreground='#FF8C00')
+            self.tools_tree.tag_configure('warning', foreground='#FF8C00')
+            self.tools_tree.tag_configure('installed', foreground=COLORS['success'])
+            self.tools_tree.tag_configure('error', foreground=COLORS['error'])
 
             vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tools_tree.yview)
             vsb.pack(side='right', fill='y')
@@ -6576,8 +11787,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.tools_tree.pack(side='left', fill='both', expand=True)
 
             # Refresh button for tool status
-            refresh_btn = ttk.Button(status_frame, text="Refresh Status", command=self.refresh_tool_status)
-            refresh_btn.pack(pady=5)
+            btn_row = ttk.Frame(status_frame)
+            btn_row.pack(pady=5)
+            ttk.Button(btn_row, text="Refresh Status", command=self.refresh_tool_status).pack(side='left', padx=2)
+            ttk.Button(btn_row, text="Setup AIK Workspace", command=self._action_setup_aik).pack(side='left', padx=2)
+            ttk.Button(btn_row, text="Open Tools Folder", command=self.open_tools_folder).pack(side='left', padx=2)
 
             # Manage Tools Tab
             manage_frame = ttk.Frame(tools_notebook)
@@ -6678,13 +11892,24 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     status = "✗ Not installed"
                     status_color = 'error'
 
+                row_tag = 'installed' if status_color == 'success' else (
+                    'missing' if status_color == 'warning' else 'error'
+                )
                 self.tools_tree.insert('', 'end', text=tool_name,
-                                     values=(status, tool_dir))
+                                     values=(status, tool_dir), tags=(row_tag,))
 
             # Update status label
-            installed_count = sum(1 for child in self.tools_tree.get_children()
-                                if self.tools_tree.item(child, 'values')[0].startswith('✓'))
+            installed_count = sum(
+                1 for child in self.tools_tree.get_children()
+                if not self.tools_tree.item(child, 'values')[0].startswith('✗')
+            )
             self.tool_status_label.config(text=f"✓ {installed_count}/{len(TOOL_METADATA)} tools installed")
+            # Keep the toolbar in sync
+            if hasattr(self, 'toolbar_tool_label'):
+                self.toolbar_tool_label.config(
+                    text=f"✓ {installed_count}/{len(TOOL_METADATA)} tools",
+                    foreground=COLORS['success'] if installed_count == len(TOOL_METADATA) else COLORS['warning']
+                )
 
         except Exception as e:
             self.log(f"Error refreshing tool status: {e}", 'error')
@@ -6695,6 +11920,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if selected_tool:
             self.download_btn.config(state='normal')
             self.update_btn.config(state='normal')
+            path = tool_resolve(selected_tool)
+            if path:
+                self.status_label.config(text=f"{selected_tool}: Installed")
+            else:
+                self.status_label.config(text=f"{selected_tool}: Missing")
         else:
             self.download_btn.config(state='disabled')
             self.update_btn.config(state='disabled')
@@ -6708,19 +11938,26 @@ class SmartphoneFirmwareScrews(tk.Tk):
         def download_thread():
             try:
                 self.tool_status_label.config(text=f"Downloading {selected_tool}...")
+                self.status_label.config(text=f"Downloading {selected_tool}...")
                 self.tool_progress['value'] = 0
+                self.progress.start()
 
                 def progress_callback(progress):
                     self.tool_progress['value'] = progress
 
                 success = download_and_setup_tool(selected_tool, progress_callback, self.log)
+                self.progress.stop()
                 if success:
                     self.tool_status_label.config(text=f"✓ {selected_tool} downloaded successfully")
+                    self.status_label.config(text="Ready")
                     self.refresh_tool_status()
                 else:
                     self.tool_status_label.config(text=f"✗ Failed to download {selected_tool}")
+                    self.status_label.config(text="Ready")
 
             except Exception as e:
+                self.progress.stop()
+                self.status_label.config(text="Ready")
                 self.log(f"Download failed: {e}", 'error')
                 self.tool_status_label.config(text=f"✗ Download failed: {e}")
 
@@ -6735,19 +11972,26 @@ class SmartphoneFirmwareScrews(tk.Tk):
         def update_thread():
             try:
                 self.tool_status_label.config(text=f"Updating {selected_tool}...")
+                self.status_label.config(text=f"Updating {selected_tool}...")
                 self.tool_progress['value'] = 0
+                self.progress.start()
 
                 def progress_callback(progress):
                     self.tool_progress['value'] = progress
 
                 success = update_tool_if_needed(selected_tool, progress_callback, self.log)
+                self.progress.stop()
                 if success:
                     self.tool_status_label.config(text=f"✓ {selected_tool} updated successfully")
+                    self.status_label.config(text="Ready")
                     self.refresh_tool_status()
                 else:
                     self.tool_status_label.config(text=f"✓ {selected_tool} already up to date")
+                    self.status_label.config(text="Ready")
 
             except Exception as e:
+                self.progress.stop()
+                self.status_label.config(text="Ready")
                 self.log(f"Update failed: {e}", 'error')
                 self.tool_status_label.config(text=f"✗ Update failed: {e}")
 
@@ -6791,27 +12035,26 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def restore_tool_defaults(self):
         """Restore all tools to default state"""
-        if not messagebox.askyesno("Restore Defaults",
-                                 "This will download and setup all tools in their default locations.\n\nContinue?"):
-            return
-
         def restore_thread():
             try:
                 self.tool_status_label.config(text="Restoring tool defaults...")
+                self.status_label.config(text="Restoring tool defaults...")
                 self.tool_progress['value'] = 0
+                self.progress.start()
+                self.update_idletasks()
 
                 total_tools = len(TOOL_METADATA)
                 completed = 0
 
-                for tool_name in TOOL_METADATA.keys():
-                    self.tool_status_label.config(text=f"Restoring {tool_name}... ({completed+1}/{total_tools})")
+                for tool_name in list(TOOL_METADATA.keys()):
+                    self.tool_status_label.config(text=f"Restoring {tool_name}... ({completed}/{total_tools})")
+                    self.status_label.config(text=f"Restoring {tool_name}... ({completed}/{total_tools})")
+                    self.update_idletasks()
 
                     def progress_callback(progress):
-                        # Calculate overall progress
-                        base_progress = (completed / total_tools) * 100
-                        current_progress = progress / total_tools
-                        self.tool_progress['value'] = base_progress + current_progress
+                        pass
 
+                    cleanup_tool_dir(tool_name, self.log)
                     success = download_and_setup_tool(tool_name, progress_callback, self.log)
                     if success:
                         self.log(f"✓ Restored {tool_name}", 'success')
@@ -6819,11 +12062,20 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         self.log(f"✗ Failed to restore {tool_name}", 'error')
 
                     completed += 1
+                    progress_val = (completed / total_tools) * 100
+                    self.tool_progress['value'] = progress_val
+                    self.status_label.config(text=f"Restoring... {completed}/{total_tools}")
+                    self.update_idletasks()
 
-                self.tool_status_label.config(text="✓ Tool restoration complete")
+                self.tool_progress['value'] = 100
+                self.progress.stop()
+                self.tool_status_label.config(text=f"✓ Tool restoration complete ({completed}/{total_tools})")
+                self.status_label.config(text="Ready")
                 self.refresh_tool_status()
 
             except Exception as e:
+                self.progress.stop()
+                self.status_label.config(text="Ready")
                 self.log(f"Restore failed: {e}", 'error')
                 self.tool_status_label.config(text=f"✗ Restore failed: {e}")
 
@@ -6852,6 +12104,2063 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 # Rebuild UI to apply step focus logic
                 self._build_port_rom_ui(notebook.nametowidget(tab_id), step=self._port_rom_initial_step)
                 return
+
+    # ========== APK/XAPK Tab ==========
+    def _build_apk_tab(self, parent):
+        """Build the APK/XAPK tab as a unified project workspace.
+
+        Layout:
+            - Project bar (top): Open APK, Open Bundle, Recent, Close, status label.
+            - Sub-notebook: Analysis | Disassembly | Assembly | Signing | Bundles | Patching.
+        """
+        # === PROJECT BAR (always visible above the sub-notebook) ===
+        project_bar = ttk.Frame(parent, style='TFrame')
+        project_bar.pack(fill='x', padx=5, pady=(5, 0))
+
+        left_bar = ttk.Frame(project_bar)
+        left_bar.pack(side='left', fill='x', expand=False)
+        ttk.Button(left_bar, text="📂 Open APK", command=self._apk_open_project_dialog).pack(side='left', padx=2, pady=2)
+        ttk.Button(left_bar, text="📦 Open Bundle", command=self._apk_open_project_dialog).pack(side='left', padx=2, pady=2)
+        ttk.Label(left_bar, text="  Recent:").pack(side='left', padx=(10, 2), pady=2)
+        self.apk_recent_combo = ttk.Combobox(left_bar, width=40, state='readonly', values=self._apk_get_recent_paths())
+        self.apk_recent_combo.pack(side='left', padx=2, pady=2)
+        self.apk_recent_combo.bind('<<ComboboxSelected>>', self._apk_on_recent_selected)
+
+        mid_bar = ttk.Frame(project_bar)
+        mid_bar.pack(side='left', fill='x', expand=True, padx=10)
+        self.apk_project_label = ttk.Label(mid_bar, text="No project open — click 'Open APK' or 'Open Bundle' to start",
+                                            font=('Segoe UI', 10, 'bold'))
+        self.apk_project_label.pack(side='left', padx=4, pady=4)
+
+        right_bar = ttk.Frame(project_bar)
+        right_bar.pack(side='right')
+        ttk.Button(right_bar, text="❌ Close Project", command=self._apk_close_project).pack(side='right', padx=2, pady=2)
+
+        # === SUB-NOTEBOOK ===
+        apk_notebook = ttk.Notebook(parent)
+        apk_notebook.pack(fill='both', expand=True, padx=5, pady=5)
+
+        # Sub-tab 1: Analysis
+        analysis_frame = ttk.Frame(apk_notebook)
+        apk_notebook.add(analysis_frame, text="📊 Analysis")
+        self._build_apk_analysis(analysis_frame)
+
+        # Sub-tab 2: Disassembly
+        disasm_frame = ttk.Frame(apk_notebook)
+        apk_notebook.add(disasm_frame, text="🔬 Disassembly")
+        self._build_apk_disassembly(disasm_frame)
+
+        # Sub-tab 3: Assembly
+        asm_frame = ttk.Frame(apk_notebook)
+        apk_notebook.add(asm_frame, text="🔨 Assembly")
+        self._build_apk_assembly(asm_frame)
+
+        # Sub-tab 4: Signing
+        sign_frame = ttk.Frame(apk_notebook)
+        apk_notebook.add(sign_frame, text="🔏 Signing")
+        self._build_apk_signing(sign_frame)
+
+        # Sub-tab 5: Bundles (XAPK/APKS/APKM)
+        bundle_frame = ttk.Frame(apk_notebook)
+        apk_notebook.add(bundle_frame, text="📦 Bundles")
+        self._build_apk_bundles(bundle_frame)
+
+        # Sub-tab 6: Patching
+        patch_frame = ttk.Frame(apk_notebook)
+        apk_notebook.add(patch_frame, text="🩹 Patching")
+        self._build_apk_patching(patch_frame)
+
+        self._apk_update_project_bar()
+
+    # ------------------------------------------------------------------ Project helpers
+
+    def _apk_get_recent_paths(self):
+        """Return a list of recently opened APK projects (read from a simple text file)."""
+        recent_path = os.path.join(os.path.dirname(__file__), "apk_projects", "recent.txt")
+        try:
+            if os.path.isfile(recent_path):
+                with open(recent_path, 'r', encoding='utf-8') as f:
+                    lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+                    return lines[-20:]
+        except Exception:
+            pass
+        return []
+
+    def _apk_add_recent_path(self, path: str):
+        """Add a path to the recent projects list (persisted to disk)."""
+        try:
+            projects_root = os.path.join(os.path.dirname(__file__), "apk_projects")
+            ensure_dir(projects_root)
+            recent_path = os.path.join(projects_root, "recent.txt")
+            existing = []
+            if os.path.isfile(recent_path):
+                with open(recent_path, 'r', encoding='utf-8') as f:
+                    existing = [ln.strip() for ln in f.readlines() if ln.strip()]
+            if path in existing:
+                existing.remove(path)
+            existing.append(path)
+            existing = existing[-20:]
+            with open(recent_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(existing))
+            if hasattr(self, 'apk_recent_combo'):
+                self.apk_recent_combo['values'] = existing
+        except Exception:
+            pass
+
+    def _apk_on_recent_selected(self, event=None):
+        path = self.apk_recent_combo.get()
+        if path and os.path.isfile(path):
+            self._apk_open_project(path)
+
+    def _apk_require_project(self, show_error=True):
+        """Ensure a project is open. Returns True if OK, False otherwise."""
+        if not self.apk_project or not self.apk_project.is_open:
+            if show_error:
+                styled_messagebox(self, "No Project", "Open an APK/XAPK first using the project bar at the top.", "info")
+            return False
+        return True
+
+    def _apk_open_project_dialog(self):
+        """Show the Open Project dialog (file picker)."""
+        path = filedialog.askopenfilename(
+            title="Open APK/XAPK/APKS/APKM",
+            filetypes=[
+                ("Android packages", "*.apk *.xapk *.apks *.apkm"),
+                ("APK", "*.apk"),
+                ("XAPK", "*.xapk"),
+                ("APKS Bundle", "*.apks"),
+                ("APKM Bundle", "*.apkm"),
+                ("All", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        self._apk_open_project(path)
+
+    def _apk_open_project(self, path):
+        """Open a file as the current APK project."""
+        try:
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".xapk":
+                source_type = "xapk"
+            elif ext == ".apks":
+                source_type = "apks"
+            elif ext == ".apkm":
+                source_type = "apkm"
+            else:
+                source_type = "apk"
+
+            base = os.path.splitext(os.path.basename(path))[0]
+            projects_root = os.path.join(os.path.dirname(__file__), "apk_projects")
+            ensure_dir(projects_root)
+            working = os.path.join(projects_root, base)
+            final_working = working
+            n = 1
+            while os.path.exists(final_working) and not _is_empty_dir(final_working):
+                n += 1
+                final_working = f"{working}_{n}"
+            ensure_dir(final_working)
+
+            extract_dir = os.path.join(final_working, "extracted")
+            decoded_dir = os.path.join(final_working, "decoded")
+
+            self.apk_project = ApkProject(
+                name=base,
+                source_path=path,
+                source_type=source_type,
+                working_dir=final_working,
+                extract_dir=extract_dir,
+                decoded_dir=decoded_dir,
+                is_open=True,
+            )
+            ensure_dir(extract_dir)
+
+            # Backward-compat aliases
+            self.apk_current_path = path
+            self.apk_extract_dir = self.apk_project.extract_dir
+
+            # Extract the archive
+            import zipfile
+            with zipfile.ZipFile(path, 'r') as zf:
+                safe_extract_zip(zf, extract_dir)
+
+            # Bundle manifest.json parsing
+            if source_type in ("xapk", "apks", "apkm"):
+                manifest_path = os.path.join(extract_dir, "manifest.json")
+                if os.path.exists(manifest_path):
+                    try:
+                        import json
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            self.apk_project.bundle_manifest = json.load(f)
+                    except Exception:
+                        pass
+
+            # Collect file list
+            self.apk_project.file_list = []
+            for root, _, files in os.walk(extract_dir):
+                for f in files:
+                    rel = os.path.relpath(os.path.join(root, f), extract_dir)
+                    self.apk_project.file_list.append(rel.replace('\\', '/'))
+
+            # Run AAPT2 dumps once and cache
+            self._apk_run_aapt2_dumps_for_project()
+
+            # Refresh all sub-tabs
+            self._apk_refresh_analysis()
+            self._apk_refresh_disassembly_files()
+            self._apk_refresh_assembly_state()
+            self._apk_refresh_signing_state()
+            self._apk_refresh_bundles_state()
+            self._apk_update_project_bar()
+
+            self._apk_add_recent_path(path)
+            self.log(f"Opened project: {self.apk_project.name} ({source_type})", 'success')
+        except Exception as e:
+            self.log(f"Failed to open project: {e}", 'error')
+            styled_messagebox(self, "Error", f"Failed to open project:\n{e}", "error")
+
+    def _apk_close_project(self):
+        """Close the current project."""
+        if not self.apk_project.is_open:
+            return
+        name = self.apk_project.name
+        self.apk_project = ApkProject()
+        self.apk_current_path = None
+        self.apk_extract_dir = None
+        if hasattr(self, 'apk_analysis_tree'):
+            try:
+                self.apk_analysis_tree.delete(*self.apk_analysis_tree.get_children())
+            except Exception:
+                pass
+        for attr in ('apk_badging_text', 'apk_perms_text', 'apk_res_text', 'apk_manifest_text', 'apk_strings_text'):
+            if hasattr(self, attr):
+                try:
+                    getattr(self, attr).delete('1.0', tk.END)
+                except Exception:
+                    pass
+        self._apk_update_project_bar()
+        self._apk_refresh_disassembly_files()
+        self._apk_refresh_assembly_state()
+        self._apk_refresh_signing_state()
+        self._apk_refresh_bundles_state()
+        self.log(f"Closed project: {name}", 'info')
+
+    def _apk_update_project_bar(self):
+        """Update the project bar at the top of the APK tab."""
+        if not hasattr(self, 'apk_project_label'):
+            return
+        p = getattr(self, 'apk_project', None)
+        if p is None:
+            return
+        if p.is_open:
+            info = (f"Project: {p.name} | {p.source_type.upper()} | "
+                    f"pkg={p.package_name or '?'} | v={p.version_name or '?'} | "
+                    f"SDK={p.target_sdk or '?'} | {len(p.file_list)} files")
+            self.apk_project_label.config(text=info, foreground=COLORS.get('accent_green', '#3fb950'))
+        else:
+            self.apk_project_label.config(
+                text="No project open — click 'Open APK' or 'Open Bundle' to start",
+                foreground=COLORS.get('text_secondary', '#8b949e'))
+
+    def _apk_run_aapt2_dumps_for_project(self):
+        """Run AAPT2 dumps in a background thread to avoid blocking the UI."""
+        p = self.apk_project
+        if not p.is_open or not p.source_path:
+            return
+        # Capture source path now so the worker uses a stable value
+        source_path = p.source_path
+        if p.source_type != "apk":
+            # AAPT2 accepts an APK, not an outer XAPK/APKS/APKM container.
+            inner_apks = [name for name in p.file_list if name.lower().endswith('.apk')]
+            if inner_apks and p.extract_dir:
+                source_path = os.path.join(p.extract_dir, inner_apks[0])
+            else:
+                self.log("No inner APK found for bundle analysis", 'warning')
+                return
+        # Show "Loading..." placeholders
+        for attr in ('apk_badging_text', 'apk_perms_text', 'apk_res_text',
+                     'apk_manifest_text', 'apk_strings_text'):
+            if hasattr(self, attr):
+                w = getattr(self, attr)
+                w.delete('1.0', tk.END)
+                w.insert('1.0', "Loading...")
+
+        def _worker():
+            try:
+                aapt2 = tool_resolve("aapt2")
+                if not aapt2:
+                    self.after(0, lambda: self._apk_aapt2_no_tool())
+                    return
+
+                def _safe(res):
+                    if res is None:
+                        return ""
+                    out = res.stdout
+                    if out is None:
+                        return ""
+                    if isinstance(out, bytes):
+                        return out.decode(errors='replace')
+                    return str(out)
+
+                res = run_cmd([aapt2, "dump", "badging", source_path])
+                badging = _safe(res)
+                res = run_cmd([aapt2, "dump", "permissions", source_path])
+                perms = _safe(res)
+                res = run_cmd([aapt2, "dump", "resources", source_path])
+                resources = _safe(res)
+                res = run_cmd([aapt2, "dump", "xmltree", source_path, "--file=AndroidManifest.xml"])
+                manifest = _safe(res)
+                res = run_cmd([aapt2, "dump", "strings", source_path])
+                strings_out = _safe(res)
+
+                # Parse metadata from badging
+                for line in badging.splitlines():
+                    if line.startswith("package:"):
+                        m = re.search(r"name='([^']+)'", line)
+                        if m:
+                            p.package_name = m.group(1)
+                        m = re.search(r"versionCode='([^']+)'", line)
+                        if m:
+                            p.version_code = m.group(1)
+                        m = re.search(r"versionName='([^']+)'", line)
+                        if m:
+                            p.version_name = m.group(1)
+                    if line.startswith("sdkVersion:"):
+                        p.target_sdk = line.split("'")[1] if "'" in line else line.split(":", 1)[1].strip()
+                    if line.startswith("targetSdkVersion:"):
+                        p.target_sdk = line.split("'")[1] if "'" in line else line.split(":", 1)[1].strip()
+
+                # Capture values in default args to avoid closure surprises
+                def _update(b=badging, p2=perms, r=resources, m=manifest, s=strings_out):
+                    # Truncate very large outputs to keep UI responsive
+                    MAX = 2_000_000
+                    for attr, text in (('apk_badging_text', b),
+                                       ('apk_perms_text', p2),
+                                       ('apk_res_text', r),
+                                       ('apk_manifest_text', m),
+                                       ('apk_strings_text', s)):
+                        if hasattr(self, attr):
+                            w = getattr(self, attr)
+                            w.delete('1.0', tk.END)
+                            if text and len(text) > MAX:
+                                shown = text[:MAX]
+                                shown += f"\n\n[... truncated {len(text) - MAX:,} characters for display ...]"
+                                w.insert('1.0', shown)
+                            else:
+                                w.insert('1.0', text)
+                    self._apk_update_project_bar()
+                self.after(0, _update)
+            except Exception as e:
+                self.after(0, lambda: self.log(f"AAPT2 error: {e}", 'error'))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apk_aapt2_no_tool(self):
+        """Show message in analysis tabs when aapt2 is not available."""
+        msg = "aapt2 tool not found. Install aapt2 in the tools/ directory."
+        for attr in ('apk_badging_text', 'apk_perms_text', 'apk_res_text',
+                     'apk_manifest_text', 'apk_strings_text'):
+            if hasattr(self, attr):
+                w = getattr(self, attr)
+                w.delete('1.0', tk.END)
+                w.insert('1.0', msg)
+        self.log(msg, 'warning')
+
+    def _apk_refresh_analysis(self):
+        """Populate the analysis tree from the project's extract_dir."""
+        if not hasattr(self, 'apk_analysis_tree'):
+            return
+        self.apk_analysis_tree.delete(*self.apk_analysis_tree.get_children())
+        if not self.apk_project.is_open or not self.apk_project.extract_dir:
+            return
+        if not os.path.isdir(self.apk_project.extract_dir):
+            return
+        for rel in self.apk_project.file_list:
+            parts = rel.split('/')
+            parent_id = ''
+            extract_dir = self.apk_project.extract_dir
+            for i, part in enumerate(parts):
+                is_last = (i == len(parts) - 1)
+                if is_last:
+                    if extract_dir:
+                        full = os.path.join(extract_dir, rel)
+                        size = os.path.getsize(full) if os.path.exists(full) else 0
+                    else:
+                        size = 0
+                    ext = os.path.splitext(part)[1].lower().lstrip('.') or "file"
+                    self.apk_analysis_tree.insert(parent_id, 'end', text=part, values=(f"{size:,}", ext))
+                else:
+                    found = None
+                    for child in self.apk_analysis_tree.get_children(parent_id):
+                        if self.apk_analysis_tree.item(child, 'text') == part:
+                            found = child
+                            break
+                    if found is None:
+                        parent_id = self.apk_analysis_tree.insert(parent_id, 'end', text=part,
+                                                                   values=("", "dir"), open=True)
+                    else:
+                        parent_id = found
+
+    def _apk_refresh_disassembly_files(self):
+        if not hasattr(self, 'apk_disasm_files_list'):
+            return
+        self.apk_disasm_files_list.delete(0, tk.END)
+        if not self.apk_project.is_open:
+            return
+        for f in sorted(self.apk_project.file_list):
+            if f.endswith(('.dex', '.xml', '.arsc')):
+                self.apk_disasm_files_list.insert(tk.END, f)
+
+    def _apk_refresh_assembly_state(self):
+        if not hasattr(self, 'apk_asm_decoded_entry'):
+            return
+        p = self.apk_project
+        if p.is_open and p.decoded_dir and os.path.isdir(p.decoded_dir):
+            self.apk_asm_decoded_entry.delete(0, tk.END)
+            self.apk_asm_decoded_entry.insert(0, p.decoded_dir)
+        if p.is_open and p.built_apk and os.path.isfile(p.built_apk):
+            self.apk_asm_output_entry.delete(0, tk.END)
+            self.apk_asm_output_entry.insert(0, p.built_apk)
+
+    def _apk_refresh_signing_state(self):
+        if not hasattr(self, 'apk_sign_keystore_entry'):
+            return
+        p = self.apk_project
+        if p.is_open and p.keystore:
+            self.apk_sign_keystore_entry.delete(0, tk.END)
+            self.apk_sign_keystore_entry.insert(0, p.keystore)
+        if p.is_open and p.key_alias:
+            self.apk_sign_alias_entry.delete(0, tk.END)
+            self.apk_sign_alias_entry.insert(0, p.key_alias)
+
+    def _apk_refresh_bundles_state(self):
+        if not hasattr(self, 'apk_bundle_files_list'):
+            return
+        self.apk_bundle_files_list.delete(0, tk.END)
+        if not self.apk_project.is_open:
+            return
+        if self.apk_project.source_type in ("xapk", "apks", "apkm"):
+            for f in self.apk_project.file_list:
+                if f.lower().endswith('.apk'):
+                    self.apk_bundle_files_list.insert(tk.END, f)
+        if hasattr(self, 'apk_bundle_manifest_text'):
+            self.apk_bundle_manifest_text.delete('1.0', tk.END)
+            extract_dir = self.apk_project.extract_dir
+            if extract_dir:
+                manifest_path = os.path.join(extract_dir, "manifest.json")
+                if os.path.isfile(manifest_path):
+                    try:
+                        with open(manifest_path, 'r', encoding='utf-8') as f:
+                            self.apk_bundle_manifest_text.insert('1.0', f.read())
+                    except Exception as e:
+                        self.apk_bundle_manifest_text.insert('1.0', f"Error: {e}")
+
+    # ------------------------------------------------------------------ Analysis sub-tab
+
+    def _build_apk_analysis(self, parent):
+        """APK Analysis sub-tab: file tree + badging/perms/resources/manifest/strings."""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill='x', padx=5, pady=5)
+        ttk.Button(toolbar, text="🔄 Refresh", command=self._apk_refresh_analysis).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="📤 Export Report", command=self._apk_export_analysis_report).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="📂 Open in File Editor", command=self._apk_open_in_file_editor).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="🔍 Open in Hex Editor", command=self._apk_open_in_hex_editor).pack(side='left', padx=2)
+
+        paned2 = ttk.PanedWindow(parent, orient='horizontal')
+        paned2.pack(fill='both', expand=True, padx=5, pady=5)
+
+        left2 = ttk.Frame(paned2)
+        paned2.add(left2, weight=1)
+        ttk.Label(left2, text="APK Contents", font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_analysis_tree = ttk.Treeview(left2, columns=('size', 'type'),
+                                              show='tree headings', height=20)
+        self.apk_analysis_tree.heading('#0', text='File')
+        self.apk_analysis_tree.heading('size', text='Size')
+        self.apk_analysis_tree.heading('type', text='Type')
+        self.apk_analysis_tree.column('size', width=90, anchor='e')
+        self.apk_analysis_tree.column('type', width=60, anchor='w')
+        self.apk_analysis_tree.pack(fill='both', expand=True)
+        self._setup_apk_tree_context_menu()
+
+        right2 = ttk.Frame(paned2)
+        paned2.add(right2, weight=2)
+        right_nb = ttk.Notebook(right2)
+        right_nb.pack(fill='both', expand=True)
+
+        badging_frame = ttk.Frame(right_nb)
+        right_nb.add(badging_frame, text="Badging")
+        self.apk_badging_text = self._make_scrolledtext(badging_frame)
+
+        perm_frame = ttk.Frame(right_nb)
+        right_nb.add(perm_frame, text="Permissions")
+        self.apk_perms_text = self._make_scrolledtext(perm_frame)
+
+        res_frame = ttk.Frame(right_nb)
+        right_nb.add(res_frame, text="Resources")
+        self.apk_res_text = self._make_scrolledtext(res_frame)
+
+        manifest_frame = ttk.Frame(right_nb)
+        right_nb.add(manifest_frame, text="Manifest")
+        self.apk_manifest_text = self._make_scrolledtext(manifest_frame)
+
+        strings_frame = ttk.Frame(right_nb)
+        right_nb.add(strings_frame, text="Strings")
+        self.apk_strings_text = self._make_scrolledtext(strings_frame)
+
+    def _make_scrolledtext(self, parent):
+        """Create a ScrolledText widget"""
+        st = scrolledtext.ScrolledText(parent, wrap='word', font=('Consolas', 10),
+                                       bg=COLORS.get('log_bg', '#1E1E1E'),
+                                       fg=COLORS.get('log_fg', '#D4D4D4'))
+        st.pack(fill='both', expand=True)
+        return st
+
+    def _setup_apk_tree_context_menu(self):
+        """Setup right-click context menu for APK tree"""
+        self.apk_tree_menu = tk.Menu(self, tearoff=0)
+        self.apk_tree_menu.add_command(label="📂 Open in File Editor", command=self._apk_open_in_file_editor)
+        self.apk_tree_menu.add_command(label="🔍 View in Hex Editor", command=self._apk_open_in_hex_editor)
+        self.apk_tree_menu.add_command(label="📁 Open Containing Folder", command=self._apk_open_containing_folder)
+        self.apk_tree_menu.add_separator()
+        self.apk_tree_menu.add_command(label="📋 Copy Path", command=self._apk_copy_path)
+        self.apk_tree_menu.add_command(label="💾 Extract to Disk...", command=self._apk_extract_file)
+        self.apk_tree_menu.add_separator()
+        self.apk_tree_menu.add_command(label="🔬 Baksmali .dex...", command=self._apk_baksmali_file)
+        self.apk_tree_menu.add_command(label="🔧 Disassemble XML...", command=self._apk_disassemble_xml)
+        self.apk_tree_menu.add_separator()
+        self.apk_tree_menu.add_command(label="🗑️ Remove from Project", command=self._apk_remove_file)
+        self.apk_tree = self.apk_analysis_tree
+        # Bind for Windows/macOS (Button-3) and Linux (Button-2)
+        self.apk_analysis_tree.bind("<Button-3>", self._apk_show_context_menu)
+        self.apk_analysis_tree.bind("<Button-2>", self._apk_show_context_menu)
+        self.apk_analysis_tree.bind("<Control-Button-1>", self._apk_show_context_menu)
+
+    def _apk_show_context_menu(self, event):
+        """Show context menu on right click"""
+        item = self.apk_analysis_tree.identify_row(event.y)
+        if item:
+            self.apk_analysis_tree.selection_set(item)
+            self.apk_analysis_tree.focus(item)
+            try:
+                self.apk_tree_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.apk_tree_menu.grab_release()
+
+    def _apk_get_full_path(self) -> Optional[str]:
+        """Get the full filesystem path of the currently selected tree item."""
+        path = self._apk_get_selected_path()
+        if not path:
+            return None
+        extract_dir = self.apk_project.extract_dir if self.apk_project.is_open else None
+        if not extract_dir:
+            extract_dir = self.apk_extract_dir
+        if not extract_dir:
+            return None
+        return os.path.join(extract_dir, path)
+
+    def _apk_open_containing_folder(self):
+        """Reveal the selected file in the OS file manager."""
+        full = self._apk_get_full_path()
+        if not full or not os.path.exists(full):
+            styled_messagebox(self, "Info", "No file selected or file no longer exists.", "info")
+            return
+        try:
+            folder = os.path.dirname(full)
+            if sys.platform.startswith('win'):
+                # /select, opens explorer with file highlighted
+                subprocess.Popen(['explorer', '/select,', os.path.normpath(full)])
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', '-R', full])
+            else:
+                subprocess.Popen(['xdg-open', folder])
+            self.log(f"Revealed: {full}", 'info')
+        except Exception as e:
+            self.log(f"Reveal error: {e}", 'error')
+
+    def _apk_open_in_file_editor(self):
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        extract_dir = self.apk_project.extract_dir if self.apk_project.is_open else None
+        if not extract_dir:
+            extract_dir = self.apk_extract_dir
+        if not extract_dir:
+            styled_messagebox(self, "Info", "No project open.", "info")
+            return
+        full = os.path.join(extract_dir, path)
+        if not os.path.exists(full):
+            styled_messagebox(self, "Error", f"File no longer exists in extract:\n{full}", "error")
+            return
+        self._open_file_editor_and_load_file(full)
+
+    def _apk_open_in_hex_editor(self):
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        extract_dir = self.apk_project.extract_dir if self.apk_project.is_open else None
+        if not extract_dir:
+            extract_dir = self.apk_extract_dir
+        if not extract_dir:
+            styled_messagebox(self, "Info", "No project open.", "info")
+            return
+        full = os.path.join(extract_dir, path)
+        if not os.path.exists(full):
+            styled_messagebox(self, "Error", f"File no longer exists in extract:\n{full}", "error")
+            return
+        self._open_hex_editor_and_load_file(full)
+
+    def _open_hex_editor_and_load_file(self, file_path: str):
+        """Open a file in the in-app hex editor."""
+        if not os.path.exists(file_path):
+            styled_messagebox(self, "Error", f"File not found:\n{file_path}", "error")
+            return
+        # Switch to Hex Editor tab
+        nb = getattr(self, 'main_notebook', None)
+        if nb is not None:
+            for i, tab_id in enumerate(nb.tabs()):
+                if nb.tab(tab_id, 'text') == "Hex Editor":
+                    nb.select(i)
+                    break
+        # Load the file into the in-app hex editor widget
+        if hasattr(self, 'hex_editor_widget') and self.hex_editor_widget is not None:
+            try:
+                self.hex_editor_widget.load_file(file_path)
+                self.log(f"Loaded in hex editor: {os.path.basename(file_path)}", 'info')
+                return
+            except Exception as e:
+                self.log(f"Hex editor load failed: {e}", 'error')
+        # Fall back to system default viewer
+        try:
+            os.startfile(file_path)
+            self.log(f"Opened in system viewer: {os.path.basename(file_path)}", 'info')
+        except Exception as e:
+            styled_messagebox(self, "Error", f"Failed to open file:\n{e}", "error")
+
+    def _apk_copy_path(self):
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(path)
+        self.log(f"Copied path: {path}", 'info')
+
+    def _apk_extract_file(self):
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        base_dir = (self.apk_project.extract_dir if self.apk_project.is_open else None) or self.apk_extract_dir
+        if not base_dir:
+            styled_messagebox(self, "Info", "No project open.", "info")
+            return
+        full = os.path.join(base_dir, path)
+        if not os.path.exists(full):
+            styled_messagebox(self, "Error", f"File no longer exists:\n{full}", "error")
+            return
+        out = filedialog.asksaveasfilename(title="Save extracted file as", initialfile=os.path.basename(path))
+        if not out:
+            return
+        try:
+            shutil.copy2(full, out)
+            self.log(f"Extracted: {path} -> {out}", 'success')
+            styled_messagebox(self, "Success", f"Saved to:\n{out}", "success")
+        except Exception as e:
+            self.log(f"Extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_baksmali_file(self):
+        """Baksmali a .dex file (project-aware)."""
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        if not path.endswith('.dex'):
+            styled_messagebox(self, "Info", "Please select a .dex file (right-click the file in the tree).", "info")
+            return
+        base_dir = (self.apk_project.extract_dir if self.apk_project.is_open else None) or self.apk_extract_dir
+        if not base_dir:
+            styled_messagebox(self, "Info", "No project open.", "info")
+            return
+        full = os.path.join(base_dir, path)
+        if not os.path.exists(full):
+            styled_messagebox(self, "Error", f"File no longer exists:\n{full}", "error")
+            return
+        # Project-aware default output dir
+        default_parent = base_dir
+        if self.apk_project.is_open and self.apk_project.decoded_dir:
+            decoded_dir = self.apk_project.decoded_dir
+            dex_base = os.path.splitext(os.path.basename(path))[0]
+            default_parent = decoded_dir
+            initial = os.path.join(decoded_dir, f"{dex_base}_smali")
+        else:
+            initial = os.path.join(base_dir, os.path.splitext(os.path.basename(path))[0] + "_smali")
+        out_dir = filedialog.askdirectory(title="Select output directory for smali", initialdir=initial, mustexist=False)
+        if not out_dir:
+            return
+        self._run_baksmali(full, out_dir)
+
+    def _run_baksmali(self, dex_path: str, out_dir: str):
+        """Run baksmali on a dex file"""
+        try:
+            self.status_label.config(text="Disassembling DEX with baksmali...")
+            self.progress.start()
+            self.log(f"Disassembling DEX: {os.path.basename(dex_path)}", 'info')
+            baksmali = tool_resolve("baksmali.jar") or os.path.join(TOOLS_DIR, "apktool", "baksmali.jar")
+            java = tool_resolve("java")
+            if not java:
+                java = os.path.join(TOOLS_DIR, "java", "bin", "java.exe")
+            if not os.path.exists(baksmali):
+                raise RuntimeError("baksmali.jar not found")
+            if not java or not os.path.exists(java):
+                raise RuntimeError("java not found")
+            res = run_cmd([java, "-jar", baksmali, "d", dex_path, "-o", out_dir])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log("✓ baksmali completed", 'success')
+                self.status_label.config(text="Ready")
+                styled_messagebox(self, "Success", f"Smali output: {out_dir}", "success")
+            else:
+                stderr = res.stderr if res and res.stderr is not None else b""
+                err = stderr.decode(errors='replace') if isinstance(stderr, bytes) else str(stderr)
+                self.log(f"baksmali failed: {err}", 'error')
+                self.status_label.config(text="Ready")
+                styled_messagebox(self, "Error", f"baksmali failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.status_label.config(text="Ready")
+            self.log(f"baksmali error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_disassemble_xml(self):
+        """Disassemble a binary XML file (project-aware)."""
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        if not path.endswith('.xml'):
+            styled_messagebox(self, "Info", "Please select an .xml file (right-click the file in the tree).", "info")
+            return
+        try:
+            aapt2 = tool_resolve("aapt2")
+            if not aapt2:
+                raise RuntimeError("aapt2 not found")
+            source = self.apk_project.source_path if self.apk_project.is_open else self.apk_current_path
+            if not source:
+                styled_messagebox(self, "Info", "No APK source available. Open a project first.", "info")
+                return
+            self.log(f"Disassembling XML: {path}", 'info')
+            self.progress.start()
+            res = run_cmd([aapt2, "dump", "xmltree", source, f"--file={path}"])
+            self.progress.stop()
+            stdout = res.stdout if res and res.stdout is not None else b""
+            out = stdout.decode(errors='replace') if isinstance(stdout, bytes) else str(stdout)
+            TextOutputDialog(self, f"XMLTree: {path}", out)
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"XML disassemble error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_remove_file(self):
+        """Remove a file from the extracted project directory (and re-pack the source APK if it's a project)."""
+        path = self._apk_get_selected_path()
+        if not path:
+            styled_messagebox(self, "Info", "No file selected.", "info")
+            return
+        full = self._apk_get_full_path()
+        if not full or not os.path.exists(full):
+            styled_messagebox(self, "Error", "File no longer exists in extract.", "error")
+            return
+        if not messagebox.askyesno("Confirm", f"Remove from project:\n{path}\n\nThis deletes the file from the extracted directory."):
+            return
+        try:
+            os.remove(full)
+            # Update the file list and tree
+            if path in self.apk_project.file_list:
+                self.apk_project.file_list.remove(path)
+            self._apk_refresh_analysis()
+            self._apk_refresh_disassembly_files()
+            self.log(f"Removed from project: {path}", 'success')
+        except Exception as e:
+            self.log(f"Remove error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_get_selected_path(self):
+        sel = self.apk_analysis_tree.selection()
+        if not sel:
+            return None
+        item = sel[0]
+        path_parts = []
+        cur = item
+        while cur:
+            text = self.apk_analysis_tree.item(cur, 'text')
+            if text and text != '<root>':
+                path_parts.insert(0, text)
+            cur = self.apk_analysis_tree.parent(cur)
+        return '/'.join(path_parts) if path_parts else None
+
+    def _apk_export_analysis_report(self):
+        """Export analysis report to a text file"""
+        source = (self.apk_project.source_path if self.apk_project.is_open else None) or self.apk_current_path
+        if not source:
+            styled_messagebox(self, "Info", "No APK loaded", "info")
+            return
+        out = filedialog.asksaveasfilename(title="Save report as", defaultextension=".txt",
+                                            initialfile=os.path.basename(source) + ".report.txt")
+        if not out:
+            return
+        try:
+            with open(out, 'w', encoding='utf-8') as f:
+                f.write(f"APK Analysis Report: {source}\n")
+                f.write("=" * 70 + "\n\n")
+                f.write("=== Badging ===\n")
+                f.write(self.apk_badging_text.get('1.0', tk.END))
+                f.write("\n\n=== Permissions ===\n")
+                f.write(self.apk_perms_text.get('1.0', tk.END))
+                f.write("\n\n=== Resources ===\n")
+                f.write(self.apk_res_text.get('1.0', tk.END))
+                f.write("\n\n=== Manifest ===\n")
+                f.write(self.apk_manifest_text.get('1.0', tk.END))
+                f.write("\n\n=== Strings ===\n")
+                f.write(self.apk_strings_text.get('1.0', tk.END))
+            self.log(f"Report exported: {out}", 'success')
+            styled_messagebox(self, "Success", f"Report saved to:\n{out}", "success")
+        except Exception as e:
+            self.log(f"Export error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ------------------------------------------------------------------ Disassembly sub-tab
+
+    def _build_apk_disassembly(self, parent):
+        """APK Disassembly sub-tab (project-aware)."""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill='x', padx=5, pady=5)
+        ttk.Button(toolbar, text="Apktool Decode (current)",
+                   command=self._apk_action_apktool_decode).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Baksmali .dex",
+                   command=self._apk_action_baksmali).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="DEX→JAR",
+                   command=self._apk_action_dex_to_jar).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="AAPT2 XMLTree",
+                   command=lambda: self._apk_action_aapt2_subcmd("xmltree")).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="AAPT2 Resources",
+                   command=lambda: self._apk_action_aapt2_subcmd("resources")).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="AAPT2 Strings",
+                   command=lambda: self._apk_action_aapt2_subcmd("strings")).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="AAPT2 Badging",
+                   command=lambda: self._apk_action_aapt2_subcmd("badging")).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="AAPT2 Permissions",
+                   command=lambda: self._apk_action_aapt2_subcmd("permissions")).pack(side='left', padx=2)
+
+        body = ttk.PanedWindow(parent, orient='horizontal')
+        body.pack(fill='both', expand=True, padx=5, pady=5)
+
+        left_pane = ttk.PanedWindow(body, orient='vertical')
+        body.add(left_pane, weight=1)
+
+        files_frame = ttk.Frame(left_pane)
+        left_pane.add(files_frame, weight=2)
+        ttk.Label(files_frame, text="Files in project (.dex/.xml/.arsc)",
+                  font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_disasm_files_list = tk.Listbox(files_frame, font=('Consolas', 10), height=15,
+                                                 bg=COLORS.get('log_bg', '#1E1E1E'),
+                                                 fg=COLORS.get('log_fg', '#D4D4D4'))
+        self.apk_disasm_files_list.pack(fill='both', expand=True)
+
+        history_frame = ttk.Frame(left_pane)
+        left_pane.add(history_frame, weight=1)
+        ttk.Label(history_frame, text="Recent operations",
+                  font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_disasm_history_list = tk.Listbox(history_frame, font=('Consolas', 10), height=8,
+                                                  bg=COLORS.get('log_bg', '#1E1E1E'),
+                                                  fg=COLORS.get('log_fg', '#D4D4D4'))
+        self.apk_disasm_history_list.pack(fill='both', expand=True)
+
+        out_frame = ttk.Frame(body)
+        body.add(out_frame, weight=2)
+        ttk.Label(out_frame, text="Output", font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_disasm_output_text = self._make_scrolledtext(out_frame)
+
+    def _apk_log_disasm_history(self, line: str):
+        if hasattr(self, 'apk_disasm_history_list'):
+            self.apk_disasm_history_list.insert(tk.END, line)
+        if hasattr(self, 'apk_disasm_output_text'):
+            self.apk_disasm_output_text.delete('1.0', tk.END)
+            self.apk_disasm_output_text.insert('1.0', line + "\n")
+
+    def _apk_action_baksmali(self):
+        """Baksmali: prompt for output dir, run on project's first .dex."""
+        if not self._apk_require_project():
+            return
+        dex = None
+        for f in self.apk_project.file_list:
+            if f.endswith('.dex'):
+                dex = f
+                break
+        if not dex:
+            styled_messagebox(self, "Info", "No .dex files in project.", "info")
+            return
+        extract_dir = self.apk_project.extract_dir
+        if not extract_dir:
+            return
+        full = os.path.join(extract_dir, dex)
+        decoded_dir = self.apk_project.decoded_dir
+        dex_base = os.path.splitext(os.path.basename(dex))[0]
+        default_out = os.path.join(decoded_dir, f"{dex_base}_smali") if decoded_dir else ""
+        out_dir = filedialog.askdirectory(title="Select output directory for smali", initialdir=default_out)
+        if not out_dir:
+            return
+        self._apk_log_disasm_history(f"Baksmali: {dex} -> {out_dir}")
+        self._run_baksmali(full, out_dir)
+
+    def _apk_action_dex_to_jar(self):
+        if not self._apk_require_project():
+            return
+        dex = None
+        for f in self.apk_project.file_list:
+            if f.endswith('.dex'):
+                dex = f
+                break
+        if not dex:
+            styled_messagebox(self, "Info", "No .dex files in project.", "info")
+            return
+        extract_dir = self.apk_project.extract_dir
+        working_dir = self.apk_project.working_dir
+        if not extract_dir or not working_dir:
+            return
+        full = os.path.join(extract_dir, dex)
+        default_out = os.path.join(working_dir,
+                                   os.path.splitext(dex)[0] + ".jar")
+        out = filedialog.asksaveasfilename(title="Save JAR as", defaultextension=".jar",
+                                           initialfile=os.path.basename(default_out))
+        if not out:
+            return
+        try:
+            d2j = tool_resolve("d2j-dex2jar")
+            if not d2j:
+                raise RuntimeError("d2j-dex2jar not found")
+            self.log(f"DEX -> JAR: {dex}", 'info')
+            self.progress.start()
+            res = run_cmd([d2j, "-o", out, full])
+            self.progress.stop()
+            out_text = res.stdout.decode(errors='replace')
+            self._apk_log_disasm_history(f"DEX→JAR: {dex} -> {out}\n{out_text}")
+            if res.returncode == 0:
+                self.log(f"✓ Saved: {out}", 'success')
+            else:
+                self.log(f"d2j failed: {res.stderr.decode(errors='replace')}", 'error')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"DEX→JAR error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_action_aapt2_subcmd(self, subcmd: str):
+        if not self._apk_require_project():
+            return
+        try:
+            aapt2 = tool_resolve("aapt2")
+            if not aapt2:
+                raise RuntimeError("aapt2 not found")
+            target = self.apk_project.source_path
+            extra = []
+            if subcmd == "xmltree":
+                fp = simpledialog.askstring("XMLTree", "Resource path:", initialvalue="AndroidManifest.xml", parent=self)
+                if not fp:
+                    return
+                extra = [f"--file={fp}"]
+            self.log(f"AAPT2 dump {subcmd}: {self.apk_project.name}", 'info')
+            self.progress.start()
+            res = run_cmd([aapt2, "dump", subcmd, target] + extra)
+            self.progress.stop()
+            stdout = res.stdout if res and res.stdout is not None else b""
+            stderr = res.stderr if res and res.stderr is not None else b""
+            if isinstance(stdout, str):
+                out_text = stdout
+            else:
+                out_text = stdout.decode(errors='replace')
+            if isinstance(stderr, str):
+                err_text = stderr
+            else:
+                err_text = stderr.decode(errors='replace')
+            self._apk_log_disasm_history(f"aapt2 dump {subcmd}: {self.apk_project.name}\n{out_text}")
+            if res.returncode == 0:
+                self.log(f"✓ AAPT2 {subcmd} done", 'success')
+            else:
+                self.log(f"AAPT2 {subcmd} failed: {err_text}", 'error')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"AAPT2 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ------------------------------------------------------------------ Assembly sub-tab
+
+    def _build_apk_assembly(self, parent):
+        """APK Assembly sub-tab (project-aware)."""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill='x', padx=5, pady=5)
+        ttk.Button(toolbar, text="Apktool Build (current)",
+                   command=self._apk_action_apktool_build).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Smali → DEX",
+                   command=self._apk_action_smali_to_dex).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="JAR → DEX",
+                   command=self._apk_action_jar_to_dex).pack(side='left', padx=2)
+
+        outer = ttk.PanedWindow(parent, orient='vertical')
+        outer.pack(fill='both', expand=True, padx=5, pady=5)
+
+        form = ttk.Frame(outer)
+        outer.add(form, weight=1)
+        ttk.Label(form, text="Decoded dir:").grid(row=0, column=0, sticky='w', padx=2, pady=2)
+        self.apk_asm_decoded_entry = ttk.Entry(form, width=70)
+        self.apk_asm_decoded_entry.grid(row=0, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Button(form, text="Browse...",
+                   command=self._apk_browse_decoded_dir).grid(row=0, column=2, padx=2, pady=2)
+        ttk.Label(form, text="Output APK:").grid(row=1, column=0, sticky='w', padx=2, pady=2)
+        self.apk_asm_output_entry = ttk.Entry(form, width=70)
+        self.apk_asm_output_entry.grid(row=1, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Button(form, text="Browse...",
+                   command=self._apk_browse_output_apk).grid(row=1, column=2, padx=2, pady=2)
+        form.columnconfigure(1, weight=1)
+
+        history = ttk.Frame(outer)
+        outer.add(history, weight=1)
+        ttk.Label(history, text="Build history", font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_asm_history_list = tk.Listbox(history, font=('Consolas', 10), height=6,
+                                               bg=COLORS.get('log_bg', '#1E1E1E'),
+                                               fg=COLORS.get('log_fg', '#D4D4D4'))
+        self.apk_asm_history_list.pack(fill='both', expand=True)
+
+        log_frame = ttk.Frame(outer)
+        outer.add(log_frame, weight=2)
+        ttk.Label(log_frame, text="Build log", font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_asm_log_text = self._make_scrolledtext(log_frame)
+
+    def _apk_browse_decoded_dir(self):
+        d = filedialog.askdirectory(title="Select decoded directory",
+                                    initialdir=self.apk_project.decoded_dir if self.apk_project.is_open else os.getcwd())
+        if d:
+            self.apk_asm_decoded_entry.delete(0, tk.END)
+            self.apk_asm_decoded_entry.insert(0, d)
+
+    def _apk_browse_output_apk(self):
+        d = filedialog.asksaveasfilename(title="Save output APK as", defaultextension=".apk",
+                                         initialfile="built.apk")
+        if d:
+            self.apk_asm_output_entry.delete(0, tk.END)
+            self.apk_asm_output_entry.insert(0, d)
+
+    def _apk_log_asm_history(self, line: str):
+        if hasattr(self, 'apk_asm_history_list'):
+            self.apk_asm_history_list.insert(tk.END, line)
+        if hasattr(self, 'apk_asm_log_text'):
+            self.apk_asm_log_text.delete('1.0', tk.END)
+            self.apk_asm_log_text.insert('1.0', line + "\n")
+
+    def _apk_action_smali_to_dex(self):
+        if not self._apk_require_project():
+            return
+        src = filedialog.askdirectory(title="Select smali directory",
+                                      initialdir=self.apk_project.decoded_dir)
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save DEX as", defaultextension=".dex",
+                                          initialfile="classes.dex")
+        if not out:
+            return
+        try:
+            smali = tool_resolve("smali.jar") or os.path.join(TOOLS_DIR, "apktool", "smali.jar")
+            java = tool_resolve("java")
+            if not java:
+                java = os.path.join(TOOLS_DIR, "java", "bin", "java.exe")
+            if not os.path.exists(smali):
+                raise RuntimeError("smali.jar not found")
+            if not java or not os.path.exists(java):
+                raise RuntimeError("java not found")
+            self.log(f"Smali → DEX: {src}", 'info')
+            self.progress.start()
+            res = run_cmd([java, "-jar", smali, "a", src, "-o", out])
+            self.progress.stop()
+            out_text = res.stdout.decode(errors='replace')
+            self._apk_log_asm_history(f"smali a: {src} -> {out}\n{out_text}")
+            if res.returncode == 0:
+                self.log(f"✓ Smali → DEX: {out}", 'success')
+            else:
+                self.log(f"Smali failed: {res.stderr.decode(errors='replace')}", 'error')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Smali error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_action_jar_to_dex(self):
+        jar = filedialog.askopenfilename(title="Select JAR", filetypes=[("JAR", "*.jar"), ("All", "*.*")])
+        if not jar:
+            return
+        out = filedialog.asksaveasfilename(title="Save DEX as", defaultextension=".dex",
+                                          initialfile="classes.dex")
+        if not out:
+            return
+        try:
+            d2j = tool_resolve("d2j-jar2dex")
+            if not d2j:
+                raise RuntimeError("d2j-jar2dex not found")
+            self.log(f"JAR → DEX: {jar}", 'info')
+            self.progress.start()
+            res = run_cmd([d2j, "-o", out, jar])
+            self.progress.stop()
+            out_text = res.stdout.decode(errors='replace')
+            self._apk_log_asm_history(f"jar2dex: {jar} -> {out}\n{out_text}")
+            if res.returncode == 0:
+                self.log(f"✓ JAR → DEX: {out}", 'success')
+            else:
+                self.log(f"jar2dex failed: {res.stderr.decode(errors='replace')}", 'error')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"jar2dex error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ------------------------------------------------------------------ Signing sub-tab
+
+    def _build_apk_signing(self, parent):
+        """APK Signing sub-tab (project-aware)."""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill='x', padx=5, pady=5)
+        ttk.Button(toolbar, text="Verify Current",
+                   command=self._apk_action_verify).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Sign Current",
+                   command=self._apk_action_sign).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Unsign Current",
+                   command=self._apk_action_unsign).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Zipalign Current",
+                   command=self._apk_action_zipalign).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Generate Test Keystore",
+                   command=self._apk_generate_keystore).pack(side='left', padx=2)
+
+        outer = ttk.PanedWindow(parent, orient='vertical')
+        outer.pack(fill='both', expand=True, padx=5, pady=5)
+
+        form = ttk.Frame(outer)
+        outer.add(form, weight=1)
+        ttk.Label(form, text="Keystore:").grid(row=0, column=0, sticky='w', padx=2, pady=2)
+        self.apk_sign_keystore_entry = ttk.Entry(form, width=70)
+        self.apk_sign_keystore_entry.grid(row=0, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Button(form, text="Browse...",
+                   command=self._apk_browse_keystore).grid(row=0, column=2, padx=2, pady=2)
+        ttk.Label(form, text="Password:").grid(row=1, column=0, sticky='w', padx=2, pady=2)
+        self.apk_sign_pass_entry = ttk.Entry(form, width=70, show='*')
+        self.apk_sign_pass_entry.grid(row=1, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Label(form, text="Alias:").grid(row=2, column=0, sticky='w', padx=2, pady=2)
+        self.apk_sign_alias_entry = ttk.Entry(form, width=70)
+        self.apk_sign_alias_entry.grid(row=2, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Label(form, text="Key Password:").grid(row=3, column=0, sticky='w', padx=2, pady=2)
+        self.apk_sign_keypass_entry = ttk.Entry(form, width=70, show='*')
+        self.apk_sign_keypass_entry.grid(row=3, column=1, sticky='ew', padx=2, pady=2)
+        form.columnconfigure(1, weight=1)
+
+        nb = ttk.Notebook(outer)
+        outer.add(nb, weight=2)
+
+        verify_frame = ttk.Frame(nb)
+        nb.add(verify_frame, text="Verify Output")
+        self.apk_sign_verify_text = self._make_scrolledtext(verify_frame)
+
+        signlog_frame = ttk.Frame(nb)
+        nb.add(signlog_frame, text="Sign/Align Log")
+        self.apk_sign_log_text = self._make_scrolledtext(signlog_frame)
+
+    def _apk_browse_keystore(self):
+        ks = filedialog.askopenfilename(title="Select keystore",
+                                        filetypes=[("Keystore", "*.jks;*.keystore;*.p12"), ("All", "*.*")])
+        if ks:
+            self.apk_sign_keystore_entry.delete(0, tk.END)
+            self.apk_sign_keystore_entry.insert(0, ks)
+
+    def _apk_action_unsign(self):
+        """Unsign the project's source or built APK."""
+        if not self._apk_require_project():
+            return
+        p = self.apk_project
+        src = p.built_apk if (p.built_apk and os.path.isfile(p.built_apk)) else p.source_path
+        if not src or not os.path.isfile(src):
+            styled_messagebox(self, "Info", "No APK to unsign.", "info")
+            return
+        out = filedialog.asksaveasfilename(title="Save unsigned APK as", defaultextension=".apk",
+                                          initialfile="unsigned.apk")
+        if not out:
+            return
+        try:
+            import zipfile
+            with zipfile.ZipFile(src, 'r') as zin:
+                with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
+                    for item in zin.namelist():
+                        if (item.startswith('META-INF/')
+                                or item.endswith(('.RSA', '.SF', '.MF', '.DSA', '.EC'))):
+                            continue
+                        zout.writestr(item, zin.read(item))
+            self.log(f"✓ Unsigned: {out}", 'success')
+            styled_messagebox(self, "Success", f"Unsigned APK:\n{out}", "success")
+        except Exception as e:
+            self.log(f"Unsign error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_generate_keystore(self):
+        """Generate a debug keystore"""
+        keytool = tool_resolve("keytool")
+        if not keytool:
+            java = tool_resolve("java")
+            java_bin = os.path.dirname(java) if java else ""
+            if java_bin:
+                keytool = os.path.join(java_bin, "keytool.exe" if os.name == 'nt' else "keytool")
+            if not os.path.exists(keytool or ""):
+                styled_messagebox(self, "Error", "keytool not found (requires Java JDK)", "error")
+                return
+        out = filedialog.asksaveasfilename(title="Save keystore as", defaultextension=".jks",
+                                          initialfile="debug.keystore")
+        if not out:
+            return
+        dname = simpledialog.askstring("Distinguished Name",
+                                        "Enter dname (e.g. CN=Debug, O=Android, C=US):",
+                                        initialvalue="CN=Android Debug,O=Android,C=US")
+        if not dname:
+            return
+        alias = simpledialog.askstring("Alias", "Key alias:", initialvalue="androiddebugkey")
+        if not alias:
+            return
+        password = simpledialog.askstring("Password", "Store password:", initialvalue="android", show='*')
+        if not password:
+            return
+        try:
+            self.log(f"Generating keystore: {out}", 'info')
+            self.progress.start()
+            if not keytool:
+                raise RuntimeError("keytool not found")
+            res = run_cmd([keytool, "-genkey", "-v", "-keystore", out, "-alias", alias,
+                          "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
+                          "-storepass", password, "-keypass", password, "-dname", dname])
+            self.progress.stop()
+            if res.returncode == 0:
+                if hasattr(self, 'apk_sign_keystore_entry'):
+                    self.apk_sign_keystore_entry.delete(0, tk.END)
+                    self.apk_sign_keystore_entry.insert(0, out)
+                if hasattr(self, 'apk_sign_alias_entry'):
+                    self.apk_sign_alias_entry.delete(0, tk.END)
+                    self.apk_sign_alias_entry.insert(0, alias)
+                if hasattr(self, 'apk_sign_pass_entry'):
+                    self.apk_sign_pass_entry.delete(0, tk.END)
+                    self.apk_sign_pass_entry.insert(0, password)
+                self.log(f"✓ Keystore created: {out}", 'success')
+                styled_messagebox(self, "Success",
+                                  f"Keystore created:\n{out}\n\nPassword: {password}\nAlias: {alias}",
+                                  "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Keystore gen failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Keytool error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ------------------------------------------------------------------ Bundles sub-tab
+
+    def _build_apk_bundles(self, parent):
+        """XAPK/APKS/APKM bundle sub-tab (project-aware)."""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill='x', padx=5, pady=5)
+        ttk.Button(toolbar, text="Extract Bundle",
+                   command=self._xapk_extract).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Build XAPK from Current",
+                   command=self._xapk_build).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Build APKM from Current",
+                   command=self._apkm_build).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Extract APKS/APKM",
+                   command=self._apkm_extract).pack(side='left', padx=2)
+
+        outer = ttk.PanedWindow(parent, orient='vertical')
+        outer.pack(fill='both', expand=True, padx=5, pady=5)
+
+        manifest_frame = ttk.Frame(outer)
+        outer.add(manifest_frame, weight=1)
+        ttk.Label(manifest_frame, text="Bundle Manifest (manifest.json)",
+                  font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_bundle_manifest_text = self._make_scrolledtext(manifest_frame)
+
+        list_frame = ttk.Frame(outer)
+        outer.add(list_frame, weight=2)
+        ttk.Label(list_frame, text="Bundles in project (inner APKs)",
+                  font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        body = ttk.Frame(list_frame)
+        body.pack(fill='both', expand=True)
+        self.apk_bundle_files_list = tk.Listbox(body, font=('Consolas', 10),
+                                                 bg=COLORS.get('log_bg', '#1E1E1E'),
+                                                 fg=COLORS.get('log_fg', '#D4D4D4'))
+        self.apk_bundle_files_list.pack(side='left', fill='both', expand=True)
+        btns = ttk.Frame(body)
+        btns.pack(side='left', fill='y')
+        ttk.Button(btns, text="Extract Selected",
+                   command=self._apk_bundle_extract_selected).pack(fill='x', padx=2, pady=2)
+        ttk.Button(btns, text="Set as Current Project",
+                   command=self._apk_bundle_set_current).pack(fill='x', padx=2, pady=2)
+
+        log_frame = ttk.Frame(outer)
+        outer.add(log_frame, weight=1)
+        ttk.Label(log_frame, text="Operation Log",
+                  font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_bundle_log_text = self._make_scrolledtext(log_frame)
+
+    def _apk_bundle_log(self, line: str):
+        if hasattr(self, 'apk_bundle_log_text'):
+            self.apk_bundle_log_text.delete('1.0', tk.END)
+            self.apk_bundle_log_text.insert('1.0', line + "\n")
+        self.log(line, 'info')
+
+    def _apk_bundle_extract_selected(self):
+        if not self._apk_require_project():
+            return
+        sel = self.apk_bundle_files_list.curselection()
+        if not sel:
+            styled_messagebox(self, "Info", "Select a file in the list.", "info")
+            return
+        extract_dir = self.apk_project.extract_dir
+        if not extract_dir:
+            return
+        rel = self.apk_bundle_files_list.get(sel[0])
+        full = os.path.join(extract_dir, rel)
+        if not os.path.isfile(full):
+            styled_messagebox(self, "Info", "Selected item is not an extractable APK.", "info")
+            return
+        out = filedialog.asksaveasfilename(title="Save extracted APK as", defaultextension=".apk",
+                                          initialfile=os.path.basename(rel))
+        if not out:
+            return
+        try:
+            shutil.copy2(full, out)
+            self._apk_bundle_log(f"Extracted: {rel} -> {out}")
+        except Exception as e:
+            self.log(f"Extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_bundle_set_current(self):
+        if not self._apk_require_project():
+            return
+        sel = self.apk_bundle_files_list.curselection()
+        if not sel:
+            styled_messagebox(self, "Info", "Select a file in the list.", "info")
+            return
+        extract_dir = self.apk_project.extract_dir
+        if not extract_dir:
+            return
+        rel = self.apk_bundle_files_list.get(sel[0])
+        full = os.path.join(extract_dir, rel)
+        if os.path.isfile(full):
+            self._apk_open_project(full)
+
+    def _xapk_extract(self):
+        """Extract XAPK file."""
+        xapk = filedialog.askopenfilename(title="Select XAPK file", filetypes=[("XAPK", "*.xapk"), ("All", "*.*")])
+        if not xapk:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            import zipfile
+            self.log(f"Extracting XAPK: {os.path.basename(xapk)}", 'info')
+            self.progress.start()
+            with zipfile.ZipFile(xapk, 'r') as zf:
+                safe_extract_zip(zf, out)
+            manifest_path = os.path.join(out, "manifest.json")
+            manifest_info = ""
+            if os.path.exists(manifest_path):
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest_info = f.read()
+            self.progress.stop()
+            self._apk_bundle_log(f"XAPK extracted: {xapk} -> {out}")
+            if manifest_info:
+                styled_messagebox(self, "XAPK Manifest", manifest_info, "info")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"XAPK extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _xapk_build(self):
+        """Build XAPK from project APKs (or select from disk)."""
+        apks = []
+        if self.apk_project.is_open and self.apk_project.source_type in ("xapk", "apks", "apkm"):
+            extract_dir = self.apk_project.extract_dir
+            if extract_dir:
+                for f in self.apk_project.file_list:
+                    if f.lower().endswith('.apk'):
+                        apks.append(os.path.join(extract_dir, f))
+        if not apks:
+            apks = list(filedialog.askopenfilenames(title="Select APK files (for splits)",
+                                                   filetypes=[("APK", "*.apk")]))
+        if not apks:
+            return
+        out = filedialog.asksaveasfilename(title="Save XAPK as", defaultextension=".xapk",
+                                          initialfile="bundle.xapk")
+        if not out:
+            return
+        try:
+            import zipfile
+            import json
+            self.log(f"Building XAPK with {len(apks)} APKs", 'info')
+            self.progress.start()
+            split_info = []
+            with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
+                for apk_path in apks:
+                    base = os.path.basename(apk_path)
+                    zout.write(apk_path, base)
+                    split_info.append({"file": base, "size": os.path.getsize(apk_path)})
+                manifest = {"xapk_version": 1, "splits": split_info}
+                zout.writestr("manifest.json", json.dumps(manifest, indent=2))
+            self.progress.stop()
+            self.log(f"✓ XAPK built: {out}", 'success')
+            styled_messagebox(self, "Success", f"XAPK built:\n{out}", "success")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"XAPK build error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apkm_extract(self):
+        """Extract APKM/APKS file."""
+        apkm = filedialog.askopenfilename(title="Select APKM/APKS file",
+                                          filetypes=[("APKM/APKS", "*.apkm;*.apks"), ("All", "*.*")])
+        if not apkm:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            import zipfile
+            self.log(f"Extracting: {os.path.basename(apkm)}", 'info')
+            self.progress.start()
+            with zipfile.ZipFile(apkm, 'r') as zf:
+                safe_extract_zip(zf, out)
+            self.progress.stop()
+            self.log(f"✓ Extracted to: {out}", 'success')
+            styled_messagebox(self, "Success", f"Extracted to:\n{out}", "success")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apkm_build(self):
+        """Build APKM bundle from project APKs (or select from disk)."""
+        apks = []
+        if self.apk_project.is_open and self.apk_project.source_type in ("xapk", "apks", "apkm"):
+            extract_dir = self.apk_project.extract_dir
+            if extract_dir:
+                for f in self.apk_project.file_list:
+                    if f.lower().endswith('.apk'):
+                        apks.append(os.path.join(extract_dir, f))
+        if not apks:
+            apks = list(filedialog.askopenfilenames(title="Select APK files (splits)",
+                                                   filetypes=[("APK", "*.apk")]))
+        if not apks:
+            return
+        out = filedialog.asksaveasfilename(title="Save APKM as", defaultextension=".apkm",
+                                          initialfile="bundle.apkm")
+        if not out:
+            return
+        try:
+            import zipfile
+            self.log(f"Building APKM with {len(apks)} APKs", 'info')
+            self.progress.start()
+            with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
+                for apk_path in apks:
+                    zout.write(apk_path, os.path.basename(apk_path))
+            self.progress.stop()
+            self.log(f"✓ APKM built: {out}", 'success')
+            styled_messagebox(self, "Success", f"APKM built:\n{out}", "success")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"APKM build error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ------------------------------------------------------------------ Patching sub-tab
+
+    def _build_apk_patching(self, parent):
+        """APK Patching sub-tab (project-aware)."""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill='x', padx=5, pady=5)
+        ttk.Button(toolbar, text="Patch Manifest (debuggable)",
+                   command=self._apk_patch_debuggable).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Patch App Name",
+                   command=self._apk_patch_app_name).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Remove Permissions",
+                   command=self._apk_remove_perms).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Add Network Security Config",
+                   command=self._apk_add_netsec).pack(side='left', padx=2)
+        ttk.Button(toolbar, text="Install Framework",
+                   command=self.apktool_install_framework_menu).pack(side='left', padx=2)
+
+        outer = ttk.PanedWindow(parent, orient='vertical')
+        outer.pack(fill='both', expand=True, padx=5, pady=5)
+
+        form = ttk.Frame(outer)
+        outer.add(form, weight=1)
+        ttk.Label(form, text="Patch options (project context):").grid(row=0, column=0, columnspan=2, sticky='w', padx=2, pady=4)
+        ttk.Label(form, text="New app label:").grid(row=1, column=0, sticky='w', padx=2, pady=2)
+        self.apk_patch_name_entry = ttk.Entry(form, width=60)
+        self.apk_patch_name_entry.grid(row=1, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Label(form, text="Remove permissions (comma-sep):").grid(row=2, column=0, sticky='w', padx=2, pady=2)
+        self.apk_patch_perms_entry = ttk.Entry(form, width=60)
+        self.apk_patch_perms_entry.grid(row=2, column=1, sticky='ew', padx=2, pady=2)
+        ttk.Button(form, text="Apply App Name (current project)",
+                   command=self._apk_patch_app_name_project).grid(row=1, column=2, padx=2, pady=2)
+        ttk.Button(form, text="Apply Remove Perms (current project)",
+                   command=self._apk_remove_perms_project).grid(row=2, column=2, padx=2, pady=2)
+        form.columnconfigure(1, weight=1)
+
+        log_frame = ttk.Frame(outer)
+        outer.add(log_frame, weight=2)
+        ttk.Label(log_frame, text="Patch log", font=('Segoe UI', 9, 'bold')).pack(anchor='w', padx=2, pady=2)
+        self.apk_patch_log_text = self._make_scrolledtext(log_frame)
+
+    def _apk_patch_log(self, line: str):
+        if hasattr(self, 'apk_patch_log_text'):
+            self.apk_patch_log_text.delete('1.0', tk.END)
+            self.apk_patch_log_text.insert('1.0', line + "\n")
+
+    def _apk_patch_app_name_project(self):
+        new_name = self.apk_patch_name_entry.get().strip()
+        if not new_name:
+            styled_messagebox(self, "Info", "Enter a new app name first.", "info")
+            return
+        if not self._apk_require_project():
+            return
+        src = self.apk_project.source_path
+        if not src:
+            return
+        self._apk_patch_app_name_impl(src, new_name)
+
+    def _apk_remove_perms_project(self):
+        perms = self.apk_patch_perms_entry.get().strip()
+        if not perms:
+            styled_messagebox(self, "Info", "Enter permissions to remove first.", "info")
+            return
+        if not self._apk_require_project():
+            return
+        self._apk_patch_log(f"Remove perms from project source (manual edit recommended): {perms}")
+        styled_messagebox(self, "Info",
+                          "Permission removal requires apktool decode, manual edit, and rebuild. "
+                          "Use the Assembly tab after decoding.", "info")
+
+    def _apk_patch_debuggable(self):
+        """Patch AndroidManifest.xml to set debuggable=true (project-aware)."""
+        if self.apk_project.is_open and self.apk_project.source_path:
+            apk = self.apk_project.source_path
+        else:
+            apk = filedialog.askopenfilename(title="Select APK to patch",
+                                            filetypes=[("APK", "*.apk"), ("All", "*.*")])
+            if not apk:
+                return
+        out = filedialog.asksaveasfilename(title="Save patched APK as", defaultextension=".apk",
+                                          initialfile="debug.apk")
+        if not out:
+            return
+        try:
+            aapt2 = tool_resolve("aapt2")
+            if not aapt2:
+                raise RuntimeError("aapt2 not found")
+            self.log("Patching AndroidManifest.xml (debuggable=true)", 'info')
+            self.progress.start()
+            res = run_cmd([aapt2, "modify", "--debug-mode", apk, "-o", out])
+            self.progress.stop()
+            self._apk_patch_log(f"aapt2 modify --debug-mode {apk} -> {out}")
+            if res.returncode == 0:
+                self.log(f"✓ Patched: {out}", 'success')
+                styled_messagebox(self, "Success", f"Debug-patched APK:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"aapt2 modify failed: {err}", 'error')
+                self.log("Trying apktool fallback...", 'info')
+                self._apk_patch_debuggable_apktool(apk, out)
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Patch error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_patch_debuggable_apktool(self, apk, out):
+        """Fallback: use apktool to patch debuggable"""
+        try:
+            apktool = tool_resolve("apktool")
+            java = tool_resolve("java")
+            if not apktool:
+                raise RuntimeError("apktool not found")
+            if not java:
+                raise RuntimeError("java not found")
+            tmp = tempfile.mkdtemp(prefix="patch_")
+            try:
+                if apktool.lower().endswith('.jar'):
+                    res = run_cmd([java, "-jar", apktool, "d", apk, "-o", tmp, "-f"])
+                else:
+                    res = run_cmd([apktool, "d", apk, "-o", tmp, "-f"])
+                if res.returncode != 0:
+                    raise RuntimeError(f"apktool decode failed: {res.stderr.decode(errors='replace')}")
+                manifest = os.path.join(tmp, "AndroidManifest.xml")
+                if os.path.exists(manifest):
+                    with open(manifest, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    if 'android:debuggable' not in content:
+                        content = content.replace('<application ',
+                                                  '<application android:debuggable="true" ', 1)
+                    else:
+                        content = content.replace('android:debuggable="false"',
+                                                  'android:debuggable="true"')
+                    with open(manifest, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                if apktool.lower().endswith('.jar'):
+                    res = run_cmd([java, "-jar", apktool, "b", tmp, "-o", out])
+                else:
+                    res = run_cmd([apktool, "b", tmp, "-o", out])
+                if res.returncode == 0:
+                    self.log(f"✓ Patched: {out}", 'success')
+                    styled_messagebox(self, "Success", f"Patched:\n{out}", "success")
+                else:
+                    err = res.stderr.decode(errors='replace')
+                    self.log(f"Build failed: {err}", 'error')
+                    styled_messagebox(self, "Error", f"Build failed:\n{err}", "error")
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        except Exception as e:
+            self.log(f"Apktool fallback error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_patch_app_name(self):
+        """Patch app label (project-aware: uses project if open)."""
+        new_name = self.apk_patch_name_entry.get().strip() if hasattr(self, 'apk_patch_name_entry') else ""
+        if not new_name:
+            new_name = simpledialog.askstring("App Name", "Enter new application label:")
+            if not new_name:
+                return
+        if self.apk_project.is_open and self.apk_project.source_path:
+            apk = self.apk_project.source_path
+        else:
+            apk = filedialog.askopenfilename(title="Select APK to patch",
+                                            filetypes=[("APK", "*.apk"), ("All", "*.*")])
+            if not apk:
+                return
+        self._apk_patch_app_name_impl(apk, new_name)
+
+    def _apk_patch_app_name_impl(self, apk: str, new_name: str):
+        def set_label(manifest_path):
+            import html
+            content = open(manifest_path, 'r', encoding='utf-8').read()
+            label = html.escape(new_name, quote=True)
+            attr = r'android:label\s*=\s*(["\']).*?\1'
+            replacement = f'android:label="{label}"'
+            if re.search(attr, content):
+                content = re.sub(attr, replacement, content, count=1)
+            else:
+                content = content.replace('<application ', f'<application android:label="{label}" ', 1)
+            open(manifest_path, 'w', encoding='utf-8').write(content)
+
+        self._apk_transform_decoded_manifest(apk, new_name, set_label, "App label")
+        return
+
+    def _apk_transform_decoded_manifest(self, apk: str, value: str, transform, description: str):
+        """Decode, transform text AndroidManifest.xml, and rebuild an APK."""
+        out = filedialog.asksaveasfilename(title="Save patched APK as", defaultextension=".apk",
+                                          initialfile="renamed.apk")
+        if not out:
+            return
+        try:
+            apktool = tool_resolve("apktool")
+            java = tool_resolve("java")
+            if not apktool or not java:
+                raise RuntimeError("apktool and Java are required for manifest patching")
+            tmp = tempfile.mkdtemp(prefix="manifest_patch_")
+            self.progress.start()
+            try:
+                decode = run_cmd([java, "-jar", apktool, "d", apk, "-o", tmp, "-f"])
+                if decode.returncode != 0:
+                    raise RuntimeError(decode.stderr.decode(errors='replace'))
+                manifest = os.path.join(tmp, "AndroidManifest.xml")
+                if not os.path.isfile(manifest):
+                    raise FileNotFoundError("Decoded AndroidManifest.xml not found")
+                transform(manifest)
+                build = run_cmd([java, "-jar", apktool, "b", tmp, "-o", out])
+                if build.returncode != 0:
+                    raise RuntimeError(build.stderr.decode(errors='replace'))
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            self.progress.stop()
+            self._apk_patch_log(f"{description} patched: {apk} -> {out}")
+            self.log(f"✓ {description} patched: {out}", 'success')
+            styled_messagebox(self, "Success", f"{description} patched APK:\n{out}", "success")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"{description} patch error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_remove_perms(self):
+        """Remove permissions from APK."""
+        perms_text = self.apk_patch_perms_entry.get().strip() if hasattr(self, 'apk_patch_perms_entry') else ""
+        if not perms_text:
+            perms_text = simpledialog.askstring("Permissions to Remove",
+                                                "Enter permissions to remove (comma-separated):\n"
+                                                "Example: android.permission.INTERNET,android.permission.CAMERA")
+            if not perms_text:
+                return
+        if self.apk_project.is_open and self.apk_project.source_path:
+            apk = self.apk_project.source_path
+        else:
+            apk = filedialog.askopenfilename(title="Select APK to patch",
+                                            filetypes=[("APK", "*.apk"), ("All", "*.*")])
+            if not apk:
+                return
+        out = filedialog.asksaveasfilename(title="Save patched APK as", defaultextension=".apk",
+                                          initialfile="no_perms.apk")
+        if not out:
+            return
+        permissions = {item.strip() for item in perms_text.split(',') if item.strip()}
+        def remove_permissions(manifest_path):
+            content = open(manifest_path, 'r', encoding='utf-8').read()
+            for permission in permissions:
+                escaped = re.escape(permission)
+                content = re.sub(
+                    rf'\s*<uses-permission\b[^>]*android:name\s*=\s*["\']{escaped}["\'][^>]*/?>',
+                    '', content, flags=re.IGNORECASE,
+                )
+            open(manifest_path, 'w', encoding='utf-8').write(content)
+        self._apk_transform_decoded_manifest(apk, perms_text, remove_permissions, "Permissions")
+        return
+
+        self._apk_patch_log(f"Permission removal flagged for {apk}: {perms_text}")
+        styled_messagebox(self, "Info",
+                          "Permission removal is complex. Consider using apktool decode, manual edit "
+                          "of AndroidManifest.xml, and rebuild.", "info")
+
+    def _apk_add_netsec(self):
+        """Add network security config for cleartext traffic (project-aware)."""
+        if self.apk_project.is_open and self.apk_project.source_path:
+            apk = self.apk_project.source_path
+        else:
+            apk = filedialog.askopenfilename(title="Select APK",
+                                            filetypes=[("APK", "*.apk"), ("All", "*.*")])
+            if not apk:
+                return
+        out = filedialog.asksaveasfilename(title="Save modified APK as", defaultextension=".apk",
+                                          initialfile="netsec.apk")
+        if not out:
+            return
+        netsec = ('<?xml version="1.0" encoding="utf-8"?>\n'
+                 '<network-security-config>\n'
+                 '    <base-config cleartextTrafficPermitted="true">\n'
+                 '        <trust-anchors>\n'
+                 '            <certificates src="system" />\n'
+                 '            <certificates src="user" />\n'
+                 '        </trust-anchors>\n'
+                 '    </base-config>\n'
+                 '</network-security-config>')
+        try:
+            def add_network_security(manifest_path):
+                content = open(manifest_path, 'r', encoding='utf-8').read()
+                if 'android:networkSecurityConfig' not in content:
+                    content = content.replace(
+                        '<application ',
+                        '<application android:networkSecurityConfig="@xml/network_security_config" ',
+                        1,
+                    )
+                open(manifest_path, 'w', encoding='utf-8').write(content)
+
+            def transform(decoded_manifest):
+                add_network_security(decoded_manifest)
+                resource_dir = os.path.join(os.path.dirname(decoded_manifest), 'res', 'xml')
+                ensure_dir(resource_dir)
+                with open(os.path.join(resource_dir, 'network_security_config.xml'), 'w', encoding='utf-8') as resource:
+                    resource.write(netsec)
+
+            self._apk_transform_decoded_manifest(apk, netsec, transform, "Network security config")
+            return
+
+            import zipfile
+            self.log(f"Adding network security config to {os.path.basename(apk)}", 'info')
+            self.progress.start()
+            netsec_path = os.path.join(tempfile.gettempdir(), "network_security_config.xml")
+            with open(netsec_path, 'w', encoding='utf-8') as f:
+                f.write(netsec)
+            with zipfile.ZipFile(apk, 'r') as zin:
+                with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
+                    for item in zin.namelist():
+                        data = zin.read(item)
+                        if item == 'AndroidManifest.xml':
+                            try:
+                                content = data.decode('utf-8', errors='replace')
+                                if 'android:networkSecurityConfig' not in content:
+                                    content = content.replace(
+                                        '<application ',
+                                        '<application android:networkSecurityConfig="@xml/network_security_config" ',
+                                        1)
+                                data = content.encode('utf-8')
+                            except Exception:
+                                pass
+                        zout.writestr(item, data)
+                    zout.write(netsec_path, 'res/xml/network_security_config.xml')
+            self.progress.stop()
+            self._apk_patch_log(f"Network config added: {apk} -> {out}")
+            self.log(f"✓ Network config added: {out}", 'success')
+            styled_messagebox(self, "Success", f"Network security config added:\n{out}", "success")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"NetSec error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ------------------------------------------------------------------ Project-aware actions
+
+    def _apk_action_apktool_decode(self):
+        """Apktool decode the current project's APK into the project's decoded_dir."""
+        if not self._apk_require_project():
+            return
+        p = self.apk_project
+        if p.source_type != "apk":
+            styled_messagebox(self, "Info",
+                              "Apktool decode only works on single-APK projects. "
+                              "Bundles are already extracted.", "info")
+            return
+        out_dir = p.decoded_dir
+        if not out_dir:
+            return
+        ensure_dir(out_dir)
+        try:
+            apktool_path = tool_resolve("apktool")
+            if not apktool_path:
+                raise RuntimeError("apktool not found")
+            if apktool_path.lower().endswith('.jar'):
+                java = tool_resolve("java")
+                if not java:
+                    raise RuntimeError("java not found")
+                cmd = [java, "-jar", apktool_path, "d", p.source_path, "-o", out_dir, "-f"]
+            else:
+                cmd = [apktool_path, "d", p.source_path, "-o", out_dir, "-f"]
+            self.log(f"Apktool decode: {p.name}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decoded to: {out_dir}", 'success')
+                self._apk_refresh_assembly_state()
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Decode failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Decode failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Decode error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_action_apktool_build(self):
+        """Apktool build the current project's decoded_dir into built_apk."""
+        if not self._apk_require_project():
+            return
+        p = self.apk_project
+        decoded = self.apk_asm_decoded_entry.get().strip() or p.decoded_dir
+        if not decoded or not os.path.isdir(decoded):
+            styled_messagebox(self, "Info", "No decoded project. Run 'Apktool Decode' first.", "info")
+            return
+        if p.working_dir:
+            out_default = self.apk_asm_output_entry.get().strip() or os.path.join(p.working_dir, "built.apk")
+        else:
+            out_default = self.apk_asm_output_entry.get().strip() or "built.apk"
+        out = filedialog.asksaveasfilename(title="Save built APK as", defaultextension=".apk",
+                                          initialfile=os.path.basename(out_default))
+        if not out:
+            return
+        try:
+            apktool_path = tool_resolve("apktool")
+            if not apktool_path:
+                raise RuntimeError("apktool not found")
+            if apktool_path.lower().endswith('.jar'):
+                java = tool_resolve("java")
+                if not java:
+                    raise RuntimeError("java not found")
+                cmd = [java, "-jar", apktool_path, "b", decoded, "-o", out]
+            else:
+                cmd = [apktool_path, "b", decoded, "-o", out]
+            self.log(f"Apktool build: {p.name}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            self._apk_log_asm_history(f"apktool b {decoded} -> {out}\n{res.stdout.decode(errors='replace')}")
+            if res.returncode == 0:
+                p.built_apk = out
+                self.apk_asm_output_entry.delete(0, tk.END)
+                self.apk_asm_output_entry.insert(0, out)
+                self.log(f"✓ Built: {out}", 'success')
+                styled_messagebox(self, "Success", f"Built APK:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Build failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Build failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Build error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_action_verify(self):
+        """Verify the current project's source or built APK."""
+        if not self._apk_require_project():
+            return
+        p = self.apk_project
+        target = next((candidate for candidate in (p.signed_apk, p.aligned_apk, p.built_apk, p.source_path)
+                   if candidate and os.path.isfile(candidate)), None)
+        if not target or not os.path.isfile(target):
+            styled_messagebox(self, "Info", "No APK to verify.", "info")
+            return
+        try:
+            apksigner = tool_resolve("apksigner")
+            java = tool_resolve("java") or ""
+            if not apksigner:
+                bundled = os.path.join(TOOLS_DIR, "boot_editor", "aosp", "apksigner", "apksigner.jar")
+                if os.path.exists(bundled):
+                    apksigner = bundled
+                else:
+                    raise RuntimeError("apksigner not found")
+            if apksigner.lower().endswith('.jar'):
+                cmd = [java, "-jar", apksigner, "verify", "--verbose", target]
+            else:
+                cmd = [apksigner, "verify", "--verbose", target]
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            out = res.stdout.decode(errors='replace') + "\n" + res.stderr.decode(errors='replace')
+            if hasattr(self, 'apk_sign_verify_text'):
+                self.apk_sign_verify_text.delete('1.0', tk.END)
+                self.apk_sign_verify_text.insert('1.0', out)
+            self.log("✓ Verify done", 'success' if res.returncode == 0 else 'warning')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Verify error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_action_zipalign(self):
+        """Zipalign the current project's built APK."""
+        if not self._apk_require_project():
+            return
+        p = self.apk_project
+        target = next((candidate for candidate in (p.signed_apk, p.aligned_apk, p.built_apk, p.source_path)
+                   if candidate and os.path.isfile(candidate)), None)
+        if not target or not os.path.isfile(target):
+            styled_messagebox(self, "Info",
+                              "No APK to align. Open a project or build one first.", "info")
+            return
+        try:
+            zipalign = tool_resolve("zipalign")
+            if not zipalign:
+                raise RuntimeError("zipalign not found")
+            if p.aligned_apk:
+                out_default = p.aligned_apk
+            elif p.working_dir:
+                out_default = os.path.join(p.working_dir, "aligned.apk")
+            else:
+                out_default = "aligned.apk"
+            out = filedialog.asksaveasfilename(title="Save aligned APK as", defaultextension=".apk",
+                                              initialfile=os.path.basename(out_default))
+            if not out:
+                return
+            self.progress.start()
+            res = run_cmd([zipalign, "-f", "4", target, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                p.aligned_apk = out
+                self.log(f"✓ Aligned: {out}", 'success')
+                styled_messagebox(self, "Success", f"Aligned APK:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Zipalign failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Zipalign failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Zipalign error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _apk_action_sign(self):
+        """Sign the current project's built/aligned APK with the configured keystore."""
+        if not self._apk_require_project():
+            return
+        p = self.apk_project
+        if p.aligned_apk and os.path.isfile(p.aligned_apk):
+            src = p.aligned_apk
+        elif p.built_apk and os.path.isfile(p.built_apk):
+            src = p.built_apk
+        else:
+            styled_messagebox(self, "Info", "No APK to sign. Build or open a project first.", "info")
+            return
+        ks = self.apk_sign_keystore_entry.get().strip() if hasattr(self, 'apk_sign_keystore_entry') else (p.keystore or "")
+        ks_pass = self.apk_sign_pass_entry.get() if hasattr(self, 'apk_sign_pass_entry') else (p.keystore_pass or "")
+        alias = self.apk_sign_alias_entry.get().strip() if hasattr(self, 'apk_sign_alias_entry') else (p.key_alias or "")
+        key_pass = self.apk_sign_keypass_entry.get() if hasattr(self, 'apk_sign_keypass_entry') else (p.key_pass or "")
+        if not ks or not ks_pass or not alias:
+            styled_messagebox(self, "Info", "Fill in keystore, password, and alias fields first.", "info")
+            return
+        if not key_pass:
+            key_pass = ks_pass
+        if p.signed_apk:
+            out_default = p.signed_apk
+        elif p.working_dir:
+            out_default = os.path.join(p.working_dir, "signed.apk")
+        else:
+            out_default = "signed.apk"
+        out = filedialog.asksaveasfilename(title="Save signed APK as", defaultextension=".apk",
+                                          initialfile=os.path.basename(out_default))
+        if not out:
+            return
+        try:
+            apksigner = tool_resolve("apksigner")
+            java = tool_resolve("java") or ""
+            if not apksigner:
+                bundled = os.path.join(TOOLS_DIR, "boot_editor", "aosp", "apksigner", "apksigner.jar")
+                if os.path.exists(bundled):
+                    apksigner = bundled
+                else:
+                    raise RuntimeError("apksigner not found")
+            if apksigner.lower().endswith('.jar'):
+                cmd = [java, "-jar", apksigner, "sign",
+                       "--ks", ks, "--ks-pass", f"pass:{ks_pass}",
+                       "--ks-key-alias", alias, "--key-pass", f"pass:{key_pass}",
+                       src, "--out", out]
+            else:
+                cmd = [apksigner, "sign",
+                       "--ks", ks, "--ks-pass", f"pass:{ks_pass}",
+                       "--ks-key-alias", alias, "--key-pass", f"pass:{key_pass}",
+                       src, "--out", out]
+            self.log(f"Signing: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                p.signed_apk = out
+                p.keystore = ks
+                p.keystore_pass = ks_pass
+                p.key_alias = alias
+                p.key_pass = key_pass
+                self.log(f"✓ Signed: {out}", 'success')
+                if hasattr(self, 'apk_sign_log_text'):
+                    self.apk_sign_log_text.delete('1.0', tk.END)
+                    self.apk_sign_log_text.insert('1.0', f"Signed APK: {out}\n")
+                styled_messagebox(self, "Success", f"Signed APK:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Sign failed: {err}", 'error')
+                if hasattr(self, 'apk_sign_log_text'):
+                    self.apk_sign_log_text.delete('1.0', tk.END)
+                    self.apk_sign_log_text.insert('1.0', err)
+                styled_messagebox(self, "Error", f"Sign failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Sign error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _set_status(self, message: str):
+        """Helper to set status bar message"""
+        try:
+            if hasattr(self, 'status_label') and self.status_label:
+                self.status_label.config(text=message)
+        except Exception:
+            pass
 
     def _build_port_rom_ui(self, parent, step: int = 1):
         # Clear existing widgets in the tab before rebuilding
@@ -6895,6 +14204,70 @@ class SmartphoneFirmwareScrews(tk.Tk):
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        # Reset per-build UI state. The previous builder destroyed all child
+        # widgets, but the label dicts survived on `self`, so we must clear them
+        # before rebuilding to avoid stale references.
+        self.port_rom_step_labels.clear()
+        self.port_rom_step_progress.clear()
+        self.port_rom_step_skip_vars.clear()
+        self.port_rom_step_done_vars.clear()
+
+        # Step status panel — one row per step with a name label, a status
+        # badge, and a per-step indeterminate progress bar. The status badge
+        # is the single source of truth for what `_set_port_step_status`
+        # renders, replacing the previous silently-no-op'd UI path.
+        # Use a scrollable status panel since we have 35+ steps now
+        status_outer = ttk.LabelFrame(scrollable_frame, text="Workflow Status", padding=10)
+        status_outer.pack(fill='x', pady=(0, 10), anchor='n')
+        status_outer.grid_columnconfigure(0, weight=1)
+        status_outer.grid_columnconfigure(1, weight=0)
+        status_canvas = tk.Canvas(status_outer, height=280, highlightthickness=0, bg=COLORS['bg_card'])
+        status_scroll = ttk.Scrollbar(status_outer, orient='vertical', command=status_canvas.yview)
+        status_inner = ttk.Frame(status_canvas)
+        # Make inner frame fill the canvas width by tracking canvas width
+        def _on_status_canvas_configure(event):
+            status_canvas.itemconfig(status_inner_window, width=event.width)
+        status_inner.bind('<Configure>', lambda e: status_canvas.configure(scrollregion=status_canvas.bbox('all')))
+        status_inner_window = status_canvas.create_window((0, 0), window=status_inner, anchor='nw')
+        status_canvas.bind('<Configure>', _on_status_canvas_configure)
+        status_canvas.configure(yscrollcommand=status_scroll.set)
+        status_canvas.grid(row=0, column=0, sticky='nsew')
+        status_scroll.grid(row=0, column=1, sticky='ns')
+        # Group steps by phase for display
+        current_phase = None
+        for step_num, title, handler, desc in PORT_ROM_STEPS:
+            phase = PORT_ROM_PHASES.get(step_num, "")
+            if phase != current_phase:
+                phase_lbl = ttk.Label(status_inner, text=phase, font=('Segoe UI', 9, 'bold'),
+                                      foreground=COLORS.get('accent_blue', '#4E7BFF'))
+                phase_lbl.pack(fill='x', pady=(8, 2), anchor='w')
+                current_phase = phase
+            row = ttk.Frame(status_inner)
+            row.pack(fill='x', pady=1)
+            row.grid_columnconfigure(1, weight=1)
+            name_lbl = ttk.Label(row, text=f"Step {step_num}", width=8, anchor='w')
+            name_lbl.grid(row=0, column=0, sticky='w')
+            title_lbl = ttk.Label(row, text=title[:50] + ('...' if len(title) > 50 else ''),
+                                  anchor='w', font=('Segoe UI', 9))
+            title_lbl.grid(row=0, column=1, sticky='ew', padx=(4, 4))
+            status_lbl = ttk.Label(row, text=self._status_badge_text("pending"),
+                                   foreground=COLORS['text_secondary'], anchor='w', width=12)
+            status_lbl.grid(row=0, column=2, sticky='e', padx=(0, 4))
+            skip_var = tk.BooleanVar(value=self.port_rom_step_overrides.get(step_num, {}).get("skip", False))
+            done_var = tk.BooleanVar(value=self.port_rom_step_overrides.get(step_num, {}).get("done", False))
+            self.port_rom_step_skip_vars[step_num] = skip_var
+            self.port_rom_step_done_vars[step_num] = done_var
+            ttk.Checkbutton(
+                row, text="Skip", variable=skip_var,
+                command=lambda s=step_num: self._set_port_step_override(s, "skip"),
+            ).grid(row=0, column=3, sticky='e', padx=(2, 0))
+            ttk.Checkbutton(
+                row, text="Done", variable=done_var,
+                command=lambda s=step_num: self._set_port_step_override(s, "done"),
+            ).grid(row=0, column=4, sticky='e', padx=(2, 0))
+            self.port_rom_step_labels[step_num] = (name_lbl, status_lbl)
+            # Don't add a progress bar for every step to save space; show on demand
+
         # Bind mouse wheel to scroll the canvas
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1*(event.delta/120)), "units")
@@ -6908,165 +14281,847 @@ class SmartphoneFirmwareScrews(tk.Tk):
         scrollable_frame.bind("<Enter>", _bind_mousewheel)
         scrollable_frame.bind("<Leave>", _unbind_mousewheel)
 
-        # --- Step 1: Firmware Extraction ---
-        step1_frame = ttk.LabelFrame(scrollable_frame, text="Step 1: Extract Base and Port Firmware", padding=10)
+        # --- Step 1: Firmware Extraction (special UI for device info) ---
+        step1_frame = ttk.LabelFrame(scrollable_frame, text="Step 1: Identify & Download Source/Target Firmware", padding=10)
         step1_frame.pack(fill='x', pady=5, anchor='n')
 
-        # Source Device (the device you're porting FROM)
-        ttk.Label(step1_frame, text="Source Device Model (e.g., A336, S21, etc.):").grid(row=0, column=0, sticky='w', pady=2)
+        ttk.Label(step1_frame, text="Use Frija, SamFW.com, or SamloaderKotlin to download firmware. Then enter details below.").grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 8))
+
+        ttk.Label(step1_frame, text="Source Device Model (e.g., A336, S21 - the ROM you're porting FROM):").grid(row=1, column=0, sticky='w', pady=2)
         self.port_rom_source_device = tk.StringVar()
-        ttk.Entry(step1_frame, textvariable=self.port_rom_source_device, width=30).grid(row=1, column=0, sticky='w', padx=(0, 10))
+        ttk.Entry(step1_frame, textvariable=self.port_rom_source_device, width=30).grid(row=2, column=0, sticky='w', padx=(0, 10))
 
-        # Target Device (the device you're porting TO)
-        ttk.Label(step1_frame, text="Target Device Model (e.g., A325, A32, etc.):").grid(row=0, column=1, sticky='w', pady=2)
+        ttk.Label(step1_frame, text="Target Device Model (e.g., A325, A32 - your target device):").grid(row=1, column=1, sticky='w', pady=2)
         self.port_rom_target_device = tk.StringVar()
-        ttk.Entry(step1_frame, textvariable=self.port_rom_target_device, width=30).grid(row=1, column=1, sticky='w')
+        ttk.Entry(step1_frame, textvariable=self.port_rom_target_device, width=30).grid(row=2, column=1, sticky='w')
 
-        # Base Firmware (the ROM you want to port)
-        ttk.Label(step1_frame, text="Source Firmware Directory (the ROM you want to port):").grid(row=2, column=0, columnspan=2, sticky='w', pady=(10, 2))
+        ttk.Label(step1_frame, text="Source Firmware Directory (the ROM you want to port):").grid(row=3, column=0, columnspan=3, sticky='w', pady=(10, 2))
         self.port_rom_base_dir = tk.StringVar()
-        ttk.Entry(step1_frame, textvariable=self.port_rom_base_dir, width=80).grid(row=3, column=0, columnspan=2, sticky='ew', padx=(0, 5))
-        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_base_dir)).grid(row=3, column=2, sticky='w')
+        ttk.Entry(step1_frame, textvariable=self.port_rom_base_dir, width=80).grid(row=4, column=0, columnspan=2, sticky='ew', padx=(0, 5))
+        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_base_dir)).grid(row=4, column=2, sticky='w')
 
-        # Port Firmware (the stock ROM for your device)
-        ttk.Label(step1_frame, text="Target Firmware Directory (the stock ROM for your target device):").grid(row=4, column=0, columnspan=2, sticky='w', pady=(10, 2))
+        ttk.Label(step1_frame, text="Target Firmware Directory (the stock ROM for your target device):").grid(row=5, column=0, columnspan=3, sticky='w', pady=(10, 2))
         self.port_rom_port_dir = tk.StringVar()
-        ttk.Entry(step1_frame, textvariable=self.port_rom_port_dir, width=80).grid(row=5, column=0, columnspan=2, sticky='ew', padx=(0, 5))
-        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_port_dir)).grid(row=5, column=2, sticky='w')
+        ttk.Entry(step1_frame, textvariable=self.port_rom_port_dir, width=80).grid(row=6, column=0, columnspan=2, sticky='ew', padx=(0, 5))
+        ttk.Button(step1_frame, text="Browse...", command=lambda: self._browse_dir(self.port_rom_port_dir)).grid(row=6, column=2, sticky='w')
 
         step1_frame.grid_columnconfigure(0, weight=1)
         step1_frame.grid_columnconfigure(1, weight=1)
 
-        # Action button
-        action_frame = ttk.Frame(scrollable_frame)
-        action_frame.pack(fill='x', pady=10)
-        ttk.Button(action_frame, text="Start Firmware Extraction", command=self._start_firmware_extraction, style='Accent.TButton').pack()
+        ttk.Button(step1_frame, text="Start Firmware Extraction",
+                  command=lambda: self._run_port_step(1, self._start_firmware_extraction),
+                  style='Accent.TButton').grid(row=7, column=0, columnspan=3, pady=10)
 
-        # --- Step 2: Boot Image Unpacking ---
-        step2_frame = ttk.LabelFrame(scrollable_frame, text="Step 2: Unpack Boot Images", padding=10)
-        step2_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step2_frame, text="This step will unpack the boot.img and extract the ramdisk for both Base and Port firmware.").pack(anchor='w', pady=5)
-        ttk.Button(step2_frame, text="Start Boot Image Unpacking", command=self._start_boot_image_unpacking, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 2:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 3: Ramdisk Modification ---
-        step3_frame = ttk.LabelFrame(scrollable_frame, text="Step 3: Modify Ramdisk for Porting", padding=10)
-        step3_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step3_frame, text="This step will modify the Base firmware ramdisk to work with the Port firmware hardware.").pack(anchor='w', pady=5)
-        ttk.Button(step3_frame, text="Start Ramdisk Modification", command=self._start_ramdisk_modification, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 3:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 4: Repack Boot Image ---
-        step4_frame = ttk.LabelFrame(scrollable_frame, text="Step 4: Repack Boot Image", padding=10)
-        step4_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step4_frame, text="This step will repack the boot image with the modified ramdisk to create a new boot.img for the ported ROM.").pack(anchor='w', pady=5)
-        ttk.Button(step4_frame, text="Start Boot Image Repacking", command=self._start_boot_repacking, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 4:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 5: System and Vendor Image Extraction ---
-        step5_frame = ttk.LabelFrame(scrollable_frame, text="Step 5: Extract System and Vendor Images", padding=10)
-        step5_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step5_frame, text="This step will extract and mount system and vendor images from both Base and Port firmware for comparison.").pack(anchor='w', pady=5)
-        ttk.Button(step5_frame, text="Start System/Vendor Extraction", command=self._start_system_vendor_extraction, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 5:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 6: Vendor Partition Modification ---
-        step6_frame = ttk.LabelFrame(scrollable_frame, text="Step 6: Modify Vendor Partition", padding=10)
-        step6_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step6_frame, text="This step will replace critical hardware HALs and firmware from the Port device for hardware compatibility.").pack(anchor='w', pady=5)
-        ttk.Button(step6_frame, text="Start Vendor Modification", command=self._start_vendor_modification, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 6:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 7: System Partition Modification ---
-        step7_frame = ttk.LabelFrame(scrollable_frame, text="Step 7: Modify System Partition", padding=10)
-        step7_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step7_frame, text="This step will update system properties and device identifiers to match the Port device.").pack(anchor='w', pady=5)
-        ttk.Button(step7_frame, text="Start System Modification", command=self._start_system_modification, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 7:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 8: Image Repacking ---
-        step8_frame = ttk.LabelFrame(scrollable_frame, text="Step 8: Repack Images", padding=10)
-        step8_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step8_frame, text="This step will repack the modified partitions into flashable images and prepare them for Odin.").pack(anchor='w', pady=5)
-        ttk.Button(step8_frame, text="Start Image Repacking", command=self._start_image_repacking, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 8:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 9: Create Odin Package ---
-        step9_frame = ttk.LabelFrame(scrollable_frame, text="Step 9: Create Odin Package", padding=10)
-        step9_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step9_frame, text="This step will create a complete Odin flashable package with AP, BL, CP, and CSC components.").pack(anchor='w', pady=5)
-        ttk.Button(step9_frame, text="Create Odin Package", command=self._start_odin_package_creation, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 9:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
-
-        # --- Step 10: Validate Package ---
-        step10_frame = ttk.LabelFrame(scrollable_frame, text="Step 10: Validate Package", padding=10)
-        step10_frame.pack(fill='x', pady=5, anchor='n')
-
-        ttk.Label(step10_frame, text="This step will validate the Odin package for completeness, integrity, and safety before flashing.").pack(anchor='w', pady=5)
-        ttk.Button(step10_frame, text="Validate Package", command=self._start_package_validation, style='Accent.TButton').pack(pady=5)
-
-        # Scroll to specific step if requested
-        if step == 10:
-            # Scroll to the requested step
-            self.after(100, lambda: self._scroll_to_step(canvas, step))
+        # --- Dynamic step frames for steps 2-35 ---
+        # Map step handler names to method names (handlers are defined in port_rom_step_info)
+        self._build_dynamic_port_steps(scrollable_frame, canvas, step)
 
     def _scroll_to_step(self, canvas, step):
         """Scroll canvas to bring the requested step into view"""
-        # Calculate the position of the target step
-        # Each step frame is roughly 100-150 pixels tall with padding
-        step_height = 120
-        target_y = (step - 1) * step_height
-        
-        # Use after to ensure the canvas is fully rendered
+        # Use dynamic step height calculation based on number of steps
+        # With 35+ steps, the canvas is much taller, so we need to scroll proportionally
+        total_steps = len(self.port_rom_step_status)
+        if total_steps == 0:
+            return
         canvas.update_idletasks()
-        canvas.yview_moveto(max(0, (target_y - 50) / max(1, canvas.bbox("all")[3] - canvas.winfo_height())))
-        
+        # Get the total scroll region height
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return
+        total_height = bbox[3] - bbox[1]
+        visible_height = canvas.winfo_height()
+        if total_height <= visible_height:
+            return  # Everything fits, no need to scroll
+        # Each step takes roughly 1/total_steps of the total height
+        target_y = (step - 1) / total_steps
+        # Adjust to bring the step into the top portion of the visible area
+        target_y = max(0, target_y - 100 / total_height)
+        canvas.yview_moveto(target_y)
         self.log(f"Navigated to Port ROM tab, intended to focus on Step {step}.", 'info')
+
+    def _build_dynamic_port_steps(self, scrollable_frame, canvas, scroll_to_step):
+        """Build UI frames for all porting steps dynamically based on PORT_ROM_STEPS"""
+        # Map step handler names to actual start method names
+        # Existing methods in the app
+        handler_to_method = {
+            "firmware_download": "_start_firmware_extraction",
+            "samsung_decrypt": "_start_samsung_decrypt",
+            "rom_extract": "_start_rom_extract",
+            "lz4_decompress": "_start_lz4_decompress",
+            "lpunpack": "_start_lpunpack",
+            "sparse_to_raw": "_start_sparse_to_raw",
+            "boot_unpack": "_start_boot_image_unpacking",
+            "extract_dtb": "_start_extract_dtb",
+            "dtb_decompile": "_start_dtb_decompile",
+            "ramdisk_extract": "_start_ramdisk_extract",
+            "pit_analyze": "_start_pit_analyze",
+            "boot_header_analyze": "_start_boot_header_analyze",
+            "buildprop_compare": "_start_buildprop_compare",
+            "apk_decompile": "_start_apk_decompile",
+            "baksmali_dex": "_start_baksmali_dex",
+            "debloater": "_start_debloater",
+            "buildprop_modify": "_start_buildprop_modify",
+            "initrc_modify": "_start_initrc_modify",
+            "selinux_patch": "_start_selinux_patch",
+            "dtb_patch": "_start_dtb_patch",
+            "hex_patch": "_start_hex_patch",
+            "vendor_replace": "_start_vendor_modification",
+            "app_add": "_start_app_add",
+            "vbmeta_patch": "_start_vbmeta_patch",
+            "ramdisk_repack": "_start_ramdisk_repack",
+            "boot_repack": "_start_boot_repacking",
+            "ext4_rebuild": "_start_ext4_rebuild",
+            "raw_to_sparse": "_start_raw_to_sparse",
+            "lpmake_rebuild": "_start_lpmake_rebuild",
+            "sefcontext_compile": "_start_sefcontext_compile",
+            "odin_package": "_start_odin_package_creation",
+            "heimdall_package": "_start_heimdall_package",
+            "avb_verify": "_start_avb_verify",
+            "md5_verify": "_start_md5_verify",
+            "manifest_generate": "_start_manifest_generate",
+        }
+        # Group steps by phase for visual separation
+        current_phase = None
+        for step_num, title, handler, desc in PORT_ROM_STEPS:
+            if step_num == 1:
+                continue  # Already built
+            phase = PORT_ROM_PHASES.get(step_num, "")
+            if phase != current_phase:
+                # Add phase header
+                phase_header = ttk.Label(scrollable_frame, text=phase,
+                                         font=('Segoe UI', 10, 'bold'),
+                                         foreground=COLORS.get('accent_blue', '#4E7BFF'))
+                phase_header.pack(fill='x', pady=(15, 5), anchor='w')
+                current_phase = phase
+            frame = ttk.LabelFrame(scrollable_frame,
+                                    text=f"Step {step_num}: {title}",
+                                    padding=8)
+            frame.pack(fill='x', pady=3, anchor='n')
+            ttk.Label(frame, text=desc, wraplength=900, justify='left').pack(anchor='w', pady=(0, 5))
+            method_name = handler_to_method.get(handler, f"_start_{handler}")
+            cmd = getattr(self, method_name, None)
+            if cmd is None:
+                # Fallback to generic handler
+                cmd = lambda h=handler, s=step_num: self._port_rom_generic_handler(s, h)
+            btn_text = f"Run Step {step_num}"
+            ttk.Button(
+                frame, text=btn_text,
+                command=lambda s=step_num, action=cmd: self._run_port_step(s, action),
+                style='Accent.TButton',
+            ).pack(pady=3)
+            # Scroll to specific step if requested
+            if scroll_to_step == step_num:
+                self.after(100, lambda c=canvas, s=step_num: self._scroll_to_step(c, s))
 
     def _browse_dir(self, var: tk.StringVar):
         path = filedialog.askdirectory()
         if path:
             var.set(path)
+
+    @staticmethod
+    def _status_badge_text(status: str) -> str:
+        return {
+            "pending": "● Pending",
+            "running": "▶ Running…",
+            "completed": "✓ Completed",
+            "skipped": "↷ Skipped",
+            "failed": "✗ Failed",
+        }.get(status, f"● {status}")
+
+    @staticmethod
+    def _status_badge_color(status: str) -> str:
+        return {
+            "pending": COLORS['text_secondary'],
+            "running": COLORS['accent_blue'],
+            "completed": COLORS['success'],
+            "skipped": COLORS['warning'],
+            "failed": COLORS['error'],
+        }.get(status, COLORS['text_primary'])
+
+    def _update_port_step_ui(self, step: int, status: str) -> None:
+        """Refresh the status badge and per-step progress bar for `step`.
+
+        Must be called on the Tk thread. Use `self.after(0, ...)` to marshal
+        from a worker thread.
+        """
+        labels = self.port_rom_step_labels.get(step)
+        if labels is None:
+            return
+        prog = self.port_rom_step_progress.get(step) if hasattr(self, 'port_rom_step_progress') else None
+        _name_lbl, status_lbl = labels
+        status_lbl.configure(text=self._status_badge_text(status),
+                             foreground=self._status_badge_color(status))
+        if prog is not None:
+            if status == "running":
+                try:
+                    prog.start(80)
+                except tk.TclError:
+                    pass
+            else:
+                try:
+                    prog.stop()
+                    prog.configure(value=0)
+                except tk.TclError:
+                    pass
+
+    def _set_port_step_status(self, step: int, status: str, results: Optional[Dict] = None):
+        """Update step status, log it, and refresh the status panel.
+
+        Safe to call from a worker thread: the UI refresh is marshaled back
+        to the Tk thread via `after(0, ...)`.
+        """
+        if step not in self.port_rom_step_status:
+            self.log(f"[!] Unknown port step {step}", 'error')
+            return
+        self.port_rom_step_status[step] = status
+        if results:
+            self.port_rom_step_results[step] = results
+
+        status_msg = {
+            "pending": "Step {step} pending",
+            "running": "Step {step} started",
+            "completed": "Step {step} completed successfully",
+            "failed": "Step {step} failed",
+        }.get(status, f"Step {step} {status}")
+
+        self.log(
+            status_msg.format(step=step),
+            'success' if status == "completed"
+            else 'error' if status == "failed"
+            else 'info',
+        )
+
+        # Marshal UI update onto the Tk thread. Widget access from a worker
+        # thread is undefined in Tk and intermittently segfaults.
+        try:
+            self.after(0, lambda: self._update_port_step_ui(step, status))
+        except RuntimeError:
+            # Window is being destroyed; nothing to update.
+            pass
+
+    def _set_port_step_override(self, step: int, override: str) -> None:
+        """Apply a user's explicit Skip/Done acknowledgement for one step."""
+        if step not in self.port_rom_step_status or override not in ("skip", "done"):
+            return
+        overrides = self.port_rom_step_overrides.setdefault(step, {"skip": False, "done": False})
+        skip_var = self.port_rom_step_skip_vars.get(step)
+        done_var = self.port_rom_step_done_vars.get(step)
+        skip = bool(skip_var.get()) if skip_var is not None else False
+        done = bool(done_var.get()) if done_var is not None else False
+        # The two acknowledgements are mutually exclusive: a step cannot be
+        # both deliberately skipped and marked complete.
+        if override == "skip" and skip:
+            done = False
+            if step in self.port_rom_step_done_vars:
+                self.port_rom_step_done_vars[step].set(False)
+        elif override == "done" and done:
+            skip = False
+            if step in self.port_rom_step_skip_vars:
+                self.port_rom_step_skip_vars[step].set(False)
+        overrides.update(skip=skip, done=done)
+        if skip:
+            self._set_port_step_status(step, "skipped", {"override": "skip"})
+        elif done:
+            self._set_port_step_status(step, "completed", {"override": "done"})
+        elif self.port_rom_step_status.get(step) == "skipped" and not skip:
+            self._set_port_step_status(step, "pending")
+        elif self.port_rom_step_status.get(step) == "completed" and not done and not skip:
+            self._set_port_step_status(step, "pending")
+        else:
+            self._update_port_step_ui(step, self.port_rom_step_status.get(step, "pending"))
+
+    def _run_port_step(self, step: int, action) -> bool:
+        """Run one step while retaining default dependency locking.
+
+        A dependency may be bypassed only when its Skip or Done toggle is set.
+        The step itself remains runnable, so users can clear an acknowledgement
+        and execute it later without rebuilding the Port ROM tab.
+        """
+        valid, message = self._validate_step_dependencies(step)
+        if not valid:
+            messagebox.showerror("Dependency Error", message)
+            return False
+        try:
+            action()
+            return True
+        except Exception as exc:
+            self._set_port_step_status(step, "failed", {"error": str(exc)})
+            self.log(f"Step {step} failed to start: {exc}", "error")
+            return False
+
+    def _update_port_rom_ui(self):
+        """Refresh all port ROM step status labels from internal state.
+
+        Called after restoring project state to update the status badges
+        and progress bars without rebuilding the entire UI.
+        """
+        for step in self.port_rom_step_status.keys():
+            status = self.port_rom_step_status.get(step, "pending")
+            self._update_port_step_ui(step, status)
+
+    def _validate_and_run_step(self, step: int, thread_func, *args):
+        """Validate dependencies and run a step"""
+        # Check dependencies
+        valid, msg = self._validate_step_dependencies(step)
+        if not valid:
+            messagebox.showerror("Dependency Error", msg)
+            return False
+
+        # Mark as running
+        self._set_port_step_status(step, "running")
+
+        # Run in thread with completion callback
+        def run_with_callback():
+            try:
+                thread_func(*args)
+            except Exception as e:
+                # `_set_port_step_status` itself does not raise, but log the
+                # traceback anyway so failures are diagnosable.
+                self.log(f"[!] Step {step} worker raised: {e!r}", 'error')
+                self._set_port_step_status(step, "failed", {"error": str(e)})
+
+        threading.Thread(target=run_with_callback, daemon=True, name=f"PortStep-{step}").start()
+        return True
+
+    def _validate_step_dependencies(self, step: int) -> Tuple[bool, str]:
+        """Validate that `step` may run.
+
+        Returns (True, "") if dependencies are satisfied, otherwise
+        (False, human-readable message). Checks:
+
+          * step is a known port step (1..35, dynamic from PORT_ROM_STEPS)
+          * no upstream dependency is `pending` or `running`
+          * no upstream dependency is `failed`
+          * `step` is not already `running` (reentrancy guard)
+          * step 1: source/target firmware directories must exist
+          * steps 2..35: `port_rom_config` must be initialized
+        """
+        if step not in self.port_rom_step_status:
+            return False, f"Unknown port step: {step}"
+
+        if self.port_rom_step_status[step] == "running":
+            return False, f"Step {step} is already running. Wait for it to finish or restart the wizard."
+
+        deps = self.port_rom_step_dependencies.get(step, [])
+        for d in deps:
+                status = self.port_rom_step_status.get(d, "pending")
+                if status == "pending":
+                    override = self.port_rom_step_overrides.get(d, {})
+                    if not (override.get("skip") or override.get("done")):
+                        return False, f"Step {step} requires Step {d} to be completed first."
+                if status == "running":
+                    return False, f"Step {step} is waiting for Step {d} to finish."
+                if status == "failed":
+                    return False, f"Step {d} previously failed. Re-run Step {d} before Step {step}."
+
+        # Step-specific preconditions.
+        if step == 1:
+            base_dir = self.port_rom_base_dir.get().strip()
+            port_dir = self.port_rom_port_dir.get().strip()
+            if not self.port_rom_source_device.get().strip() or not self.port_rom_target_device.get().strip():
+                return False, "Source and target device models are required for Step 1."
+            if not base_dir or not os.path.isdir(base_dir):
+                return False, "Source firmware directory is not set or does not exist."
+            if not port_dir or not os.path.isdir(port_dir):
+                return False, "Target firmware directory is not set or does not exist."
+        else:
+            if not getattr(self, "port_rom_config", None):
+                return False, "Run Step 1 (Firmware Extraction) before later steps."
+
+        return True, ""
+
+    def _call_on_ui(self, func, *args, **kwargs):
+        """Run `func` on the Tk thread.
+
+        Use this from worker threads for any widget or dialog access — Tk is
+        not thread-safe and direct access from workers intermittently
+        segfaults or deadlocks. Returns the result via a queue so callers
+        that need a return value can block on the Tk thread without leaking
+        shared state across threads.
+        """
+        result_box: List[Any] = [None]
+        error_box: List[Optional[BaseException]] = [None]
+
+        def _runner():
+            try:
+                result_box[0] = func(*args, **kwargs)
+            except BaseException as exc:  # noqa: BLE001 — surface on UI thread
+                error_box[0] = exc
+            finally:
+                done_box[0].set()
+
+        done_box: List[threading.Event] = [threading.Event()]
+        try:
+            self.after(0, _runner)
+        except RuntimeError:
+            return None
+        done_box[0].wait()
+        if error_box[0] is not None:
+            raise error_box[0]
+        return result_box[0]
+
+    def _worker_showerror(self, title: str, message: str) -> None:
+        """Thread-safe wrapper for messagebox.showerror."""
+        self._call_on_ui(messagebox.showerror, title, message)
+
+    def _worker_showinfo(self, title: str, message: str) -> None:
+        """Thread-safe wrapper for messagebox.showinfo."""
+        self._call_on_ui(messagebox.showinfo, title, message)
+
+    def _worker_showwarning(self, title: str, message: str) -> None:
+        """Thread-safe wrapper for messagebox.showwarning."""
+        self._call_on_ui(messagebox.showwarning, title, message)
+
+    def _worker_set_status(self, text: str) -> None:
+        """Thread-safe wrapper for status_label.config(text=...)."""
+        if getattr(self, "status_label", None) is None:
+            return
+        self._call_on_ui(self.status_label.config, text=text)
+
+    def _worker_progress_start(self) -> None:
+        if getattr(self, "progress", None) is None:
+            return
+        self._call_on_ui(self.progress.start)
+
+    def _worker_progress_stop(self) -> None:
+        if getattr(self, "progress", None) is None:
+            return
+        self._call_on_ui(self.progress.stop)
+
+    def _port_rom_generic_handler(self, step_num: int, handler: str):
+        """Generic fallback handler for port rom steps"""
+        self.log(f"Step {step_num} ({handler}) - not yet implemented, please use Tools menu", 'info')
+        styled_messagebox(self, "Info", f"Step {step_num} handler '{handler}' is not yet implemented as a direct port-rome step.\nPlease use the corresponding Tools menu item for this operation.", "info")
+
+    # ========== New Port ROM Step Handlers (Steps 2-35) ==========
+    def _start_samsung_decrypt(self):
+        """Step 2: Decrypt OZIP/OMC Samsung protection"""
+        ok, err = self._validate_step_dependencies(2)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        # Use existing ozip_decrypt and omc_decode methods
+        choice = tk.Toplevel(self)
+        choice.title("Samsung Decrypt")
+        choice.geometry("400x200")
+        choice.transient(self)
+        ttk.Label(choice, text="Choose decryption type:").pack(pady=10)
+        def do_ozip():
+            choice.destroy()
+            self.ozip_decrypt_menu()
+        def do_omc():
+            choice.destroy()
+            self.omc_decode_menu()
+        ttk.Button(choice, text="OZIP Decrypt", command=do_ozip).pack(pady=5)
+        ttk.Button(choice, text="OMC/CSC Decode", command=do_omc).pack(pady=5)
+        ttk.Button(choice, text="Cancel", command=choice.destroy).pack(pady=5)
+        self._set_port_step_status(2, "completed", {"note": "User chose to decrypt"})
+
+    def _start_rom_extract(self):
+        """Step 3: Extract Tar/MD5 firmware files (BL/AP/CP/CSC)"""
+        ok, err = self._validate_step_dependencies(3)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.extract_rom_zip_menu()
+        self._set_port_step_status(3, "completed", {"note": "ROM extraction initiated"})
+
+    def _start_lz4_decompress(self):
+        """Step 4: Decompress LZ4 partition images"""
+        ok, err = self._validate_step_dependencies(4)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        src = filedialog.askdirectory(title="Select directory containing .lz4 files")
+        if not src:
+            return
+        try:
+            lz4 = tool_resolve("lz4")
+            if not lz4:
+                raise RuntimeError("lz4 not found")
+            count = 0
+            for f in os.listdir(src):
+                if f.endswith('.lz4'):
+                    inp = os.path.join(src, f)
+                    out = os.path.splitext(inp)[0]
+                    res = run_cmd([lz4, "-d", "-f", inp, out])
+                    if res.returncode == 0:
+                        count += 1
+            self.log(f"Decompressed {count} LZ4 files in: {src}", 'success')
+            styled_messagebox(self, "Success", f"Decompressed {count} LZ4 files", "success")
+            self._set_port_step_status(4, "completed", {"decompressed": count})
+        except Exception as e:
+            self.log(f"LZ4 decompress error: {e}", 'error')
+            self._set_port_step_status(4, "failed", {"error": str(e)})
+
+    def _start_lpunpack(self):
+        """Step 5: Unpack super partition"""
+        ok, err = self._validate_step_dependencies(5)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.lpunpack_menu()
+        self._set_port_step_status(5, "completed")
+
+    def _start_sparse_to_raw(self):
+        """Step 6: Convert sparse to raw"""
+        ok, err = self._validate_step_dependencies(6)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.sparse_to_raw_menu()
+        self._set_port_step_status(6, "completed")
+
+    def _start_extract_dtb(self):
+        """Step 8: Extract DTBs from kernel"""
+        ok, err = self._validate_step_dependencies(8)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.extract_dtb_tool_menu()
+        self._set_port_step_status(8, "completed")
+
+    def _start_dtb_decompile(self):
+        """Step 9: Decompile DTB to DTS"""
+        ok, err = self._validate_step_dependencies(9)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.dtc_decompile_menu()
+        self._set_port_step_status(9, "completed")
+
+    def _start_ramdisk_extract(self):
+        """Step 10: Extract ramdisk CPIO"""
+        ok, err = self._validate_step_dependencies(10)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.cpio_extract_menu()
+        self._set_port_step_status(10, "completed")
+
+    def _start_pit_analyze(self):
+        """Step 11: Analyze PIT"""
+        ok, err = self._validate_step_dependencies(11)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        try:
+            heimdall = tool_resolve("heimdall")
+            if not heimdall:
+                raise RuntimeError("heimdall not found")
+            pit_file = filedialog.askopenfilename(title="Select PIT file", filetypes=[("PIT", "*.pit"), ("All", "*.*")])
+            if not pit_file:
+                return
+            self.log(f"Analyzing PIT: {os.path.basename(pit_file)}", 'info')
+            self.progress.start()
+            res = run_cmd([heimdall, "print-pit", "--file", pit_file])
+            self.progress.stop()
+            out = res.stdout.decode(errors='replace')
+            TextOutputDialog(self, "PIT Analysis", out)
+            self._set_port_step_status(11, "completed", {"output": out[:500]})
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"PIT analyze error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+            self._set_port_step_status(11, "failed", {"error": str(e)})
+
+    def _start_boot_header_analyze(self):
+        """Step 12: Analyze boot image header"""
+        ok, err = self._validate_step_dependencies(12)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.analyze_boot_img_menu()
+        self._set_port_step_status(12, "completed")
+
+    def _start_buildprop_compare(self):
+        """Step 13: Compare build.prop files"""
+        ok, err = self._validate_step_dependencies(13)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        base = filedialog.askopenfilename(title="Select BASE build.prop", filetypes=[("prop", "build.prop"), ("All", "*.*")])
+        if not base:
+            return
+        port = filedialog.askopenfilename(title="Select PORT build.prop", filetypes=[("prop", "build.prop"), ("All", "*.*")])
+        if not port:
+            return
+        try:
+            with open(base, 'r', encoding='utf-8', errors='replace') as f:
+                base_props = dict(line.strip().split('=', 1) for line in f if '=' in line and not line.strip().startswith('#'))
+            with open(port, 'r', encoding='utf-8', errors='replace') as f:
+                port_props = dict(line.strip().split('=', 1) for line in f if '=' in line and not line.strip().startswith('#'))
+            # Find differences
+            only_base = {k: v for k, v in base_props.items() if k not in port_props}
+            only_port = {k: v for k, v in port_props.items() if k not in base_props}
+            different = {k: (base_props[k], port_props[k]) for k in base_props if k in port_props and base_props[k] != port_props[k]}
+            out = []
+            out.append(f"=== Only in BASE ({len(only_base)}) ===")
+            out.extend(f"{k}={v}" for k, v in list(only_base.items())[:100])
+            out.append(f"\n=== Only in PORT ({len(only_port)}) ===")
+            out.extend(f"{k}={v}" for k, v in list(only_port.items())[:100])
+            out.append(f"\n=== Different ({len(different)}) ===")
+            out.extend(f"{k}:\n  base={bv}\n  port={pv}" for k, (bv, pv) in list(different.items())[:100])
+            TextOutputDialog(self, "Build.prop Comparison", "\n".join(out))
+            self.log(f"✓ build.prop comparison: {len(different)} different, {len(only_base)} base-only, {len(only_port)} port-only", 'success')
+            self._set_port_step_status(13, "completed", {"different": len(different)})
+        except Exception as e:
+            self.log(f"build.prop compare error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+            self._set_port_step_status(13, "failed", {"error": str(e)})
+
+    def _start_apk_decompile(self):
+        """Step 14: Decompile APKs"""
+        ok, err = self._validate_step_dependencies(14)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.apktool_decode_advanced_menu()
+        self._set_port_step_status(14, "completed")
+
+    def _start_baksmali_dex(self):
+        """Step 15: Baksmali classes.dex"""
+        ok, err = self._validate_step_dependencies(15)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.baksmali_menu()
+        self._set_port_step_status(15, "completed")
+
+    def _start_debloater(self):
+        """Step 16: Debloat port ROM"""
+        ok, err = self._validate_step_dependencies(16)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        # Show a dialog to choose a debloat list file
+        list_file = filedialog.askopenfilename(title="Select debloat list (text file with package names, one per line)",
+                                               filetypes=[("Text", "*.txt"), ("All", "*.*")])
+        if not list_file:
+            return
+        system_dir = filedialog.askdirectory(title="Select system directory to debloat")
+        if not system_dir:
+            return
+        try:
+            with open(list_file, 'r') as f:
+                packages = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+            removed = []
+            for pkg in packages:
+                for sub in ['app', 'priv-app', 'system/app', 'system/priv-app']:
+                    p = os.path.join(system_dir, sub, pkg)
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                        removed.append(p)
+                        break
+                    elif os.path.isfile(p + '.apk'):
+                        try:
+                            os.remove(p + '.apk')
+                            removed.append(p + '.apk')
+                        except: pass
+                        break
+            self.log(f"Debloated: {len(removed)} packages removed from {system_dir}", 'success')
+            styled_messagebox(self, "Success", f"Removed {len(removed)} packages", "success")
+            self._set_port_step_status(16, "completed", {"removed": len(removed)})
+        except Exception as e:
+            self.log(f"Debloat error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+            self._set_port_step_status(16, "failed", {"error": str(e)})
+
+    def _start_buildprop_modify(self):
+        """Step 17: Modify build.prop values"""
+        ok, err = self._validate_step_dependencies(17)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        # Use existing _open_file_editor_and_load_file
+        bp = filedialog.askopenfilename(title="Select build.prop to modify", filetypes=[("prop", "build.prop"), ("All", "*.*")])
+        if not bp:
+            return
+        self._open_file_editor_and_load_file(bp)
+        self.log(f"Opened build.prop in editor: {bp}", 'info')
+        self._set_port_step_status(17, "completed")
+
+    def _start_initrc_modify(self):
+        """Step 18: Modify init.rc / fstab files"""
+        ok, err = self._validate_step_dependencies(18)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        f = filedialog.askopenfilename(title="Select init.rc or fstab file to edit", filetypes=[("RC", "*.rc"), ("All", "*.*")])
+        if not f:
+            return
+        self._open_file_editor_and_load_file(f)
+        self.log(f"Opened init.rc/fstab in editor: {f}", 'info')
+        self._set_port_step_status(18, "completed")
+
+    def _start_selinux_patch(self):
+        """Step 19: Patch SELinux contexts"""
+        ok, err = self._validate_step_dependencies(19)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        choice = tk.Toplevel(self)
+        choice.title("SELinux Patch")
+        choice.geometry("350x150")
+        choice.transient(self)
+        ttk.Label(choice, text="Choose action:").pack(pady=10)
+        ttk.Button(choice, text="Compile file_contexts", command=lambda: [choice.destroy(), self.sefcontext_compile_menu()]).pack(pady=5)
+        ttk.Button(choice, text="Patch boot sepolicy (magiskinit)", command=lambda: [choice.destroy(), self.magisk_selinux_patch_menu()]).pack(pady=5)
+        ttk.Button(choice, text="Cancel", command=choice.destroy).pack(pady=5)
+        self._set_port_step_status(19, "completed")
+
+    def _start_dtb_patch(self):
+        """Step 20: Patch DTB (verity/avb)"""
+        ok, err = self._validate_step_dependencies(20)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.magisk_dtb_patch_menu()
+        self._set_port_step_status(20, "completed")
+
+    def _start_hex_patch(self):
+        """Step 21: Hex patch kernel/binary"""
+        ok, err = self._validate_step_dependencies(21)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.magisk_hex_patch_menu()
+        self._set_port_step_status(21, "completed")
+
+    def _start_app_add(self):
+        """Step 23: Add system apps (priv-app)"""
+        ok, err = self._validate_step_dependencies(23)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        apk = filedialog.askopenfilename(title="Select APK to add as system app", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        target = filedialog.askdirectory(title="Select target system/priv-app directory")
+        if not target:
+            return
+        try:
+            shutil.copy2(apk, os.path.join(target, os.path.basename(apk)))
+            self.log(f"Added app: {apk} -> {target}", 'success')
+            styled_messagebox(self, "Success", f"App added: {os.path.basename(apk)}", "success")
+            self._set_port_step_status(23, "completed")
+        except Exception as e:
+            self.log(f"App add error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+            self._set_port_step_status(23, "failed", {"error": str(e)})
+
+    def _start_vbmeta_patch(self):
+        """Step 24: Patch vbmeta (disable verification)"""
+        ok, err = self._validate_step_dependencies(24)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.create_vbmeta_menu()
+        self._set_port_step_status(24, "completed")
+
+    def _start_ramdisk_repack(self):
+        """Step 25: Repack ramdisk (CPIO + compress)"""
+        ok, err = self._validate_step_dependencies(25)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.create_ramdisk_menu()
+        self._set_port_step_status(25, "completed")
+
+    def _start_ext4_rebuild(self):
+        """Step 27: Rebuild EXT4 image"""
+        ok, err = self._validate_step_dependencies(27)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.make_ext4fs_menu()
+        self._set_port_step_status(27, "completed")
+
+    def _start_raw_to_sparse(self):
+        """Step 28: Convert raw to sparse"""
+        ok, err = self._validate_step_dependencies(28)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.raw_to_sparse_menu()
+        self._set_port_step_status(28, "completed")
+
+    def _start_lpmake_rebuild(self):
+        """Step 29: Rebuild super partition with lpmake"""
+        ok, err = self._validate_step_dependencies(29)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.lpmake_menu()
+        self._set_port_step_status(29, "completed")
+
+    def _start_sefcontext_compile(self):
+        """Step 30: Compile file_contexts binary"""
+        ok, err = self._validate_step_dependencies(30)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.sefcontext_compile_menu()
+        self._set_port_step_status(30, "completed")
+
+    def _start_heimdall_package(self):
+        """Step 32: Build Heimdall flash package"""
+        ok, err = self._validate_step_dependencies(32)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        # Use existing heimdall flash function
+        self.flash_heimdall()
+        self._set_port_step_status(32, "completed")
+
+    def _start_avb_verify(self):
+        """Step 33: Verify AVB signatures"""
+        ok, err = self._validate_step_dependencies(33)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.verify_vbmeta_menu()
+        self._set_port_step_status(33, "completed")
+
+    def _start_md5_verify(self):
+        """Step 34: Verify MD5 checksums"""
+        ok, err = self._validate_step_dependencies(34)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        self.verify_firmware_checksums_menu()
+        self._set_port_step_status(34, "completed")
+
+    def _start_manifest_generate(self):
+        """Step 35: Generate build manifest"""
+        ok, err = self._validate_step_dependencies(35)
+        if not ok:
+            styled_messagebox(self, "Error", err, "error")
+            return
+        try:
+            out_dir = filedialog.askdirectory(title="Select output directory for build manifest")
+            if not out_dir:
+                return
+            manifest = ["Samsung Port ROM Build Manifest",
+                       "=" * 50,
+                       f"Generated: {datetime.now().isoformat() if 'datetime' in dir() else 'N/A'}",
+                       f"Source Device: {self.port_rom_source_device.get() if hasattr(self, 'port_rom_source_device') else 'N/A'}",
+                       f"Target Device: {self.port_rom_target_device.get() if hasattr(self, 'port_rom_target_device') else 'N/A'}",
+                       "",
+                       "Step Status:"]
+            for step_num, title, _, _ in PORT_ROM_STEPS:
+                status = self.port_rom_step_status.get(step_num, "pending")
+                manifest.append(f"  Step {step_num}: [{status.upper()}] {title}")
+            manifest_path = os.path.join(out_dir, "PORT_ROM_MANIFEST.txt")
+            with open(manifest_path, 'w') as f:
+                f.write('\n'.join(manifest))
+            self.log(f"✓ Manifest generated: {manifest_path}", 'success')
+            styled_messagebox(self, "Success", f"Manifest saved to:\n{manifest_path}", "success")
+            self._set_port_step_status(35, "completed", {"path": manifest_path})
+        except Exception as e:
+            self.log(f"Manifest error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+            self._set_port_step_status(35, "failed", {"error": str(e)})
 
     def _start_firmware_extraction(self):
         source_device = self.port_rom_source_device.get().strip()
@@ -7086,6 +15141,10 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "One or both selected paths are not valid directories.")
             return
 
+        self.status_label.config(text="Extracting firmware for porting...")
+        self.progress.start()
+        self.log("Starting firmware extraction for porting...", 'info')
+
         # Create device-agnostic configuration
         self.port_rom_config = PortRomConfig(
             source_device=source_device,
@@ -7095,44 +15154,51 @@ class SmartphoneFirmwareScrews(tk.Tk):
             work_dir=os.path.join(os.getcwd(), "firmware_port")
         )
 
+        # Mark step 1 as running
+        self._set_port_step_status(1, "running")
+
         threading.Thread(target=self._extract_firmware_for_porting_thread,
                          args=(base_dir, port_dir), daemon=True).start()
 
     def _extract_tar_md5_for_porting(self, tar_md5_path: str, extract_to_dir: str):
         self.log(f"[*] Extracting {os.path.basename(tar_md5_path)}")
-        tmp_tar = tempfile.mkstemp(suffix=".tar")[1]
+        tmp_tar = tempfile.mktemp(suffix=".tar")
         try:
-            # Validate MD5 footer before stripping
             ok, msg = verify_tar_md5_footer(tar_md5_path)
             if not ok:
                 self.log(f"[!] Warning: MD5 footer check failed for {os.path.basename(tar_md5_path)}: {msg}", 'warning')
             strip_md5_footer(tar_md5_path, tmp_tar)
             bsdtar = tool_resolve("bsdtar")
+            extracted = False
             if bsdtar:
                 result = run_cmd([bsdtar, "-xf", tmp_tar, "-C", extract_to_dir])
                 if result.returncode == 0:
-                    # Confirm extraction resulted in files
-                    if any(True for _ in os.scandir(extract_to_dir)):
-                        return
-            # Fallback to 7z
-            seven_z = tool_resolve("7z")
-            if seven_z:
-                result = run_cmd([seven_z, "x", tmp_tar[1], f"-o{extract_to_dir}"])
-                if result.returncode == 0 and any(True for _ in os.scandir(extract_to_dir)):
-                    return
-            raise RuntimeError("Could not extract tar archive")
+                    extracted = any(True for _ in os.scandir(extract_to_dir))
+            if not extracted:
+                seven_z = tool_resolve("7z")
+                if seven_z:
+                    result = run_cmd([seven_z, "x", tmp_tar, f"-o{extract_to_dir}"])
+                    if result.returncode == 0 and any(True for _ in os.scandir(extract_to_dir)):
+                        extracted = True
+            if not extracted:
+                raise RuntimeError("Could not extract tar archive with bsdtar or 7z")
         finally:
-            if os.path.exists(tmp_tar):
-                os.remove(tmp_tar)
+            try:
+                if os.path.exists(tmp_tar):
+                    os.remove(tmp_tar)
+            except (OSError, PermissionError):
+                self.log(f"[!] Warning: Could not delete temporary file {tmp_tar}", 'warning')
 
     def _extract_firmware_for_porting_thread(self, base_dir: str, port_dir: str):
         import os
         import shutil
         if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
             self.log("[!] No port ROM configuration found", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", "Port ROM configuration not initialized"))
+            self._worker_showerror("Error", "Port ROM configuration not initialized")
+            self._set_port_step_status(1, "failed", {"error": "Configuration not initialized"})
             return
 
+        assert self.port_rom_config is not None
         config = self.port_rom_config
         work_dir = config.work_dir
         self.log(f"[*] Starting firmware extraction. Working directory: {work_dir}")
@@ -7144,8 +15210,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
         ensure_dir(config.get_extracted_dir(config.target_device))
 
         try:
-            self.status_label.config(text="Extracting firmware...")
-            self.progress.start()
+            self._worker_set_status("Extracting firmware...")
+            self._worker_progress_start()
 
             # --- Extract Source Firmware ---
             self.log(f"[*] Extracting {config.source_device} firmware...")
@@ -7172,36 +15238,165 @@ class SmartphoneFirmwareScrews(tk.Tk):
             tgt_ok = any(True for _ in os.scandir(config.get_extracted_dir(config.target_device)))
             if not src_ok or not tgt_ok:
                 raise RuntimeError("Extraction finished but no files were found in extracted directories")
+
+            # --- Handle Super Partition (Dynamic Partitions) ---
+            self._handle_super_partition_extraction(config)
+
             self.log("[*] Firmware extraction complete.", 'success')
             self.log(f"[*] {config.source_device} extracted to: {config.get_extracted_dir(config.source_device)}")
             self.log(f"[*] {config.target_device} extracted to: {config.get_extracted_dir(config.target_device)}")
-            self.after(0, lambda: messagebox.showinfo("Success", "Firmware extraction complete!"))
+
+            # Mark step as completed
+            self._set_port_step_status(1, "completed", {
+                "source_extracted": config.get_extracted_dir(config.source_device),
+                "target_extracted": config.get_extracted_dir(config.target_device)
+            })
+
+            self._worker_showinfo("Success", "Firmware extraction complete!")
 
         except Exception as e:
             self.log(f"[!] Error during extraction: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during extraction: {e}"))
+            self._set_port_step_status(1, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during extraction: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
+
+    def _handle_super_partition_extraction(self, config: PortRomConfig):
+        """Extract super partition if present using lpunpack"""
+        for device in [config.source_device, config.target_device]:
+            extracted_dir = config.get_extracted_dir(device)
+            super_img_path = os.path.join(extracted_dir, "super.img")
+            
+            if os.path.exists(super_img_path):
+                self.log(f"[*] Found super.img for {device}, extracting dynamic partitions...", 'info')
+                lpunpack = tool_resolve("lpunpack")
+                if not lpunpack:
+                    self.log("[!] lpunpack not found, skipping super partition extraction", 'warning')
+                    continue
+                
+                output_dir = os.path.join(extracted_dir, "super_partitions")
+                ensure_dir(output_dir)
+                
+                try:
+                    result = run_cmd([lpunpack, super_img_path, output_dir])
+                    if result.returncode == 0:
+                        self.log(f"[*] Super partition extracted to: {output_dir}", 'success')
+                        # List extracted partitions
+                        for part in os.listdir(output_dir):
+                            self.log(f"    - {part}", 'info')
+                    else:
+                        self.log(f"[!] lpunpack failed: {result.stderr.decode(errors='ignore')}", 'error')
+                except Exception as e:
+                    self.log(f"[!] Error extracting super partition: {e}", 'error')
+            else:
+                self.log(f"[*] No super.img found for {device} (legacy partition layout)", 'info')
+
+    def _create_super_partition(self, config: PortRomConfig, device: str, partition_dir: str, output_img: str):
+        """Create super partition from modified dynamic partitions using lpmake"""
+        lpmake = tool_resolve("lpmake")
+        if not lpmake:
+            self.log("[!] lpmake not found, cannot create super partition", 'error')
+            return False
+        
+        # Get metadata from original super partition if available
+        super_info = self._get_super_partition_metadata(config, device)
+        if not super_info:
+            self.log("[!] Could not get super partition metadata", 'error')
+            return False
+        
+        try:
+            # Build lpmake command
+            cmd = [
+                lpmake,
+                "--metadata-size", "65536",
+                "--super-name", "super",
+                "--metadata-slots", "1",
+                "--device", f"super:{super_info['size']}",
+                "--group", f"main:{super_info['size']}"
+            ]
+            
+            # Add each partition
+            for part_name, part_info in super_info['partitions'].items():
+                part_path = os.path.join(partition_dir, f"{part_name}.img")
+                if os.path.exists(part_path):
+                    cmd.extend([
+                        "--partition", f"{part_name}:readonly:{part_info['size']}:main",
+                        "--image", f"{part_name}={part_path}"
+                    ])
+            
+            cmd.extend(["--output", output_img])
+            
+            self.log(f"[*] Creating super partition: {output_img}")
+            result = run_cmd(cmd)
+            if result.returncode == 0:
+                self.log(f"[*] Super partition created successfully", 'success')
+                return True
+            else:
+                self.log(f"[!] lpmake failed: {result.stderr.decode(errors='ignore')}", 'error')
+                return False
+        except Exception as e:
+            self.log(f"[!] Error creating super partition: {e}", 'error')
+            return False
+
+    def _get_super_partition_metadata(self, config: PortRomConfig, device: str) -> Optional[Dict]:
+        """Extract super partition metadata (sizes, groups) from original"""
+        extracted_dir = config.get_extracted_dir(device)
+        super_img_path = os.path.join(extracted_dir, "super.img")
+        
+        if not os.path.exists(super_img_path):
+            return None
+        
+        lpunpack = tool_resolve("lpunpack")
+        if not lpunpack:
+            return None
+        
+        try:
+            # Use lpunpack to get metadata (dry run)
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                result = run_cmd([lpunpack, super_img_path, tmpdir])
+                if result.returncode != 0:
+                    return None
+                
+                # Parse extracted partitions to get sizes
+                partitions = {}
+                total_size = 0
+                for part_file in os.listdir(tmpdir):
+                    if part_file.endswith('.img'):
+                        part_name = part_file[:-4]
+                        part_path = os.path.join(tmpdir, part_file)
+                        size = os.path.getsize(part_path)
+                        partitions[part_name] = {'size': size}
+                        total_size += size
+                
+                # Add some overhead for metadata
+                total_size = int(total_size * 1.1)
+                
+                return {
+                    'size': total_size,
+                    'partitions': partitions
+                }
+        except Exception as e:
+            self.log(f"[!] Error reading super partition metadata: {e}", 'error')
+            return None
 
     def _start_boot_image_unpacking(self):
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
-        base_extracted_dir = os.path.join(work_dir, "base", "extracted")
-        port_extracted_dir = os.path.join(work_dir, "port", "extracted")
-
-        if not os.path.isdir(base_extracted_dir) or not os.path.isdir(port_extracted_dir):
-            messagebox.showerror("Error", "Firmware not extracted. Please complete Step 1 first.")
+        self.status_label.config(text="Unpacking boot images...")
+        self.progress.start()
+        self.log("Unpacking boot images...", 'info')
+        if not self._validate_and_run_step(2, self._unpack_boot_images_thread):
+            self.status_label.config(text="Ready")
+            self.progress.stop()
             return
-
-        threading.Thread(target=self._unpack_boot_images_thread, daemon=True).start()
 
     def _unpack_boot_images_thread(self):
-        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
-            self.log("[!] No port ROM configuration found", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", "Port ROM configuration not initialized"))
-            return
-
-        config: PortRomConfig = self.port_rom_config  # Type assertion for Pylance
+        # `_validate_and_run_step` already validated dependencies and set status to
+        # "running" before this thread was spawned. Do NOT re-validate here —
+        # doing so would create a state inconsistency if the check fails, leaving
+        # status as "running" despite never starting work.
+        assert self.port_rom_config is not None, "port_rom_config must be set when worker starts"
+        config: PortRomConfig = self.port_rom_config
         self.log("[*] Starting boot image unpacking...")
 
         # Get device-specific directories from config
@@ -7214,21 +15409,21 @@ class SmartphoneFirmwareScrews(tk.Tk):
         ensure_dir(target_boot_dir)
 
         try:
-            self.status_label.config(text="Unpacking boot images...")
-            self.progress.start()
+            self._worker_set_status("Unpacking boot images...")
+            self._worker_progress_start()
             self.log("[*] Starting boot image unpacking...", 'info')
 
             # --- Unpack Source Boot Image ---
-            self.log(f"[*] Unpacking {self.port_rom_config.source_device} boot.img...")
+            self.log(f"[*] Unpacking {config.source_device} boot.img...")
             boot_source_path = glob.glob(os.path.join(source_extracted_dir, "boot.img*"))
             if not boot_source_path:
-                self.log(f"[!] boot.img not found in {self.port_rom_config.source_device} firmware", 'error')
-                raise FileNotFoundError(f"boot.img not found in {self.port_rom_config.source_device} firmware")
+                self.log(f"[!] boot.img not found in {config.source_device} firmware", 'error')
+                raise FileNotFoundError(f"boot.img not found in {config.source_device} firmware")
             boot_source_file = boot_source_path[0]
             shutil.copy(boot_source_file, os.path.join(source_boot_dir, "boot.img"))
 
             unpack_boot_img(os.path.join(source_boot_dir, "boot.img"), source_boot_dir)
-            self.log(f"[*] {self.port_rom_config.source_device} boot.img unpacked to: {source_boot_dir}", 'success')
+            self.log(f"[*] {config.source_device} boot.img unpacked to: {source_boot_dir}", 'success')
 
             # Extract ramdisk for Source
             self._extract_ramdisk_from_boot_dir(source_boot_dir)
@@ -7238,16 +15433,16 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 raise RuntimeError("Source ramdisk folder missing after unpack")
 
             # --- Unpack Target Boot Image ---
-            self.log(f"[*] Unpacking {self.port_rom_config.target_device} boot.img...")
+            self.log(f"[*] Unpacking {config.target_device} boot.img...")
             boot_target_path = glob.glob(os.path.join(target_extracted_dir, "boot.img*"))
             if not boot_target_path:
-                self.log(f"[!] boot.img not found in {self.port_rom_config.target_device} firmware", 'error')
-                raise FileNotFoundError(f"boot.img not found in {self.port_rom_config.target_device} firmware")
+                self.log(f"[!] boot.img not found in {config.target_device} firmware", 'error')
+                raise FileNotFoundError(f"boot.img not found in {config.target_device} firmware")
             boot_target_file = boot_target_path[0]
             shutil.copy(boot_target_file, os.path.join(target_boot_dir, "boot.img"))
 
             unpack_boot_img(os.path.join(target_boot_dir, "boot.img"), target_boot_dir)
-            self.log(f"[*] {self.port_rom_config.target_device} boot.img unpacked to: {target_boot_dir}", 'success')
+            self.log(f"[*] {config.target_device} boot.img unpacked to: {target_boot_dir}", 'success')
 
             # Extract ramdisk for Target
             self._extract_ramdisk_from_boot_dir(target_boot_dir)
@@ -7256,60 +15451,101 @@ class SmartphoneFirmwareScrews(tk.Tk):
             if not os.path.exists(os.path.join(target_boot_dir, 'ramdisk')):
                 raise RuntimeError("Target ramdisk folder missing after unpack")
 
+            # --- Extract DTB from kernel for both devices ---
+            self._extract_dtb_from_kernel(source_boot_dir, config.source_device)
+            self._extract_dtb_from_kernel(target_boot_dir, config.target_device)
+
             self.log("[*] Boot image unpacking complete.", 'success')
-            self.log(f"[*] {self.port_rom_config.source_device} kernel: {os.path.join(source_boot_dir, 'kernel')}")
-            self.log(f"[*] {self.port_rom_config.target_device} kernel: {os.path.join(target_boot_dir, 'kernel')}")
-            self.log(f"[*] {self.port_rom_config.source_device} ramdisk: {os.path.join(source_boot_dir, 'ramdisk')}")
-            self.log(f"[*] {self.port_rom_config.target_device} ramdisk: {os.path.join(target_boot_dir, 'ramdisk')}")
-            self.after(0, lambda: messagebox.showinfo("Success", "Boot image unpacking complete!"))
+            self.log(f"[*] {config.source_device} kernel: {os.path.join(source_boot_dir, 'kernel')}")
+            self.log(f"[*] {config.target_device} kernel: {os.path.join(target_boot_dir, 'kernel')}")
+            self.log(f"[*] {config.source_device} ramdisk: {os.path.join(source_boot_dir, 'ramdisk')}")
+            self.log(f"[*] {config.target_device} ramdisk: {os.path.join(target_boot_dir, 'ramdisk')}")
+
+            # Mark step as completed
+            self._set_port_step_status(2, "completed", {
+                "source_boot_dir": source_boot_dir,
+                "target_boot_dir": target_boot_dir,
+                "source_kernel": os.path.join(source_boot_dir, "kernel"),
+                "target_kernel": os.path.join(target_boot_dir, "kernel"),
+                "source_ramdisk": os.path.join(source_boot_dir, "ramdisk"),
+                "target_ramdisk": os.path.join(target_boot_dir, "ramdisk")
+            })
+
+            self._worker_showinfo("Success", "Boot image unpacking complete!")
 
         except Exception as e:
             self.log(f"[!] Error during boot image unpacking: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during boot image unpacking: {e}"))
+            self._set_port_step_status(2, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during boot image unpacking: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _extract_ramdisk_from_boot_dir(self, boot_dir: str):
-        ramdisk_cpio = os.path.join(boot_dir, "ramdisk.cpio")
-        ramdisk_cpio_gz = os.path.join(boot_dir, "ramdisk.cpio.gz")
+        """Find and extract the ramdisk from an unpacked boot directory.
+        Handles all compression formats (lz4, gz, xz, lzma, bz2, lzo) and bare cpio."""
         ramdisk_out_dir = os.path.join(boot_dir, "ramdisk")
         ensure_dir(ramdisk_out_dir)
 
-        if os.path.exists(ramdisk_cpio):
-            self.log(f"[*] Extracting {ramdisk_cpio}...", 'info')
-            extract_ramdisk(ramdisk_cpio, ramdisk_out_dir)
-            self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
-        elif os.path.exists(ramdisk_cpio_gz):
-            self.log(f"[*] Decompressing and extracting {ramdisk_cpio_gz}...", 'info')
-            # Use piping like the bash script: gzip -dc ramdisk.cpio.gz | cpio -idm
-            cpio = tool_resolve("cpio")
-            if cpio:
-                try:
-                    with open(ramdisk_cpio_gz, 'rb') as f_in:
-                        gz_data = gzip.decompress(f_in.read())
-                        result = run_cmd([cpio, "-idm"], cwd=ramdisk_out_dir, input_data=gz_data)
-                        if result.returncode == 0:
-                            self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
-                        else:
-                            raise RuntimeError("cpio extraction failed")
-                except Exception as e:
-                    self.log(f"[!] Failed to decompress or extract ramdisk.cpio.gz: {e}", 'error')
+        # Find the ramdisk file (try AIK's split_img/ first, then root)
+        candidates = []
+        split_img = os.path.join(boot_dir, "split_img")
+        if os.path.isdir(split_img):
+            for f in sorted(os.listdir(split_img)):
+                if "ramdisk" in f.lower() and f != "ramdiskcomp":
+                    candidates.append(os.path.join(split_img, f))
+        for cand in ("ramdisk.cpio.lz4", "ramdisk.cpio.gz", "ramdisk.cpio.xz",
+                     "ramdisk.cpio.lzma", "ramdisk.cpio.bz2", "ramdisk.cpio.lzo",
+                     "ramdisk.cpio", "ramdisk"):
+            p = os.path.join(boot_dir, cand)
+            if os.path.exists(p):
+                candidates.append(p)
+
+        if not candidates:
+            raise FileNotFoundError(
+                f"No ramdisk found in {boot_dir} (looked in split_img/ and root)"
+            )
+
+        for ramdisk_cpio in candidates:
+            self.log(f"[*] Extracting ramdisk: {os.path.basename(ramdisk_cpio)}", 'info')
+            try:
+                extract_ramdisk(ramdisk_cpio, ramdisk_out_dir)
+                self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
+                return
+            except Exception as e:
+                self.log(f"[!] Failed to extract {os.path.basename(ramdisk_cpio)}: {e}", 'error')
+                continue
+
+        raise FileNotFoundError(f"Ramdisk extraction failed for {boot_dir}: tried {len(candidates)} candidates")
+
+    def _extract_dtb_from_kernel(self, boot_dir: str, device_name: str):
+        """Extract DTB from kernel using extract-dtb tool"""
+        kernel_path = os.path.join(boot_dir, "kernel")
+        if not os.path.exists(kernel_path):
+            self.log(f"[!] Kernel not found at {kernel_path} for {device_name}", 'warning')
+            return
+        
+        extract_dtb = tool_resolve("extract-dtb")
+        if not extract_dtb:
+            self.log(f"[!] extract-dtb tool not found, skipping DTB extraction for {device_name}", 'warning')
+            return
+        
+        try:
+            self.log(f"[*] Extracting DTB from kernel for {device_name}...", 'info')
+            # Run extract-dtb on the kernel
+            result = run_cmd(["python", extract_dtb, kernel_path], cwd=boot_dir)
+            if result.returncode == 0:
+                # Find extracted DTB files
+                dtb_files = glob.glob(os.path.join(boot_dir, "*.dtb"))
+                if dtb_files:
+                    for dtb in dtb_files:
+                        self.log(f"[*] Extracted DTB: {os.path.basename(dtb)}", 'success')
+                else:
+                    self.log(f"[*] DTB extraction completed (no .dtb files found)", 'info')
             else:
-                # Fallback to temporary file method
-                tmp_cpio = tempfile.mktemp(suffix=".cpio")
-                try:
-                    with open(ramdisk_cpio_gz, 'rb') as f_in, gzip.open(tmp_cpio, 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                    extract_ramdisk(tmp_cpio, ramdisk_out_dir)
-                    self.log(f"[*] Ramdisk extracted to {ramdisk_out_dir}", 'success')
-                except Exception as e:
-                    self.log(f"[!] Failed to decompress or extract ramdisk.cpio.gz: {e}", 'error')
-                finally:
-                    if os.path.exists(tmp_cpio):
-                        os.remove(tmp_cpio)
-        else:
-            self.log(f"[!] Ramdisk (ramdisk.cpio or ramdisk.cpio.gz) not found in {boot_dir}", 'warning')
+                self.log(f"[!] DTB extraction failed: {result.stderr.decode(errors='ignore')}", 'warning')
+        except Exception as e:
+            self.log(f"[!] Error extracting DTB for {device_name}: {e}", 'error')
 
     def _start_ramdisk_modification(self):
         """Start the ramdisk modification process"""
@@ -7317,6 +15553,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
             return
 
+        assert self.port_rom_config is not None
         config = self.port_rom_config
         base_ramdisk_dir = os.path.join(config.get_boot_dir(config.source_device), "ramdisk")
         port_ramdisk_dir = os.path.join(config.get_boot_dir(config.target_device), "ramdisk")
@@ -7325,14 +15562,25 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "Ramdisk directories not found. Please complete Step 2 first.")
             return
 
+        # Validate dependencies
+        valid, msg = self._validate_step_dependencies(3)
+        if not valid:
+            messagebox.showerror("Dependency Error", msg)
+            return
+
+        self.status_label.config(text="Modifying ramdisk...")
+        self.progress.start()
+        self.log("Starting ramdisk modification...", 'info')
+        self._set_port_step_status(3, "running")
+
         threading.Thread(target=self._modify_ramdisk_thread,
                         args=(base_ramdisk_dir, port_ramdisk_dir, config), daemon=True).start()
 
     def _modify_ramdisk_thread(self, base_ramdisk_dir: str, port_ramdisk_dir: str, config: PortRomConfig):
         """Thread to perform ramdisk modification"""
         try:
-            self.status_label.config(text="Modifying ramdisk...")
-            self.progress.start()
+            self._worker_set_status("Modifying ramdisk...")
+            self._worker_progress_start()
             self.log("[*] Starting ramdisk modification...", 'info')
 
             # Create backup of original base ramdisk
@@ -7369,19 +15617,29 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log("[*] Ramdisk modification complete.", 'success')
             self.log(f"[*] Modified ramdisk: {base_ramdisk_dir}", 'info')
             self.log(f"[*] Backup: {backup_dir}", 'info')
-            self.after(0, lambda: messagebox.showinfo("Success",
+
+            # Mark step 3 as completed
+            self._set_port_step_status(3, "completed", {
+                "modified_ramdisk": base_ramdisk_dir,
+                "backup_dir": backup_dir
+            })
+
+            self._worker_showinfo(
+                "Success",
                 "Ramdisk modification complete!\n\n"
                 "IMPORTANT: Review changes manually before repacking:\n"
                 "- Verify fstab partition paths match port device\n"
                 "- Check init*.rc for hardware-specific services\n"
-                "- Confirm device tree files are from port device"))
+                "- Confirm device tree files are from port device",
+            )
 
         except Exception as e:
             self.log(f"[!] Error during ramdisk modification: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during ramdisk modification: {e}"))
+            self._set_port_step_status(3, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during ramdisk modification: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _modify_fstab_files(self, base_ramdisk_dir: str, port_ramdisk_dir: str, config: PortRomConfig):
         """Modify fstab files in the ramdisk"""
@@ -7592,6 +15850,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
     def _start_boot_repacking(self):
         """Start the boot image repacking process"""
+        # Validate dependencies
+        valid, msg = self._validate_step_dependencies(4)
+        if not valid:
+            messagebox.showerror("Dependency Error", msg)
+            return
+
         work_dir = os.path.join(os.getcwd(), "firmware_port")
         base_boot_dir = os.path.join(work_dir, "base", "boot")
         base_ramdisk_dir = os.path.join(base_boot_dir, "ramdisk")
@@ -7609,33 +15873,42 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if not out_path:
             return
 
+        self.status_label.config(text="Repacking boot image...")
+        self.progress.start()
+        self.log("Starting boot image repacking...", 'info')
+        self._set_port_step_status(4, "running")
+
         threading.Thread(target=self._repack_boot_image_thread,
                         args=(base_boot_dir, out_path), daemon=True).start()
 
     def _repack_boot_image_thread(self, base_boot_dir: str, out_path: str):
         """Thread to repack the boot image with modified ramdisk"""
         try:
-            self.status_label.config(text="Repacking boot image...")
-            self.progress.start()
+            self._worker_set_status("Repacking boot image...")
+            self._worker_progress_start()
             self.log("[*] Starting boot image repacking...", 'info')
 
             # Set up directories
             work_dir = os.path.join(os.getcwd(), "firmware_port")
             port_boot_dir = os.path.join(work_dir, "port", "boot")
-            
+
             # Check required directories exist
             if not os.path.isdir(base_boot_dir) or not os.path.isdir(port_boot_dir):
                 self.log("[!] Boot directories not found. Run previous scripts first.", 'error')
-                self.after(0, lambda: messagebox.showerror("Error",
-                    "Boot directories not found. Please complete previous steps first."))
+                self._worker_showerror(
+                    "Error",
+                    "Boot directories not found. Please complete previous steps first.",
+                )
                 return
 
             # Check if magiskboot is available
             magiskboot_path = tool_resolve("magiskboot")
             if not magiskboot_path:
                 self.log("[!] magiskboot not found. Please install Magisk.", 'error')
-                self.after(0, lambda: messagebox.showerror("Error",
-                    "magiskboot not found. Please install Magisk in the tools folder."))
+                self._worker_showerror(
+                    "Error",
+                    "magiskboot not found. Please install Magisk in the tools folder.",
+                )
                 return
 
             self.log(f"[*] Using magiskboot: {magiskboot_path}", 'info')
@@ -7686,64 +15959,64 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 ramdisk_dir = os.path.join(temp_dir, "ramdisk")
                 if not os.path.isdir(ramdisk_dir):
                     raise FileNotFoundError("Modified ramdisk directory not found")
-                
-                # Change to ramdisk directory and create new ramdisk
+
+                # Determine which compression the original ramdisk used
+                # (look at the original ramdisk.cpio* in the base_boot_dir)
+                orig_ramdisk = None
+                for cand in ("ramdisk.cpio.lz4", "ramdisk.cpio.gz",
+                             "ramdisk.cpio.xz", "ramdisk.cpio.lzma",
+                             "ramdisk.cpio.bz2", "ramdisk.cpio.lzo",
+                             "ramdisk.cpio"):
+                    p = os.path.join(base_boot_dir, cand)
+                    if os.path.exists(p):
+                        orig_ramdisk = cand
+                        break
+                compress = "gzip"
+                if orig_ramdisk:
+                    if orig_ramdisk.endswith(".lz4"):  compress = "lz4"
+                    elif orig_ramdisk.endswith(".xz"):  compress = "xz"
+                    elif orig_ramdisk.endswith(".lzma"): compress = "lzma"
+                    elif orig_ramdisk.endswith(".bz2"):  compress = "bzip2"
+                    elif orig_ramdisk.endswith(".lzo"):  compress = "lzop"
+                    elif orig_ramdisk.endswith(".cpio"): compress = "none"
+                    else:                                compress = "gzip"
+                self.log(f"[*] Original ramdisk: {orig_ramdisk or 'unknown'} -> using {compress} compression", 'info')
+
                 old_cwd = os.getcwd()
                 try:
                     os.chdir(ramdisk_dir)
-                    new_ramdisk = os.path.join(temp_dir, "ramdisk-new.cpio.gz")
-                    
-                    # Use cpio to create new ramdisk, then gzip it
-                    cpio_path = tool_resolve("cpio")
-                    if cpio_path:
-                        # Create ramdisk with cpio
-                        import subprocess
-                        result = subprocess.run(
-                            [cpio_path, "-o", "-H", "newc"],
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            cwd=ramdisk_dir
-                        )
-                        
-                        if result.returncode == 0:
-                            # Compress with gzip
-                            gzip_path = tool_resolve("gzip")
-                            if gzip_path:
-                                with open(new_ramdisk.replace('.gz', ''), 'wb') as f:
-                                    f.write(result.stdout)
-                                
-                                result = run_cmd([gzip_path, "-f", new_ramdisk.replace('.gz', '')])
-                                if result.returncode != 0:
-                                    raise RuntimeError("Failed to compress ramdisk")
-                            else:
-                                raise FileNotFoundError("gzip not found for ramdisk compression")
-                        else:
-                            raise RuntimeError(f"Failed to create ramdisk cpio: {result.stderr.decode()}")
-                    else:
-                        raise FileNotFoundError("cpio not found for ramdisk creation")
-                        
+                    new_ramdisk_path = os.path.join(temp_dir, "ramdisk-new.cpio")
+                    if compress == "gzip":
+                        new_ramdisk_path += ".gz"
+                    elif compress == "lz4":
+                        new_ramdisk_path += ".lz4"
+                    elif compress in ("xz", "lzma"):
+                        new_ramdisk_path += "." + compress
+                    elif compress == "bzip2":
+                        new_ramdisk_path += ".bz2"
+                    elif compress == "lzop":
+                        new_ramdisk_path += ".lzo"
+                    create_ramdisk(ramdisk_dir, new_ramdisk_path, compress=compress)
                 finally:
                     os.chdir(old_cwd)
-                
-                # Step 5: Replace old ramdisk with new one
-                new_ramdisk_path = os.path.join(temp_dir, "ramdisk-new.cpio.gz")
-                old_ramdisk_path1 = os.path.join(temp_dir, "ramdisk.cpio")
-                old_ramdisk_path2 = os.path.join(temp_dir, "ramdisk.cpio.gz")
-                
+                self.log(f"[*] Ramdisk repacked: {new_ramdisk_path}", 'success')
+
+                # Step 5: Replace old ramdisk files with the new one
+                for old in ("ramdisk.cpio", "ramdisk.cpio.gz", "ramdisk.cpio.lz4",
+                            "ramdisk.cpio.xz", "ramdisk.cpio.lzma", "ramdisk.cpio.bz2",
+                            "ramdisk.cpio.lzo"):
+                    old_path = os.path.join(temp_dir, old)
+                    try:
+                        if os.path.exists(old_path):
+                            os.remove(old_path)
+                    except OSError:
+                        pass
+                # The new ramdisk keeps the same basename as the original so magiskboot/AIK find it
+                orig_ext = os.path.splitext(orig_ramdisk)[1] if orig_ramdisk else ".gz"
+                final_ramdisk = os.path.join(temp_dir, "ramdisk.cpio" + (orig_ext if orig_ext != ".cpio" else ""))
                 if os.path.exists(new_ramdisk_path):
-                    # Remove old ramdisk files
-                    for old_path in [old_ramdisk_path1, old_ramdisk_path2]:
-                        try:
-                            if os.path.exists(old_path):
-                                os.remove(old_path)
-                        except:
-                            pass
-                    
-                    # Move new ramdisk to final location
-                    final_ramdisk_path = os.path.join(temp_dir, "ramdisk.cpio.gz")
-                    shutil.move(new_ramdisk_path, final_ramdisk_path)
-                    self.log("[*] Ramdisk repacked successfully", 'success')
+                    shutil.move(new_ramdisk_path, final_ramdisk)
+                    self.log(f"[*] Final ramdisk: {final_ramdisk}", 'success')
                 else:
                     raise FileNotFoundError("Failed to create new ramdisk")
                 
@@ -7788,7 +16061,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         checksum_out_path = out_path + ".sha256"
                         shutil.copy2(checksum_path, checksum_out_path)
                         self.log(f"[*] Checksum saved: {checksum_out_path}", 'info')
-                    except:
+                    except OSError:
                         pass  # Non-critical if checksum can't be saved
                     
                 finally:
@@ -7803,25 +16076,34 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 self.log("    - DTB: Port device tree", 'info')
                 self.log("    - Ramdisk: Base device modified for port device", 'info')
                 
-                self.after(0, lambda: messagebox.showinfo("Success",
+                # Mark step 4 as completed
+                self._set_port_step_status(4, "completed", {
+                    "output_path": out_path,
+                    "sha256": file_hash
+                })
+
+                self._worker_showinfo(
+                    "Success",
                     "Boot image repacking complete!\n\n"
                     f"New boot image saved as:\n{out_path}\n\n"
                     f"SHA256: {file_hash}\n\n"
                     "Boot image components:\n"
                     "- Kernel: Port device (for hardware compatibility)\n"
                     "- DTB: Port device tree\n"
-                    "- Ramdisk: Base device modified for port device"))
-                
+                    "- Ramdisk: Base device modified for port device",
+                )
+
             finally:
                 # Cleanup temporary directory
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                
+
         except Exception as e:
             self.log(f"[!] Error during boot repacking: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during boot repacking: {e}"))
+            self._set_port_step_status(4, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during boot repacking: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _create_ramdisk(self, ramdisk_dir: str, out_path: str, compress: bool = True):
         """Create a ramdisk from a directory (simplified version)"""
@@ -7855,7 +16137,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 # Clean up uncompressed cpio
                 try:
                     os.remove(temp_cpio)
-                except:
+                except OSError:
                     pass
             else:
                 # Move temp file to final location
@@ -7868,7 +16150,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 try:
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
-                except:
+                except OSError:
                     pass
             raise e
 
@@ -7878,6 +16160,13 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
             return
 
+        # Validate dependencies (Step 5 required)
+        valid, msg = self._validate_step_dependencies(6)
+        if not valid:
+            messagebox.showerror("Dependency Error", msg)
+            return
+
+        assert self.port_rom_config is not None
         config = self.port_rom_config
         work_dir = config.work_dir
 
@@ -7889,6 +16178,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "Vendor directories not found. Please complete Step 5 first.")
             return
 
+        self.status_label.config(text="Modifying vendor partition...")
+        self.progress.start()
+        self.log("Starting vendor partition modification...", 'info')
+        self._set_port_step_status(6, "running")
+
         threading.Thread(target=self._vendor_modification_thread, daemon=True).start()
 
     def _start_system_modification(self):
@@ -7897,6 +16191,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
             return
 
+        assert self.port_rom_config is not None
         config = self.port_rom_config
         work_dir = config.work_dir
 
@@ -7908,17 +16203,31 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "System directories not found. Please complete Step 5 first.")
             return
 
+        self.status_label.config(text="Modifying system partition...")
+        self.progress.start()
+        self.log("Starting system partition modification...", 'info')
         threading.Thread(target=self._system_modification_thread, daemon=True).start()
 
     def _start_image_repacking(self):
         """Start the image repacking process"""
-        work_dir = os.path.join(os.getcwd(), "firmware_port")
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
+            return
 
-        # Check if modified directories exist from Steps 6-7
-        a33_vendor = os.path.join(work_dir, "a33", "vendor", "work")
-        a33_system = os.path.join(work_dir, "a33", "system", "work")
+        assert self.port_rom_config is not None
+        config = self.port_rom_config
 
-        if not os.path.isdir(a33_vendor) and not os.path.isdir(a33_system):
+        # Validate dependencies (Steps 6, 7 required)
+        valid, msg = self._validate_step_dependencies(8)
+        if not valid:
+            messagebox.showerror("Dependency Error", msg)
+            return
+
+        work_dir = config.work_dir
+        source_vendor = config.get_vendor_dir(config.source_device)
+        source_system = config.get_system_dir(config.source_device)
+
+        if not os.path.isdir(source_vendor) and not os.path.isdir(source_system):
             messagebox.showerror("Error", "Modified directories not found. Please complete Steps 6-7 first.")
             return
 
@@ -7934,10 +16243,21 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "img2simg not found. Please install android-tools or place img2simg in the tools folder.")
             return
 
+        self.status_label.config(text="Repacking images...")
+        self.progress.start()
+        self.log("Starting image repacking...", 'info')
+        self._set_port_step_status(8, "running")
+
         threading.Thread(target=self._image_repacking_thread, daemon=True).start()
 
     def _start_odin_package_creation(self):
         """Start the Odin package creation process"""
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
+            return
+
+        assert self.port_rom_config is not None
+        config = self.port_rom_config
         work_dir = os.path.join(os.getcwd(), "firmware_port")
         output_dir = os.path.join(work_dir, "output")
 
@@ -7957,10 +16277,19 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", f"Required images not found: {', '.join(missing_images)}")
             return
 
+        self.status_label.config(text="Creating Odin package...")
+        self.progress.start()
+        self.log("Starting Odin package creation...", 'info')
         threading.Thread(target=self._odin_package_creation_thread, daemon=True).start()
 
     def _start_package_validation(self):
         """Start the package validation process"""
+        if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
+            messagebox.showerror("Error", "Port ROM configuration not found. Please complete Step 1 first.")
+            return
+
+        assert self.port_rom_config is not None
+        config = self.port_rom_config
         work_dir = os.path.join(os.getcwd(), "firmware_port")
         odin_dir = os.path.join(work_dir, "odin_package")
 
@@ -7969,8 +16298,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "Odin package directory not found. Please complete Step 9 first.")
             return
 
-        # Check for critical files
-        critical_files = ["AP_A33_to_A32.tar.md5", "BL_A32.tar.md5", "CP_A32.tar.md5"]
+        # Check for critical files using dynamic device names
+        critical_files = [
+            f"AP_{config.source_device}_to_{config.target_device}.tar.md5",
+            f"BL_{config.target_device}.tar.md5",
+            f"CP_{config.target_device}.tar.md5",
+        ]
         missing_files = []
         for file in critical_files:
             if not os.path.exists(os.path.join(odin_dir, file)):
@@ -7980,10 +16313,19 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", f"Critical files not found: {', '.join(missing_files)}")
             return
 
+        self.status_label.config(text="Validating package...")
+        self.progress.start()
+        self.log("Starting package validation...", 'info')
         threading.Thread(target=self._package_validation_thread, daemon=True).start()
 
     def _start_system_vendor_extraction(self):
         """Start the system and vendor image extraction process"""
+        # Validate dependencies
+        valid, msg = self._validate_step_dependencies(5)
+        if not valid:
+            messagebox.showerror("Dependency Error", msg)
+            return
+
         work_dir = os.path.join(os.getcwd(), "firmware_port")
 
         if not os.path.isdir(work_dir):
@@ -7996,18 +16338,24 @@ class SmartphoneFirmwareScrews(tk.Tk):
             messagebox.showerror("Error", "simg2img not found. Please install android-tools-fsutils or place simg2img in the tools folder.")
             return
 
+        self.status_label.config(text="Extracting system and vendor images...")
+        self.progress.start()
+        self.log("Starting system/vendor extraction...", 'info')
+        self._set_port_step_status(5, "running")
+
         threading.Thread(target=self._extract_system_vendor_thread,
                         args=(work_dir,), daemon=True).start()
 
     def _vendor_modification_thread(self):
         """Thread to perform comprehensive vendor partition modification"""
         try:
-            self.status_label.config(text="Modifying vendor partition...")
-            self.progress.start()
+            self._worker_set_status("Modifying vendor partition...")
+            self._worker_progress_start()
             self.log("[*] Starting vendor partition modification...", 'info')
 
             if not self.port_rom_config:
                 raise RuntimeError("Port ROM configuration not initialized.")
+            assert self.port_rom_config is not None
             config: PortRomConfig = self.port_rom_config
 
             source_device = config.source_device
@@ -8329,6 +16677,9 @@ class SmartphoneFirmwareScrews(tk.Tk):
             except Exception as e:
                 self.log(f"[!] Error fixing permissions: {e}", 'warning')
 
+            # --- SELinux Context Compilation ---
+            self._compile_selinux_contexts(source_vendor_work_dir, target_vendor_work_dir, config)
+
             self.log("[*] Vendor modification complete.", 'success')
             self.log(f"[*] Modified vendor: {source_vendor_work_dir}", 'info')
             self.log(f"[*] Backup: {backup_dir}", 'info')
@@ -8343,8 +16694,15 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log("    - RIL libraries", 'info')
             self.log("    - Power/Thermal HALs", 'info')
             self.log("    - Device configurations", 'info')
+            
+            # Mark step 6 as completed
+            self._set_port_step_status(6, "completed", {
+                "modified_vendor": source_vendor_work_dir,
+                "backup_dir": backup_dir
+            })
 
-            self.after(0, lambda: messagebox.showinfo("Success",
+            self._worker_showinfo(
+                "Success",
                 "Vendor partition modification complete!\n\n"
                 f"Modified vendor: {source_vendor_work_dir}\n"
                 f"Backup: {backup_dir}\n\n"
@@ -8358,40 +16716,93 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 "• RIL libraries\n"
                 "• Power/Thermal HALs\n"
                 "• Device configurations\n\n"
-                "The vendor partition is now ready for repacking into the ported ROM."))
+                "The vendor partition is now ready for repacking into the ported ROM.",
+            )
 
         except Exception as e:
             self.log(f"[!] Error during vendor modification: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during vendor modification: {e}"))
+            self._set_port_step_status(6, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during vendor modification: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
+
+    def _compile_selinux_contexts(self, source_vendor_dir: str, target_vendor_dir: str, config: PortRomConfig):
+        """Compile SELinux file contexts for the modified vendor partition"""
+        sefcontext_compile = tool_resolve("sefcontext_compile")
+        if not sefcontext_compile:
+            self.log("[!] sefcontext_compile not found, skipping SELinux context compilation", 'warning')
+            return
+        
+        # Look for file_contexts in target vendor
+        target_contexts = os.path.join(target_vendor_dir, "etc", "selinux", "file_contexts")
+        if not os.path.exists(target_contexts):
+            target_contexts = os.path.join(target_vendor_dir, "file_contexts")
+        if not os.path.exists(target_contexts):
+            target_contexts = os.path.join(target_vendor_dir, "etc", "file_contexts")
+        
+        if not os.path.exists(target_contexts):
+            self.log("[!] No file_contexts found in target vendor, skipping SELinux compilation", 'warning')
+            return
+        
+        # Source file_contexts
+        source_contexts = os.path.join(source_vendor_dir, "etc", "selinux", "file_contexts")
+        if not os.path.exists(source_contexts):
+            source_contexts = os.path.join(source_vendor_dir, "file_contexts")
+        if not os.path.exists(source_contexts):
+            source_contexts = os.path.join(source_vendor_dir, "etc", "file_contexts")
+        
+        if not os.path.exists(source_contexts):
+            # Copy target file_contexts to source
+            import shutil
+            os.makedirs(os.path.dirname(source_contexts), exist_ok=True)
+            shutil.copy2(target_contexts, source_contexts)
+            self.log(f"[*] Copied file_contexts from target vendor", 'info')
+        
+        # Compile the contexts
+        try:
+            self.log("[*] Compiling SELinux file contexts...", 'info')
+            output_file = os.path.join(source_vendor_dir, "file_contexts.bin")
+            result = run_cmd([sefcontext_compile, "-o", output_file, source_contexts])
+            if result.returncode == 0:
+                self.log(f"[*] SELinux contexts compiled to: {output_file}", 'success')
+            else:
+                self.log(f"[!] sefcontext_compile failed: {result.stderr.decode(errors='ignore')}", 'error')
+        except Exception as e:
+            self.log(f"[!] Error compiling SELinux contexts: {e}", 'error')
 
     def _system_modification_thread(self):
         """Thread to perform system partition modification for device identity"""
         try:
-            self.status_label.config(text="Modifying system partition...")
-            self.progress.start()
+            self._worker_set_status("Modifying system partition...")
+            self._worker_progress_start()
             self.log("[*] Starting system partition modification...", 'info')
 
-            work_dir = os.path.join(os.getcwd(), "firmware_port")
-            a33_system = os.path.join(work_dir, "a33", "system", "work")
-            a32_system = os.path.join(work_dir, "a32", "system", "work")
+            if not self.port_rom_config:
+                raise RuntimeError("Port ROM configuration not initialized.")
+            assert self.port_rom_config is not None
+            config: PortRomConfig = self.port_rom_config
+
+            source_device = config.source_device
+            target_device = config.target_device
+
+            source_system = os.path.join(config.work_dir, source_device, "system", "work")
+            target_system = os.path.join(config.work_dir, target_device, "system", "work")
 
             # Verify directories exist
-            if not os.path.isdir(a33_system):
-                raise FileNotFoundError(f"A33 system directory not found: {a33_system}")
-            if not os.path.isdir(a32_system):
-                raise FileNotFoundError(f"A32 system directory not found: {a32_system}")
+            if not os.path.isdir(source_system):
+                raise FileNotFoundError(f"Source system directory not found: {source_system}")
+            if not os.path.isdir(target_system):
+                raise FileNotFoundError(f"Target system directory not found: {target_system}")
 
             # Create backup
             self.log("[*] Creating backup...")
-            backup_dir = os.path.join(work_dir, "a33", "system", "work.backup")
+            backup_dir = os.path.join(config.work_dir, source_device, "system", "work.backup")
             if os.path.exists(backup_dir):
                 import shutil
                 shutil.rmtree(backup_dir)
             import shutil
-            shutil.copytree(a33_system, backup_dir)
+            shutil.copytree(source_system, backup_dir)
             self.log(f"[*] Backup created: {backup_dir}", 'info')
 
             # Find and modify build.prop
@@ -8399,8 +16810,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
 
             # Possible build.prop locations
             build_prop_paths = [
-                os.path.join(a33_system, "system", "build.prop"),
-                os.path.join(a33_system, "build.prop")
+                os.path.join(source_system, "system", "build.prop"),
+                os.path.join(source_system, "build.prop")
             ]
 
             build_prop_path = None
@@ -8410,63 +16821,64 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     break
 
             if not build_prop_path:
-                raise FileNotFoundError("build.prop not found in A33 system directory")
+                raise FileNotFoundError(f"build.prop not found in {source_device} system directory")
 
             # Create backup of build.prop
             shutil.copy2(build_prop_path, build_prop_path + ".backup")
 
-            # Find A32 build.prop for reference
-            a32_build_prop_paths = [
-                os.path.join(a32_system, "system", "build.prop"),
-                os.path.join(a32_system, "build.prop")
+            # Find target build.prop for reference
+            target_build_prop_paths = [
+                os.path.join(target_system, "system", "build.prop"),
+                os.path.join(target_system, "build.prop")
             ]
 
-            a32_build_prop_path = None
-            for path in a32_build_prop_paths:
+            target_build_prop_path = None
+            for path in target_build_prop_paths:
                 if os.path.exists(path):
-                    a32_build_prop_path = path
+                    target_build_prop_path = path
                     break
 
-            # Read and modify A33 build.prop
+            # Read and modify source build.prop
             with open(build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
 
-            # Extract A32 device information if available
-            if a32_build_prop_path:
-                a32_model = None
-                a32_device = None
-                a32_name = None
-                a32_fingerprint = None
+            # Extract target device information if available
+            if target_build_prop_path:
+                target_model = None
+                target_device_prop = None
+                target_name = None
+                target_fingerprint = None
 
-                with open(a32_build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(target_build_prop_path, 'r', encoding='utf-8', errors='ignore') as f:
                     for line in f:
                         line = line.strip()
                         if line.startswith('ro.product.model='):
-                            a32_model = line.split('=', 1)[1]
+                            target_model = line.split('=', 1)[1]
                         elif line.startswith('ro.product.device='):
-                            a32_device = line.split('=', 1)[1]
+                            target_device_prop = line.split('=', 1)[1]
                         elif line.startswith('ro.product.name='):
-                            a32_name = line.split('=', 1)[1]
+                            target_name = line.split('=', 1)[1]
                         elif line.startswith('ro.build.fingerprint='):
-                            a32_fingerprint = line.split('=', 1)[1]
+                            target_fingerprint = line.split('=', 1)[1]
 
                 # Replace device identifiers
                 import re
-                if a32_model:
-                    content = re.sub(r'^ro\.product\.model=.*', f'ro.product.model={a32_model}', content, flags=re.MULTILINE)
-                if a32_device:
-                    content = re.sub(r'^ro\.product\.device=.*', f'ro.product.device={a32_device}', content, flags=re.MULTILINE)
-                    content = re.sub(r'^ro\.build\.product=.*', f'ro.build.product={a32_device}', content, flags=re.MULTILINE)
-                if a32_name:
-                    content = re.sub(r'^ro\.product\.name=.*', f'ro.product.name={a32_name}', content, flags=re.MULTILINE)
-                if a32_fingerprint:
-                    content = re.sub(r'^ro\.build\.fingerprint=.*', f'ro.build.fingerprint={a32_fingerprint}', content, flags=re.MULTILINE)
+                if target_model:
+                    content = re.sub(r'^ro\.product\.model=.*', f'ro.product.model={target_model}', content, flags=re.MULTILINE)
+                if target_device_prop:
+                    content = re.sub(r'^ro\.product\.device=.*', f'ro.product.device={target_device_prop}', content, flags=re.MULTILINE)
+                    content = re.sub(r'^ro\.build\.product=.*', f'ro.build.product={target_device_prop}', content, flags=re.MULTILINE)
+                if target_name:
+                    content = re.sub(r'^ro\.product\.name=.*', f'ro.product.name={target_name}', content, flags=re.MULTILINE)
+                if target_fingerprint:
+                    content = re.sub(r'^ro\.build\.fingerprint=.*', f'ro.build.fingerprint={target_fingerprint}', content, flags=re.MULTILINE)
 
             # General replacements for device compatibility
-            content = content.replace('a33', 'a32')
-            content = content.replace('A33', 'A32')
-            content = content.replace('SM-A336', 'SM-A325')
-            content = content.replace('exynos1280', 'exynos850')
+            content = content.replace(source_device.lower(), target_device.lower())
+            content = content.replace(source_device.upper(), target_device.upper())
+            content = content.replace(f'SM-{source_device.upper()}', f'SM-{target_device.upper()}')
+            # Chipset replacement - would need device-specific mapping
+            # content = content.replace('exynos1280', 'exynos850')  # This should be user-configurable
 
             # Write modified content
             with open(build_prop_path, 'w', encoding='utf-8') as f:
@@ -8475,14 +16887,14 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log("[*] system/build.prop modified", 'success')
 
             # Modify system/etc/prop.default if exists
-            prop_default_path = os.path.join(a33_system, "system", "etc", "prop.default")
+            prop_default_path = os.path.join(source_system, "system", "etc", "prop.default")
             if os.path.exists(prop_default_path):
                 self.log("[*] Modifying system/etc/prop.default...")
                 with open(prop_default_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
 
-                content = content.replace('a33', 'a32')
-                content = content.replace('A33', 'A32')
+                content = content.replace(source_device.lower(), target_device.lower())
+                content = content.replace(source_device.upper(), target_device.upper())
 
                 with open(prop_default_path, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -8490,36 +16902,45 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 self.log("[*] system/etc/prop.default modified", 'success')
 
             self.log("[*] System modification complete.", 'success')
-            self.log(f"[*] Modified system: {a33_system}", 'info')
+            self.log(f"[*] Modified system: {source_system}", 'info')
             self.log(f"[*] Backup: {backup_dir}", 'info')
             self.log("", 'info')
             self.log("[*] Changes made:", 'info')
-            self.log("    - Device model changed to A32", 'info')
+            self.log(f"    - Device model changed to {target_device.upper()}", 'info')
             self.log("    - Build fingerprint updated", 'info')
             self.log("    - Device identifiers updated", 'info')
+            
+            # Mark step 7 as completed
+            self._set_port_step_status(7, "completed", {
+                "modified_system": source_system,
+                "backup_dir": backup_dir
+            })
 
-            self.after(0, lambda: messagebox.showinfo("Success",
-                "System partition modification complete!\n\n"
-                "Modified system: " + a33_system + "\n"
-                "Backup: " + backup_dir + "\n\n"
-                "Changes made:\n"
-                "• Device model changed to A32\n"
-                "• Build fingerprint updated\n"
-                "• Device identifiers updated\n\n"
-                "The system partition is now configured for the A32 device identity."))
+            self._worker_showinfo(
+                "Success",
+                f"System partition modification complete!\n\n"
+                f"Modified system: {source_system}\n"
+                f"Backup: {backup_dir}\n\n"
+                f"Changes made:\n"
+                f"• Device model changed to {target_device.upper()}\n"
+                f"• Build fingerprint updated\n"
+                f"• Device identifiers updated\n\n"
+                f"The system partition is now configured for the {target_device.upper()} device identity.",
+            )
 
         except Exception as e:
             self.log(f"[!] Error during system modification: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during system modification: {e}"))
+            self._set_port_step_status(7, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during system modification: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _image_repacking_thread(self):
         """Thread to repack modified images into flashable format"""
         try:
-            self.status_label.config(text="Repacking images...")
-            self.progress.start()
+            self._worker_set_status("Repacking images...")
+            self._worker_progress_start()
             self.log("[*] Starting image repacking...", 'info')
 
             work_dir = os.path.join(os.getcwd(), "firmware_port")
@@ -8692,7 +17113,8 @@ class SmartphoneFirmwareScrews(tk.Tk):
             self.log(f"[!] Total size: {total_size}MB", 'warning')
             self.log("[!] Ready for Odin packaging.", 'success')
 
-            self.after(0, lambda: messagebox.showinfo("Success",
+            self._worker_showinfo(
+                "Success",
                 f"Image repacking complete!\n\n"
                 f"Output directory: {output_dir}\n\n"
                 f"Total size: {total_size}MB\n\n"
@@ -8701,21 +17123,22 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 "• system.img (modified)\n"
                 "• boot.img (modified)\n"
                 "• Additional partitions copied\n\n"
-                "Checksums saved to checksums.sha256"))
+                "Checksums saved to checksums.sha256",
+            )
 
         except Exception as e:
             self.log(f"[!] Error during image repacking: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during image repacking: {e}"))
+            self._worker_showerror("Error", f"An error occurred during image repacking: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _odin_package_creation_thread(self):
         """Thread to create Odin flashable package"""
         import shutil
         try:
-            self.status_label.config(text="Creating Odin package...")
-            self.progress.start()
+            self._worker_set_status("Creating Odin package...")
+            self._worker_progress_start()
             self.log("[*] Starting Odin package creation...", 'info')
 
             work_dir = os.path.join(os.getcwd(), "firmware_port")
@@ -8747,13 +17170,16 @@ class SmartphoneFirmwareScrews(tk.Tk):
                     img_path = os.path.join(output_dir, img_file)
                     tar.add(img_path, arcname=img_file)
 
-            # Add MD5 checksum
+            # Add MD5 checksum (Samsung Odin format: 32-char hex + padding to 512 bytes)
             import hashlib
             with open(ap_tar_path, 'rb') as f:
-                md5_hash = hashlib.md5(f.read()).hexdigest()
+                tar_data = f.read()
+                md5_hash = hashlib.md5(tar_data).hexdigest()
 
-            with open(ap_tar_path, 'ab') as f:
+            with open(ap_tar_path, 'wb') as f:
+                f.write(tar_data)
                 f.write(md5_hash.encode('ascii'))
+                f.write(b'\x00' * (0x200 - 32))  # Pad to 512 bytes total
 
             # Rename to .tar.md5
             ap_final_path = os.path.join(odin_dir, "AP_A33_to_A32.tar.md5")
@@ -9002,22 +17428,22 @@ Next Steps:
 ===========================================
 """
 
-            self.after(0, lambda: messagebox.showinfo("Success", success_msg))
+            self._worker_showinfo("Success", success_msg)
 
         except Exception as e:
             self.log(f"[!] Error during Odin package creation: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during Odin package creation: {e}"))
+            self._worker_showerror("Error", f"An error occurred during Odin package creation: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _package_validation_thread(self):
         """Thread to validate the Odin package for completeness and safety"""
         import os
         import hashlib
         try:
-            self.status_label.config(text="Validating package...")
-            self.progress.start()
+            self._worker_set_status("Validating package...")
+            self._worker_progress_start()
             self.log("[*] Starting package validation...", 'info')
 
             work_dir = os.path.join(os.getcwd(), "firmware_port")
@@ -9044,7 +17470,7 @@ Next Steps:
                     return True
                 else:
                     if critical:
-                        self.log(f"[✗] MISSING CRITICAL: {filename}", 'error')
+                        self.log(f"[✗] Missing critical: {filename}", 'error')
                         errors += 1
                     else:
                         self.log(f"[!] WARNING: {filename} not found", 'warning')
@@ -9098,7 +17524,7 @@ Next Steps:
                             if essential in img_files:
                                 self.log(f"[✓] {essential} present", 'success')
                             else:
-                                self.log(f"[✗] {essential} MISSING", 'error')
+                                self.log(f"[✗] {essential} Missing", 'error')
                                 errors += 1
 
                 finally:
@@ -9260,11 +17686,13 @@ Next Steps:
                 self.log("[!] DO NOT FLASH - Fix errors first", 'error')
                 self.log("============================================", 'error')
 
-                self.after(0, lambda: messagebox.showerror("Validation Failed",
+                self._worker_showerror(
+                    "Validation Failed",
                     f"VALIDATION FAILED!\n\n"
                     f"{errors} critical errors found\n"
                     f"{warnings} warnings\n\n"
-                    "DO NOT FLASH - Fix errors first"))
+                    "DO NOT FLASH - Fix errors first",
+                )
 
             elif warnings > 0:
                 self.log("[!] VALIDATION PASSED WITH WARNINGS", 'warning')
@@ -9289,7 +17717,7 @@ Final checklist before flashing:
 - Read FLASH_INSTRUCTIONS.txt
 - Understand the risks"""
 
-                self.after(0, lambda: messagebox.showwarning("Validation Passed with Warnings", success_msg))
+                self._worker_showwarning("Validation Passed with Warnings", success_msg)
 
             else:
                 self.log("[✓] VALIDATION PASSED", 'success')
@@ -9322,20 +17750,20 @@ FLASH AT YOUR OWN RISK!
 ===========================================
 """
 
-                self.after(0, lambda: messagebox.showinfo("Validation Passed", success_msg))
+                self._worker_showinfo("Validation Passed", success_msg)
 
         except Exception as e:
             self.log(f"[!] Error during package validation: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during package validation: {e}"))
+            self._worker_showerror("Error", f"An error occurred during package validation: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _extract_system_vendor_thread(self, work_dir: str):
         """Thread to extract system and vendor images"""
         try:
-            self.status_label.config(text="Extracting system/vendor images...")
-            self.progress.start()
+            self._worker_set_status("Extracting system/vendor images...")
+            self._worker_progress_start()
             self.log("[*] Starting system and vendor image extraction...", 'info')
 
             # Check for required tools
@@ -9442,6 +17870,13 @@ FLASH AT YOUR OWN RISK!
             self.log("[*] Port Images (reference):", 'info')
             for path in port_paths:
                 self.log(path, 'info')
+            
+            # Mark step 5 as completed
+            self._set_port_step_status(5, "completed", {
+                "extracted_info": extracted_info,
+                "base_paths": base_paths,
+                "port_paths": port_paths
+            })
 
             # Create user-friendly summary
             summary = "System and vendor image extraction complete!\n\n"
@@ -9455,14 +17890,15 @@ FLASH AT YOUR OWN RISK!
             summary += "Note: This implementation prepares the images for extraction.\n"
             summary += "Actual mounting/extraction requires filesystem-specific tools."
 
-            self.after(0, lambda: messagebox.showinfo("Success", summary))
+            self._worker_showinfo("Success", summary)
 
         except Exception as e:
             self.log(f"[!] Error during system/vendor extraction: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", f"An error occurred during system/vendor extraction: {e}"))
+            self._set_port_step_status(5, "failed", {"error": str(e)})
+            self._worker_showerror("Error", f"An error occurred during system/vendor extraction: {e}")
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _build_statusbar(self):
         # Create a frame to hold status bar and progress bar
@@ -9489,42 +17925,329 @@ FLASH AT YOUR OWN RISK!
     
     # Project management
     def new_project(self):
-        name = simpledialog.askstring("New Project", "Project name:")
-        if not name:
-            return
-        
-        path = filedialog.askdirectory(title="Select project directory")
-        if not path:
-            return
-        
-        project_path = os.path.join(path, name)
-        self.current_project = Project(name=name, path=project_path)
-        self.current_project.save()
-        self.log(f"Created project: {name}", 'success')
-        self.title(f"{APP_TITLE} - {name}")
+        dialog = tk.Toplevel(self)
+        dialog.title("New Project")
+        dialog.geometry("400x150")
+        dialog.configure(bg=COLORS['bg_primary'])
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        inner_frame = tk.Frame(dialog, bg=COLORS['bg_primary'])
+        inner_frame.pack(fill='both', expand=True)
+
+        ttk.Label(inner_frame, text="Project name:").pack(anchor='w', padx=20, pady=(20, 5))
+        name_var = tk.StringVar()
+        name_entry = ttk.Entry(inner_frame, textvariable=name_var, width=40)
+        name_entry.pack(fill='x', padx=20, pady=(0, 10))
+        name_entry.focus()
+
+        def on_create():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Warning", "Please enter a project name", parent=dialog)
+                return
+            dialog.destroy()
+            path = filedialog.askdirectory(title="Select project directory")
+            if not path:
+                return
+            project_path = os.path.join(path, name)
+            self.current_project = Project(name=name, path=project_path)
+            self.current_project.save()
+            self.log(f"Created project: {name}", 'success')
+            self.title(f"{APP_TITLE} - {name}")
+
+        btn_frame = tk.Frame(inner_frame, bg=COLORS['bg_primary'])
+        btn_frame.pack(fill='x', padx=20, pady=(0, 15))
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side='right', padx=(5, 0))
+        ttk.Button(btn_frame, text="Create", command=on_create, style='Accent.TButton').pack(side='right')
+        dialog.bind('<Return>', lambda e: on_create())
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
+
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (150 // 2)
+        dialog.geometry(f"400x150+{x}+{y}")
     
     def open_project(self):
         path = filedialog.askdirectory(title="Select project directory")
         if not path:
             return
-        
+
         try:
             self.current_project = Project.load(path)
             self.log(f"Opened project: {self.current_project.name}", 'success')
             self.title(f"{APP_TITLE} - {self.current_project.name}")
+            self.after(100, self._restore_project_state)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open project: {e}")
+            self.log(f"Failed to open project: {e}", 'error')
+            styled_messagebox(self, "Error", f"Failed to open project: {e}", "error")
     
     def save_project(self):
         if not self.current_project:
-            messagebox.showinfo("Info", "No project to save")
+            styled_messagebox(self, "Info", "No project to save", "info")
             return
-        
+
         try:
+            self._capture_project_state()
             self.current_project.save()
             self.log(f"Saved project: {self.current_project.name}", 'success')
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save: {e}")
+            self.log(f"Failed to save project: {e}", 'error')
+            styled_messagebox(self, "Error", f"Failed to save: {e}", "error")
+
+    def _capture_project_state(self):
+        """Capture current UI state for project saving"""
+        project = self.current_project
+        if not project:
+            return
+
+        # Capture Firmware tab state
+        project.firmware_file = getattr(self.current_project, 'firmware_file', None)
+
+        # Capture File Editor tab state
+        project.file_editor_base_folder = getattr(self, 'file_editor_base_folder', None)
+        project.opened_files = []
+        project.expanded_folders = []
+
+        # Get expanded folders and opened files from tree
+        if hasattr(self, 'file_editor_tree'):
+            for item in self.file_editor_tree.get_children():
+                self._collect_tree_state(self.file_editor_tree, item, project.opened_files, project.expanded_folders)
+
+        # Capture current file being edited
+        project.current_file = getattr(self, 'current_file', None)
+
+        # Save editor content for any unsaved changes
+        if hasattr(self, 'file_editor') and project.current_file:
+            content = self.file_editor.get('1.0', 'end-1c')
+            project.editor_unsaved = {project.current_file: content}
+
+        project.file_editor_state = {
+            'wrap': bool(self.file_editor_wrap_var.get()) if hasattr(self, 'file_editor_wrap_var') else False,
+            'syntax_highlighting': bool(self.syntax_highlight_var.get()) if hasattr(self, 'syntax_highlight_var') else True,
+            'line_numbers': bool(self.line_numbers_var.get()) if hasattr(self, 'line_numbers_var') else False,
+            'font_size': self.font_size_var.get() if hasattr(self, 'font_size_var') else '10',
+            'language': getattr(self, 'current_language', 'text'),
+        }
+
+        # Capture Hex Editor state
+        hex_widget = getattr(self, 'hex_editor_widget_ref', None)
+        project.hex_editor_file = getattr(hex_widget, 'file_path', None)
+        project.hex_editor_state = {
+            'bytes_per_line': getattr(hex_widget, 'bytes_per_line', 16),
+            'group_size': hex_widget.group_var.get() if hex_widget and hasattr(hex_widget, 'group_var') else 4,
+            'endian': getattr(hex_widget, 'endian', 'big'),
+            'font_family': getattr(hex_widget, 'font_family', 'Courier New'),
+            'font_size': getattr(hex_widget, 'font_size', 10),
+            'gutter_visible': bool(hex_widget.gutter_visible_var.get()) if hex_widget and hasattr(hex_widget, 'gutter_visible_var') else True,
+            'offset_top': getattr(hex_widget, 'offset_top', 0),
+        }
+
+        # Capture Port ROM state
+        if hasattr(self, 'port_rom_step_status'):
+            project.port_rom_step_status = dict(self.port_rom_step_status)
+            project.port_rom_step_overrides = {
+                step: dict(values) for step, values in self.port_rom_step_overrides.items()
+            }
+            project.port_rom_results = dict(getattr(self, 'port_rom_step_results', {}))
+            project.port_rom_initial_step = getattr(self, '_port_rom_initial_step', 1)
+        project.port_rom_fields = {
+            'source_device': self.port_rom_source_device.get() if hasattr(self, 'port_rom_source_device') else '',
+            'target_device': self.port_rom_target_device.get() if hasattr(self, 'port_rom_target_device') else '',
+            'source_dir': self.port_rom_base_dir.get() if hasattr(self, 'port_rom_base_dir') else '',
+            'target_dir': self.port_rom_port_dir.get() if hasattr(self, 'port_rom_port_dir') else '',
+        }
+        project.port_rom_source_dir = project.port_rom_fields['source_dir']
+        project.port_rom_target_dir = project.port_rom_fields['target_dir']
+        if hasattr(self, 'port_rom_config') and self.port_rom_config:
+            project.port_rom_config = asdict(self.port_rom_config)
+
+        # Capture current tab
+        nb = getattr(self, 'main_notebook', None)
+        if nb is not None:
+            current = nb.select()
+            if current:
+                tab_text = nb.tab(current, 'text')
+                project.current_tab = tab_text
+            project.visible_tabs = [nb.tab(tab_id, 'text') for tab_id in nb.tabs()
+                                    if nb.tab(tab_id, 'text') != 'Empty']
+
+        if hasattr(self, 'apk_project') and self.apk_project:
+            apk_state = asdict(self.apk_project)
+            apk_state['keystore_pass'] = ''
+            apk_state['key_pass'] = ''
+            project.apk_project_state = apk_state
+
+        project.ui_state = {
+            'status_bar': bool(self.status_label.winfo_ismapped()) if hasattr(self, 'status_label') else True,
+            'log_panel': bool(self.log_console.winfo_ismapped()) if hasattr(self, 'log_console') else True,
+        }
+
+        project.modified = datetime.now().isoformat()
+
+    def _collect_tree_state(self, tree, item, opened_files, expanded_folders):
+        """Recursively collect tree state"""
+        children = tree.get_children(item)
+        for child in children:
+            values = tree.item(child, 'values')
+            if values:
+                path = values[0] if values else ''
+                if os.path.isfile(path):
+                    opened_files.append(path)
+            if tree.item(child, 'open'):
+                expanded_folders.append(tree.item(child, 'text'))
+            self._collect_tree_state(tree, child, opened_files, expanded_folders)
+
+    def _restore_project_state(self):
+        """Restore UI state from loaded project"""
+        project = self.current_project
+        if not project:
+            return
+
+        # Restore Firmware tab state
+        if project.firmware_file and os.path.exists(project.firmware_file):
+            if self.current_project:
+                self.current_project.firmware_file = project.firmware_file
+
+        # Restore File Editor tab
+        if project.file_editor_base_folder and os.path.exists(project.file_editor_base_folder):
+            self.file_editor_base_folder = project.file_editor_base_folder
+            self._refresh_file_editor_tree()
+
+            # Restore opened files
+            if project.opened_files:
+                for file_path in project.opened_files:
+                    if os.path.exists(file_path):
+                        self._open_file_editor_file_thread(file_path)
+
+            # Restore expanded folders
+            if project.expanded_folders:
+                self._expand_file_editor_folders(project.expanded_folders)
+
+        # Restore unsaved editor content
+        if project.editor_unsaved:
+            for file_path, content in project.editor_unsaved.items():
+                if os.path.exists(file_path):
+                    self.current_file = file_path
+                    self.file_editor.delete('1.0', tk.END)
+                    self.file_editor.insert('1.0', content)
+
+        editor_state = project.file_editor_state or {}
+        if hasattr(self, 'file_editor_wrap_var'):
+            wrap = bool(editor_state.get('wrap', self.file_editor_wrap_var.get()))
+            self.file_editor_wrap_var.set(wrap)
+            self.file_editor_word_wrap = not wrap
+            self._toggle_editor_wrap()
+        if hasattr(self, 'syntax_highlight_var'):
+            highlight = bool(editor_state.get('syntax_highlighting', self.syntax_highlight_var.get()))
+            self.syntax_highlight_var.set(not highlight)
+            self._toggle_syntax_highlighting()
+            self._apply_syntax_highlighting()
+        if hasattr(self, 'line_numbers_var'):
+            lines = bool(editor_state.get('line_numbers', self.line_numbers_var.get()))
+            self.line_numbers_var.set(not lines)
+            self._toggle_line_numbers()
+        if hasattr(self, 'font_size_var') and editor_state.get('font_size'):
+            self.font_size_var.set(str(editor_state['font_size']))
+            self._change_font_size()
+
+        # Restore Hex Editor state - defer to ensure widget is ready
+        hex_file = project.hex_editor_file
+        if hex_file and os.path.exists(hex_file):
+            def restore_hex(f=hex_file):
+                self.hex_open_file(f)
+                widget = getattr(self, 'hex_editor_widget_ref', None)
+                state = project.hex_editor_state or {}
+                if not widget:
+                    return
+                widget.bytes_per_line = int(state.get('bytes_per_line', widget.bytes_per_line))
+                if hasattr(widget, 'bpl_var'):
+                    widget.bpl_var.set(widget.bytes_per_line)
+                if hasattr(widget, 'group_var'):
+                    widget.group_var.set(int(state.get('group_size', widget.group_var.get())))
+                widget.set_endian(state.get('endian', widget.endian))
+                if state.get('font_family'):
+                    widget._set_font_family(state['font_family'])
+                if state.get('font_size'):
+                    widget._set_font_size(int(state['font_size']))
+                widget.offset_top = max(0, int(state.get('offset_top', 0)))
+                widget.gutter_visible_var.set(bool(state.get('gutter_visible', True)))
+                widget._toggle_gutter()
+                widget.refresh_view()
+            self.after(100, restore_hex)
+
+        # Restore Port ROM state
+        if project.port_rom_step_status:
+            self.port_rom_step_status = project.port_rom_step_status
+            self.port_rom_step_overrides = {
+                int(step): dict(values)
+                for step, values in (project.port_rom_step_overrides or {}).items()
+            }
+            for step, values in self.port_rom_step_overrides.items():
+                if step in self.port_rom_step_skip_vars:
+                    self.port_rom_step_skip_vars[step].set(bool(values.get("skip", False)))
+                if step in self.port_rom_step_done_vars:
+                    self.port_rom_step_done_vars[step].set(bool(values.get("done", False)))
+            self.port_rom_step_results = dict(project.port_rom_results or {})
+            self._port_rom_initial_step = project.port_rom_initial_step or 1
+            self.after(0, self._update_port_rom_ui)
+        port_fields = project.port_rom_fields or {}
+        if hasattr(self, 'port_rom_source_device'):
+            self.port_rom_source_device.set(port_fields.get('source_device', ''))
+        if hasattr(self, 'port_rom_target_device'):
+            self.port_rom_target_device.set(port_fields.get('target_device', ''))
+        if hasattr(self, 'port_rom_base_dir'):
+            self.port_rom_base_dir.set(port_fields.get('source_dir', project.port_rom_source_dir or ''))
+        if hasattr(self, 'port_rom_port_dir'):
+            self.port_rom_port_dir.set(port_fields.get('target_dir', project.port_rom_target_dir or ''))
+        if project.port_rom_config:
+            self.port_rom_config = PortRomConfig(**project.port_rom_config)
+
+        if project.apk_project_state:
+            try:
+                self.apk_project = ApkProject(**project.apk_project_state)
+                self.apk_current_path = self.apk_project.source_path
+                self.apk_extract_dir = self.apk_project.extract_dir
+                self._apk_update_project_bar()
+                self._apk_refresh_analysis()
+                self._apk_refresh_disassembly_files()
+                self._apk_refresh_assembly_state()
+                self._apk_refresh_signing_state()
+                self._apk_refresh_bundles_state()
+            except (TypeError, ValueError) as exc:
+                self.log(f"Could not restore APK project state: {exc}", 'warning')
+
+        if project.ui_state:
+            status_visible = bool(project.ui_state.get('status_bar', True))
+            log_visible = bool(project.ui_state.get('log_panel', True))
+            if status_visible != bool(self.status_label.winfo_ismapped()):
+                self.toggle_status_bar()
+            if log_visible != bool(self.log_console.winfo_ismapped()):
+                self.toggle_log_panel()
+
+        # Restore current tab
+        nb = getattr(self, 'main_notebook', None)
+        if nb is not None and project.visible_tabs:
+            allowed = set(project.visible_tabs)
+            for tab_id in list(nb.tabs()):
+                if nb.tab(tab_id, 'text') not in allowed:
+                    widget = self.nametowidget(tab_id)
+                    nb.forget(tab_id)
+                    widget.destroy()
+        if project.current_tab and nb is not None:
+            for i, tab_id in enumerate(nb.tabs()):
+                if nb.tab(tab_id, 'text') == project.current_tab:
+                    nb.select(i)
+                    break
+
+    def _expand_file_editor_folders(self, folder_names):
+        """Expand folders in file editor tree by names"""
+        if not hasattr(self, 'file_editor_tree'):
+            return
+        for item in self.file_editor_tree.get_children():
+            if self.file_editor_tree.item(item, 'text') in folder_names:
+                self.file_editor_tree.item(item, open=True)
     
     # Firmware operations
     def open_firmware(self):
@@ -9533,13 +18256,16 @@ FLASH AT YOUR OWN RISK!
             filetypes=[("TAR MD5", "*.tar.md5"), ("TAR", "*.tar"), ("All", "*.*")]
         )
         if path:
+            self.status_label.config(text="Loading firmware...")
+            self.progress.start()
+            self.log(f"Loading firmware: {os.path.basename(path)}...", 'info')
             threading.Thread(target=self._load_firmware_thread, args=(path,),
                            daemon=True).start()
 
     def _load_firmware_thread(self, path: str):
         try:
-            self.status_label.config(text="Loading firmware...")
-            self.progress.start()
+            self._worker_set_status("Loading firmware...")
+            self._worker_progress_start()
 
             work_tar = path
             is_md5 = path.lower().endswith('.tar.md5')
@@ -9549,12 +18275,12 @@ FLASH AT YOUR OWN RISK!
                 strip_md5_footer(path, tmp_tar)
                 work_tar = tmp_tar
 
-            # Clear tree in main thread
+            # Clear tree on UI thread
             self.after(0, lambda: self.fw_tree.delete(*self.fw_tree.get_children()))
 
             entries = list_tar_entries(work_tar)
 
-            # Update tree in main thread
+            # Update tree on UI thread
             def update_tree():
                 for name, _, _, size in entries:
                     self.fw_tree.insert('', 'end', text=name,
@@ -9574,12 +18300,12 @@ FLASH AT YOUR OWN RISK!
             self.current_project.save()
 
             self.log(f"Loaded: {os.path.basename(path)}", 'success')
-            self.status_label.config(text=f"Loaded: {os.path.basename(path)}")
+            self._worker_set_status(f"Loaded: {os.path.basename(path)}")
         except Exception as e:
             self.log(f"Load failed: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.progress.stop()
+            self._worker_progress_stop()
     
     def build_firmware(self):
         path = filedialog.askopenfilename(
@@ -9589,53 +18315,56 @@ FLASH AT YOUR OWN RISK!
         if not path:
             return
         
+        self.status_label.config(text="Building firmware...")
+        self.progress.start()
+        self.log("Building firmware...", 'info')
         threading.Thread(target=self._build_firmware_thread, args=(path,), 
                         daemon=True).start()
     
     def _build_firmware_thread(self, firmware_path: str):
         try:
-            self.status_label.config(text="Building firmware...")
-            self.progress.start()
+            self._worker_set_status("Building firmware...")
+            self._worker_progress_start()
             self.log("Building firmware...", 'info')
-            
+
             tmpdir = tempfile.mkdtemp(prefix="fwk_build_")
             base_tar = os.path.join(tmpdir, "base.tar")
-            
+
             footer = strip_md5_footer(firmware_path, base_tar)
             self.log(f"Original MD5: {footer}", 'info')
-            
+
             out_tar = os.path.join(tmpdir, "output.tar")
             shutil.copy(base_tar, out_tar)
-            
+
             out_md5_path = os.path.join(tmpdir, "output.tar.md5")
             new_md5 = append_md5_footer(out_tar, out_md5_path)
             self.log(f"New MD5: {new_md5}", 'info')
-            
+
             ok, computed = verify_tar_md5(out_md5_path)
             if not ok:
                 raise RuntimeError(f"Verification failed")
-            
+
             self.log("✓ Verification passed", 'success')
-            
+
             default_name = os.path.basename(firmware_path).replace('.tar.md5', '_built.tar.md5')
             save_path = filedialog.asksaveasfilename(
                 defaultextension=".tar.md5",
                 initialfile=default_name,
                 filetypes=[("TAR MD5", "*.tar.md5")]
             )
-            
+
             if save_path:
                 shutil.copy(out_md5_path, save_path)
                 self.log(f"✓ Saved: {save_path}", 'success')
-                messagebox.showinfo("Success", "Firmware built successfully!")
-            
-            self.status_label.config(text="Ready")
+                self._worker_showinfo("Success", "Firmware built successfully!")
+
+            self._worker_set_status("Ready")
         except Exception as e:
             self.log(f"Build failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.progress.stop()
-    
+            self._worker_progress_stop()
+
     def verify_md5(self):
         path = filedialog.askopenfilename(
             title="Select file to verify",
@@ -9644,33 +18373,33 @@ FLASH AT YOUR OWN RISK!
         if not path:
             return
         
+        self.status_label.config(text="Verifying MD5...")
+        self.progress.start()
+        self.log(f"Verifying MD5 for {os.path.basename(path)}...", 'info')
         threading.Thread(target=self._verify_md5_thread, args=(path,),
                            daemon=True).start()
 
     def _verify_md5_thread(self, path: str):
         try:
-            self.after(0, lambda: self.status_label.config(text="Verifying MD5..."))
-            self.after(0, lambda: self.progress.start())
+            self._worker_set_status("Verifying MD5...")
+            self._worker_progress_start()
             self.log(f"Verifying MD5 for {os.path.basename(path)}...", 'info')
 
             ok, computed = verify_tar_md5(path)
 
-            def update_ui():
-                if ok:
-                    self.log(f"✓ MD5 OK: {computed}", 'success')
-                    messagebox.showinfo("Success", f"MD5 verified!\n\n{computed}")
-                else:
-                    self.log(f"✗ MD5 FAILED: {computed}", 'error')
-                    messagebox.showerror("Failed", "MD5 verification failed!")
-            
-            self.after(0, update_ui)
+            if ok:
+                self.log(f"✓ MD5 Ok: {computed}", 'success')
+                self._worker_showinfo("Success", f"MD5 verified!\n\n{computed}")
+            else:
+                self.log(f"✗ MD5 FAILED: {computed}", 'error')
+                self._worker_showerror("Failed", "MD5 verification failed!")
 
         except Exception as e:
             self.log(f"Verify error: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.after(0, lambda: self.status_label.config(text="Ready"))
-            self.after(0, lambda: self.progress.stop())
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
     
     def decompress_lz4(self):
         src = filedialog.askopenfilename(filetypes=[("LZ4", "*.lz4")])
@@ -9684,33 +18413,107 @@ FLASH AT YOUR OWN RISK!
             return
         
         try:
+            self.status_label.config(text="Decompressing LZ4...")
+            self.progress.start()
             self.log("Decompressing LZ4...", 'info')
             lz4_decompress(src, dst)
             self.log("✓ Decompressed", 'success')
-            messagebox.showinfo("Success", "Decompression complete!")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", "Decompression complete!", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
-    
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
+
     def compress_lz4(self):
         src = filedialog.askopenfilename()
         if not src:
             return
-        
+
         dst = filedialog.asksaveasfilename(
             defaultextension=".lz4",
             initialfile=os.path.basename(src) + '.lz4'
         )
         if not dst:
             return
-        
+
         try:
+            self.status_label.config(text="Compressing LZ4...")
+            self.progress.start()
             self.log("Compressing LZ4...", 'info')
             lz4_compress(src, dst, level=9)
             self.log("✓ Compressed", 'success')
             ratio = (1 - os.path.getsize(dst) / os.path.getsize(src)) * 100
-            messagebox.showinfo("Success", 
-                f"Compression complete!\n\nRatio: {ratio:.1f}%")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success",
+                f"Compression complete!\n\nRatio: {ratio:.1f}%", "success")
+        except Exception as e:
+            self.status_label.config(text="Ready")
+            self.log(f"Failed: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
+
+    def _decompress_zstd(self):
+        """Decompress zstd compressed file"""
+        src = filedialog.askopenfilename(filetypes=[("Zstandard", "*.zst")])
+        if not src:
+            return
+
+        dst = filedialog.asksaveasfilename(
+            initialfile=os.path.basename(src).replace('.zst', '')
+        )
+        if not dst:
+            return
+
+        try:
+            self.log("Decompressing Zstandard...", 'info')
+            zstd_exe = os.path.join(TOOLS_DIR, "zstandard", "zstd.exe")
+            if not os.path.exists(zstd_exe):
+                raise FileNotFoundError("zstd not found")
+            result = run_cmd([zstd_exe, "-d", "-f", src, "-o", dst])
+            if result.returncode != 0:
+                raise RuntimeError(f"Zstd decompression failed: {result.stderr}")
+            self.log("✓ Decompressed", 'success')
+            messagebox.showinfo("Success", "Decompression complete!")
+        except Exception as e:
+            self.log(f"Failed: {e}", 'error')
+            messagebox.showerror("Error", str(e))
+
+    def _decompress_gzip(self):
+        """Decompress gzip compressed file"""
+        src = filedialog.askopenfilename(filetypes=[("Gzip", "*.gz"), ("All", "*.*")])
+        if not src:
+            return
+
+        dst = filedialog.asksaveasfilename(
+            initialfile=os.path.basename(src).replace('.gz', '').replace('.gzip', '')
+        )
+        if not dst:
+            return
+
+        try:
+            self.log("Decompressing Gzip...", 'info')
+            # Try using bsdtar or python gzip module
+            bsdtar = tool_resolve("bsdtar")
+            if bsdtar:
+                result = run_cmd([bsdtar, "-xf", src, "-C", os.path.dirname(dst),
+                                 "-p", os.path.basename(dst)])
+                if result.returncode == 0:
+                    # bsdtar extracts to directory, need to move
+                    extracted = os.path.join(os.path.dirname(dst), os.path.basename(src).replace('.gz', '').replace('.gzip', ''))
+                    if os.path.exists(extracted) and extracted != dst:
+                        shutil.move(extracted, dst)
+            else:
+                # Fallback to python gzip
+                import gzip
+                with gzip.open(src, 'rb') as f_in:
+                    with open(dst, 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+            self.log("✓ Decompressed", 'success')
+            messagebox.showinfo("Success", "Decompression complete!")
         except Exception as e:
             self.log(f"Failed: {e}", 'error')
             messagebox.showerror("Error", str(e))
@@ -9728,21 +18531,24 @@ FLASH AT YOUR OWN RISK!
         if not out_dir:
             return
         
+        self.status_label.config(text="Extracting system image...")
+        self.progress.start()
+        self.log("Extracting system image...", 'info')
         threading.Thread(target=self._extract_system_thread, 
                         args=(system_img, out_dir), daemon=True).start()
     
     def _extract_system_thread(self, img: str, out_dir: str):
         try:
-            self.status_label.config(text="Extracting system...")
+            self._worker_set_status("Extracting system...")
             self.log("Extracting system image...", 'info')
             extract_system_image(img, out_dir)
             self.log("✓ Extracted", 'success')
-            messagebox.showinfo("Success", "System image extracted!")
+            self._worker_showinfo("Success", "System image extracted!")
         except Exception as e:
             self.log(f"Extract failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.status_label.config(text="Ready")
+            self._worker_set_status("Ready")
     
     def extract_boot_menu(self):
         boot_img = filedialog.askopenfilename(
@@ -9757,13 +18563,19 @@ FLASH AT YOUR OWN RISK!
             return
 
         try:
+            self.status_label.config(text="Unpacking boot image...")
+            self.progress.start()
             self.log("Unpacking boot image...", 'info')
             result = unpack_boot_img(boot_img, out_dir)
             self.log(f"✓ Unpacked ({result.get('method')})", 'success')
-            messagebox.showinfo("Success", "Boot image unpacked!")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", "Boot image unpacked!", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Unpack failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     def extract_kernel_menu(self):
         # Ask user whether to extract from boot.img or from already unpacked directory
@@ -9791,6 +18603,8 @@ FLASH AT YOUR OWN RISK!
                 return
 
             try:
+                self.status_label.config(text="Extracting kernel from boot.img...")
+                self.progress.start()
                 self.log("Extracting kernel from boot.img...", 'info')
                 # Create temporary directory for unpacking
                 temp_dir = tempfile.mkdtemp(prefix="kernel_extract_")
@@ -9810,15 +18624,20 @@ FLASH AT YOUR OWN RISK!
                         import shutil
                         shutil.copy2(kernel_path, out_file)
                         self.log("✓ Kernel extracted", 'success')
-                        messagebox.showinfo("Success", f"Kernel extracted to:\n{out_file}")
+                        self.status_label.config(text="Ready")
+                        styled_messagebox(self, "Success", f"Kernel extracted to:\n{out_file}", "success")
                     else:
                         raise FileNotFoundError("Kernel file not found in unpacked boot image")
                 finally:
                     import shutil
                     shutil.rmtree(temp_dir, ignore_errors=True)
+                self.status_label.config(text="Ready")
             except Exception as e:
+                self.status_label.config(text="Ready")
                 self.log(f"Kernel extraction failed: {e}", 'error')
-                messagebox.showerror("Error", str(e))
+                styled_messagebox(self, "Error", str(e), "error")
+            finally:
+                self.progress.stop()
         else:  # No - extract existing kernel file
             kernel_file = filedialog.askopenfilename(
                 title="Select kernel file to extract contents from",
@@ -9832,67 +18651,80 @@ FLASH AT YOUR OWN RISK!
                 return
 
             try:
+                self.status_label.config(text="Extracting kernel contents...")
+                self.progress.start()
                 self.log("Extracting kernel contents...", 'info')
 
                 # First, try to use extract-dtb to split kernel + appended DTBs
+                extract_dtb_success = False
                 try:
-                    from extract_dtb import extract_dtb
-                    import argparse
+                    extract_dtb_path = os.path.join(TOOLS_DIR, "extract-dtb")
+                    if os.path.isdir(extract_dtb_path):
+                        import importlib.util
+                        spec = importlib.util.spec_from_file_location(
+                            "extract_dtb_module",
+                            os.path.join(extract_dtb_path, "extract_dtb", "__init__.py")
+                        )
+                        if spec and spec.loader:
+                            extract_dtb_module = importlib.util.module_from_spec(spec)
+                            sys.modules['extract_dtb'] = extract_dtb_module
+                            spec.loader.exec_module(extract_dtb_module)
+                            import argparse
 
-                    # Create args object for extract_dtb.split
-                    args = argparse.Namespace()
-                    args.filename = kernel_file
-                    args.output_dir = out_dir
-                    args.extract = True
+                            args = argparse.Namespace()
+                            args.filename = kernel_file
+                            args.output_dir = out_dir
+                            args.extract = True
 
-                    # Call extract_dtb.split to extract kernel and DTBs
-                    old_cwd = os.getcwd()
-                    try:
-                        os.chdir(out_dir)  # extract-dtb works relative to output dir
-                        extract_dtb.split(args)
-                    finally:
-                        os.chdir(old_cwd)
+                            old_cwd = os.getcwd()
+                            try:
+                                os.chdir(out_dir)
+                                extract_dtb_module.extract_dtb.split(args)
+                            finally:
+                                os.chdir(old_cwd)
 
-                    self.log("✓ Kernel contents extracted using extract-dtb", 'success')
-                    messagebox.showinfo("Success",
-                        f"Kernel extraction complete!\n\n"
-                        f"Output directory: {out_dir}\n\n"
-                        "The extract-dtb tool has successfully extracted the kernel\n"
-                        "and any appended DTB files. You can now edit the kernel source.")
-                    return
-
-                except ImportError:
-                    self.log("extract-dtb not available, trying dtb-converter", 'warning')
-                except Exception as e:
-                    self.log(f"extract-dtb failed: {e}, trying dtb-converter", 'warning')
-
-                # Try dtb-converter as alternative
-                try:
-                    dtb_converter_dir = os.path.join(TOOLS_DIR, "dtb-converter", "Superb_Extract-and_pack_dtb", "WorkDir")
-                    dtb_converter_script = os.path.join(dtb_converter_dir, "extract-dtb.py")
-
-                    if os.path.exists(dtb_converter_script):
-                        # Run dtb-converter extract-dtb.py
-                        cmd = [sys.executable, dtb_converter_script, kernel_file, "-o", out_dir]
-                        result = run_cmd(cmd, cwd=dtb_converter_dir)
-
-                        if result.returncode == 0:
-                            self.log("✓ Kernel contents extracted using dtb-converter", 'success')
+                            self.log("✓ Kernel contents extracted using extract-dtb", 'success')
                             messagebox.showinfo("Success",
                                 f"Kernel extraction complete!\n\n"
                                 f"Output directory: {out_dir}\n\n"
-                                "The dtb-converter tool has successfully extracted the kernel\n"
-                                "and any appended DTB files. You can now edit the kernel source.")
+                                "The extract-dtb tool has successfully extracted the kernel\n"
+                                "and any appended DTB files.")
+                            extract_dtb_success = True
                             return
-                        else:
-                            self.log(f"dtb-converter failed: {result.stderr.decode()}", 'warning')
-                    else:
-                        self.log("dtb-converter not found in tools directory", 'warning')
 
                 except Exception as e:
-                    self.log(f"dtb-converter failed: {e}, trying alternative methods", 'warning')
+                    if not extract_dtb_success:
+                        self.log(f"extract-dtb not available: {e}, trying dtb-converter", 'warning')
 
-                # Fallback: Try to extract kernel contents using various tools
+                if not extract_dtb_success:
+                    # Try dtb-converter as alternative
+                    try:
+                        dtb_converter_dir = os.path.join(TOOLS_DIR, "dtb-converter", "Superb_Extract-and_pack_dtb", "WorkDir")
+                        dtb_converter_script = os.path.join(dtb_converter_dir, "extract-dtb.py")
+
+                        if os.path.exists(dtb_converter_script):
+                            # Run dtb-converter extract-dtb.py
+                            cmd = [sys.executable, dtb_converter_script, kernel_file, "-o", out_dir]
+                            result = run_cmd(cmd, cwd=dtb_converter_dir)
+
+                            if result.returncode == 0:
+                                self.log("✓ Kernel contents extracted using dtb-converter", 'success')
+                                messagebox.showinfo("Success",
+                                    f"Kernel extraction complete!\n\n"
+                                    f"Output directory: {out_dir}\n\n"
+                                    "The dtb-converter tool has successfully extracted the kernel\n"
+                                    "and any appended DTB files.")
+                                extract_dtb_success = True
+                                return
+                            else:
+                                self.log(f"dtb-converter failed: {result.stderr.decode()}", 'warning')
+                        else:
+                            self.log("dtb-converter not found in tools directory", 'warning')
+
+                    except Exception as e:
+                        self.log(f"dtb-converter failed: {e}, trying alternative methods", 'warning')
+
+                    # Fallback: Try to extract kernel contents using various tools
                 success = False
 
                 # Try using 7z to extract kernel contents (kernels can be archives)
@@ -9998,8 +18830,11 @@ FLASH AT YOUR OWN RISK!
                     "Look for source files, config files, and other kernel components.")
 
             except Exception as e:
+                self.status_label.config(text="Ready")
                 self.log(f"Kernel extraction failed: {e}", 'error')
-                messagebox.showerror("Error", str(e))
+                styled_messagebox(self, "Error", str(e), "error")
+            finally:
+                self.progress.stop()
 
     def extract_dtb_menu(self):
         # Ask user whether to extract from boot.img or from already unpacked directory
@@ -10128,10 +18963,10 @@ FLASH AT YOUR OWN RISK!
                             self.log("✓ DTB contents extracted using bsdtar", 'success')
 
                 if success:
-                    messagebox.showinfo("Success",
+                    styled_messagebox(self, "Success",
                         f"DTB contents extracted to:\n{out_dir}\n\n"
                         "You can now examine and edit the DTB contents.\n"
-                        "Look for device tree source files and configuration data.")
+                        "Look for device tree source files and configuration data.", "success")
                     return
 
                 # Fallback: Copy the DTB file itself for editing
@@ -10141,7 +18976,7 @@ FLASH AT YOUR OWN RISK!
                 shutil.copy2(dtb_file, dest_path)
 
                 self.log("✓ DTB file copied (could not extract contents)", 'warning')
-                messagebox.showinfo("Warning",
+                styled_messagebox(self, "Warning",
                     f"DTB file copied to:\n{dest_path}\n\n"
                     "Could not extract DTB contents automatically.\n"
                     "DTB files are usually binary blobs that need special tools.\n\n"
@@ -10149,13 +18984,51 @@ FLASH AT YOUR OWN RISK!
                     "• Device tree compiler (dtc)\n"
                     "• DTB converter tools (roma21515/DTB-CONVERTER)\n"
                     "• Device-specific kernel source\n"
-                    "• Understanding of device tree syntax")
+                    "• Understanding of device tree syntax", "warning")
                 return
 
             except Exception as e:
                 self.log(f"DTB extraction failed: {e}", 'error')
-                messagebox.showerror("Error", str(e))
+                styled_messagebox(self, "Error", str(e), "error")
 
+
+    def unpack_boot_img_menu(self):
+        """Unpack a boot / recovery / kernel / ramdisk image using the best
+        available tool (magiskboot → AIK → 7z → bsdtar)."""
+        img = filedialog.askopenfilename(
+            title="Select boot/recovery image",
+            filetypes=[("Image files", "*.img;*.elf;*.sin;*.bin"),
+                       ("All files", "*.*")],
+        )
+        if not img:
+            return
+        out_dir = filedialog.askdirectory(
+            title="Select output directory for unpacked contents",
+        )
+        if not out_dir:
+            return
+        try:
+            self.status_label.config(text="Unpacking boot image...")
+            self.progress.start()
+            self.log(f"Unpacking: {os.path.basename(img)}", 'info')
+            result = unpack_boot_img(img, out_dir)
+            method = result.get('method', 'unknown')
+            self.progress.stop()
+            split = result.get('split_img')
+            ramdisk = result.get('ramdisk')
+            msg = f"✓ Unpacked with: {method}\n\nOutput: {out_dir}"
+            if split:
+                msg += f"\nKernel/DTB/Ramdisk parts: {split}"
+            if ramdisk:
+                msg += f"\nRamdisk contents: {ramdisk}"
+            self.log(f"✓ Unpacked via {method}: {out_dir}", 'success')
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Unpack Success", msg, "info")
+        except Exception as e:
+            self.progress.stop()
+            self.status_label.config(text="Ready")
+            self.log(f"Unpack failed: {e}", 'error')
+            styled_messagebox(self, "Unpack Error", str(e), "error")
 
     def repack_boot_img_menu(self):
         work_dir = filedialog.askdirectory(title="Select unpacked boot directory")
@@ -10186,53 +19059,111 @@ FLASH AT YOUR OWN RISK!
             return
 
         try:
+            self.status_label.config(text="Repacking boot image...")
+            self.progress.start()
             self.log("Repacking boot image...", 'info')
             repack_boot_img(work_dir, out_img)
             self.log("✓ Boot image repacked", 'success')
-            messagebox.showinfo("Success", f"Boot image repacked to:\n{out_img}")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"Boot image repacked to:\n{out_img}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Repack failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
     
     def extract_ramdisk_menu(self):
+        """Extract a ramdisk CPIO archive (auto-detects gz/lz4/xz/lzma/bz2/lzo compression)."""
         cpio = filedialog.askopenfilename(
-            title="Select ramdisk",
-            filetypes=[("CPIO/LZ4", "*.cpio;*.lz4")]
+            title="Select ramdisk (any compression)",
+            filetypes=[
+                ("Ramdisk", "*.cpio;*.cpio.lz4;*.cpio.gz;*.cpio.xz;*.cpio.lzma;*.cpio.bz2;*.cpio.lzo"),
+                ("All files", "*.*"),
+            ],
         )
         if not cpio:
             return
-        
+
         out_dir = filedialog.askdirectory(title="Extract to")
         if not out_dir:
             return
-        
+
         try:
-            self.log("Extracting ramdisk...", 'info')
+            self.status_label.config(text="Extracting ramdisk...")
+            self.progress.start()
+            self.log(f"Extracting ramdisk: {os.path.basename(cpio)}", 'info')
             extract_ramdisk(cpio, out_dir)
-            self.log("✓ Extracted", 'success')
+            self.log(f"✓ Extracted to {out_dir}", 'success')
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success",
+                f"Ramdisk extracted to:\n{out_dir}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Extract failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
-    
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
+
     def create_ramdisk_menu(self):
-        src_dir = filedialog.askdirectory(title="Select ramdisk source")
+        """Create a ramdisk CPIO archive. User picks compression format."""
+        src_dir = filedialog.askdirectory(title="Select ramdisk source directory")
         if not src_dir:
             return
-        
+
+        # Compression picker
+        win = tk.Toplevel(self)
+        win.title("Ramdisk Compression")
+        win.geometry("320x200")
+        ttk.Label(win, text="Select compression format:",
+                  font=('Segoe UI', 10, 'bold')).pack(pady=8)
+        compress_var = tk.StringVar(value="gzip")
+        for fmt in ("gzip (legacy)", "lz4 (modern Android, recommended)",
+                    "lzma", "xz", "bzip2", "lzop", "none (uncompressed)"):
+            text = fmt.split(" ")[0]
+            ttk.Radiobutton(win, text=fmt, value=text,
+                            variable=compress_var).pack(anchor='w', padx=20)
+        result: Dict[str, Optional[str]] = {"fmt": None}
+        def _ok():
+            result["fmt"] = compress_var.get()
+            win.destroy()
+        def _cancel():
+            win.destroy()
+        ttk.Button(win, text="OK", command=_ok).pack(side='left', padx=20, pady=10)
+        ttk.Button(win, text="Cancel", command=_cancel).pack(side='right', padx=20, pady=10)
+        win.wait_window()
+        if not result["fmt"]:
+            return
+        compress = result["fmt"]
+
+        # Output filename picker
+        default_ext = {
+            "gzip": ".cpio.gz", "lz4": ".cpio.lz4", "lzma": ".cpio.lzma",
+            "xz": ".cpio.xz", "bzip2": ".cpio.bz2", "lzop": ".cpio.lzo",
+            "none": ".cpio",
+        }.get(compress, ".cpio")
         out_file = filedialog.asksaveasfilename(
-            defaultextension=".cpio.lz4",
-            filetypes=[("CPIO LZ4", "*.cpio.lz4")]
+            title="Save ramdisk as",
+            defaultextension=default_ext,
+            filetypes=[("Ramdisk", f"*{default_ext}"), ("All files", "*.*")],
         )
         if not out_file:
             return
-        
+
         try:
-            self.log("Creating ramdisk...", 'info')
-            create_ramdisk(src_dir, out_file, compress=True)
-            self.log("✓ Created", 'success')
+            self.status_label.config(text="Creating ramdisk...")
+            self.progress.start()
+            self.log(f"Creating ramdisk ({compress}): {os.path.basename(out_file)}", 'info')
+            create_ramdisk(src_dir, out_file, compress=compress)
+            self.log(f"✓ Created: {out_file}", 'success')
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"Ramdisk created:\n{out_file}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Create failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
     
     def decompile_apk_menu(self):
         apk = filedialog.askopenfilename(
@@ -10241,59 +19172,69 @@ FLASH AT YOUR OWN RISK!
         )
         if not apk:
             return
-        
+
         out_dir = filedialog.askdirectory(title="Extract to")
         if not out_dir:
             return
-        
+
         try:
+            self.status_label.config(text="Decompiling APK...")
+            self.progress.start()
             self.log("Decompiling APK...", 'info')
-            # Get the command array to log it before execution
             cmd_to_log = get_apktool_cmd("d", [apk, "-o", out_dir, "-f"])
             self.log(f"Attempting to execute: {' '.join(cmd_to_log)}", 'info')
             self.log(f"Output directory: {out_dir}", 'info')
             decompile_apk(apk, out_dir)
             self.log("✓ Decompiled", 'success')
-            messagebox.showinfo("Success", "APK decompiled!")
-            self._populate_file_editor_tree(out_dir) # Populate the treeview with decompiled files
-            # Switch to the File Editor tab
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", "APK decompiled!", "success")
+            self._populate_file_editor_tree(out_dir)
             if hasattr(self, 'main_notebook') and self.main_notebook:
                 for i, tab_id in enumerate(self.main_notebook.tabs()):
                     if self.main_notebook.tab(tab_id, "text") == "File Editor":
                         self.main_notebook.select(i)
                         break
-                    break
         except RuntimeError as e:
+            self.status_label.config(text="Ready")
             self.log(f"Decompile failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"An unexpected error occurred during decompilation: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     def recompile_apk_menu(self):
         src_dir = filedialog.askdirectory(title="Select decompiled APK dir")
         if not src_dir:
             return
-        
+
         out_apk = filedialog.asksaveasfilename(
             defaultextension=".apk",
             filetypes=[("APK", "*.apk")]
         )
         if not out_apk:
             return
-        
+
         try:
+            self.status_label.config(text="Recompiling APK...")
+            self.progress.start()
             self.log("Recompiling APK...", 'info')
             recompile_apk(src_dir, out_apk)
             self.log("✓ Recompiled", 'success')
-            
+            self.status_label.config(text="Ready")
+
             if messagebox.askyesno("Sign APK?", "APK recompiled successfully. Do you want to sign it now?"):
                 self.sign_apk_menu(apk_to_sign=out_apk)
             else:
-                messagebox.showinfo("Success", "APK recompiled!")
+                styled_messagebox(self, "Success", "APK recompiled!", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Recompile failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
     
     def create_keystore_menu(self):
         """Create a new keystore"""
@@ -10326,18 +19267,18 @@ FLASH AT YOUR OWN RISK!
 
         try:
             self.log("Creating keystore...", 'info')
-            self.status_label.config(text="Creating keystore...")
-            self.progress.start()
+            self._worker_set_status("Creating keystore...")
+            self._worker_progress_start()
 
             create_keystore(keystore_path, key_alias, key_pass, store_pass, dname)
             self.log("✓ Keystore created successfully", 'success')
-            messagebox.showinfo("Success", f"Keystore created at:\n{keystore_path}")
+            self._worker_showinfo("Success", f"Keystore created at:\n{keystore_path}")
         except Exception as e:
             self.log(f"Keystore creation failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def sign_apk_menu(self, apk_to_sign: Optional[str] = None):
         apk_path = apk_to_sign
@@ -10496,6 +19437,9 @@ FLASH AT YOUR OWN RISK!
         if not out_dir:
             return
         try:
+            self.status_label.config(text="Disassembling DEX with baksmali...")
+            self.progress.start()
+            self.log("Disassembling DEX with baksmali...", 'info')
             baksmali = tool_resolve("baksmali.jar") or os.path.join(TOOLS_DIR, "apktool", "baksmali.jar")
             java = tool_resolve("java") or os.path.join(TOOLS_DIR, "java", "bin", "java.exe")
             if not os.path.exists(baksmali) or not os.path.exists(java):
@@ -10504,10 +19448,14 @@ FLASH AT YOUR OWN RISK!
             if res.returncode != 0:
                 raise RuntimeError("baksmali failed")
             self.log("✓ baksmali completed", 'success')
-            messagebox.showinfo("Success", f"Smali output: {out_dir}")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"Smali output: {out_dir}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"baksmali failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     def smali_menu(self):
         src_dir = filedialog.askdirectory(title="Select smali source dir")
@@ -10517,6 +19465,9 @@ FLASH AT YOUR OWN RISK!
         if not out_dex:
             return
         try:
+            self.status_label.config(text="Assembling smali to DEX...")
+            self.progress.start()
+            self.log("Assembling smali to DEX...", 'info')
             smali = tool_resolve("smali.jar") or os.path.join(TOOLS_DIR, "apktool", "smali.jar")
             java = tool_resolve("java") or os.path.join(TOOLS_DIR, "java", "bin", "java.exe")
             if not os.path.exists(smali) or not os.path.exists(java):
@@ -10525,10 +19476,14 @@ FLASH AT YOUR OWN RISK!
             if res.returncode != 0:
                 raise RuntimeError("smali failed")
             self.log("✓ smali assembled classes.dex", 'success')
-            messagebox.showinfo("Success", f"classes.dex saved to: {out_dex}")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"classes.dex saved to: {out_dex}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"smali failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     # --- Partitions sparse/raw helpers ---
     def sparse_to_raw_menu(self):
@@ -10539,6 +19494,9 @@ FLASH AT YOUR OWN RISK!
         if not out:
             return
         try:
+            self.status_label.config(text="Converting sparse to raw...")
+            self.progress.start()
+            self.log("Converting sparse to raw...", 'info')
             simg2img = tool_resolve("simg2img")
             if not simg2img:
                 raise RuntimeError("simg2img not found")
@@ -10546,10 +19504,14 @@ FLASH AT YOUR OWN RISK!
             if res.returncode != 0:
                 raise RuntimeError("simg2img failed")
             self.log("✓ Converted to raw image", 'success')
-            messagebox.showinfo("Success", f"Raw image saved to: {out}")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"Raw image saved to: {out}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"sparse→raw failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     def raw_to_sparse_menu(self):
         src = filedialog.askopenfilename(title="Select raw image", filetypes=[("Raw image", "*.img"), ("All", "*.*")])
@@ -10559,6 +19521,9 @@ FLASH AT YOUR OWN RISK!
         if not out:
             return
         try:
+            self.status_label.config(text="Converting raw to sparse...")
+            self.progress.start()
+            self.log("Converting raw to sparse...", 'info')
             img2simg = tool_resolve("img2simg")
             if not img2simg:
                 raise RuntimeError("img2simg not found")
@@ -10566,10 +19531,14 @@ FLASH AT YOUR OWN RISK!
             if res.returncode != 0:
                 raise RuntimeError("img2simg failed")
             self.log("✓ Converted to sparse image", 'success')
-            messagebox.showinfo("Success", f"Sparse image saved to: {out}")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"Sparse image saved to: {out}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"raw→sparse failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     # --- AVB / vbmeta ---
     def verify_vbmeta_menu(self):
@@ -10577,6 +19546,9 @@ FLASH AT YOUR OWN RISK!
         if not vbmeta:
             return
         try:
+            self.status_label.config(text="Verifying vbmeta...")
+            self.progress.start()
+            self.log("Verifying vbmeta...", 'info')
             avbtool = tool_resolve("avbtool") or os.path.join(TOOLS_DIR, "avbtool", "avbtool.py")
             if not os.path.exists(avbtool):
                 raise RuntimeError("avbtool not found")
@@ -10584,28 +19556,38 @@ FLASH AT YOUR OWN RISK!
             if res.returncode != 0:
                 raise RuntimeError("vbmeta verification failed")
             self.log("✓ vbmeta verified", 'success')
-            messagebox.showinfo("Success", "vbmeta verification OK")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", "vbmeta verification Ok", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"vbmeta verify failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     def create_vbmeta_menu(self):
         out = filedialog.asksaveasfilename(defaultextension=".img", title="Save vbmeta as")
         if not out:
             return
         try:
+            self.status_label.config(text="Creating vbmeta...")
+            self.progress.start()
+            self.log("Creating vbmeta...", 'info')
             avbtool = tool_resolve("avbtool") or os.path.join(TOOLS_DIR, "avbtool", "avbtool.py")
             if not os.path.exists(avbtool):
                 raise RuntimeError("avbtool not found")
-            # Minimal example creates empty vbmeta with test flags; advanced UI can be added later
-            res = run_cmd([sys.executable, avbtool, "make_vbmeta_image", "--output", out, "--flags", "2"])  # disable verity/verification flags example
+            res = run_cmd([sys.executable, avbtool, "make_vbmeta_image", "--output", out, "--flags", "2"])
             if res.returncode != 0:
                 raise RuntimeError("make_vbmeta_image failed")
             self.log("✓ vbmeta created", 'success')
-            messagebox.showinfo("Success", f"vbmeta saved to: {out}")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"vbmeta saved to: {out}", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"vbmeta create failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
 
     # --- Magisk boot patching ---
     def patch_boot_with_magisk_menu(self):
@@ -10616,57 +19598,2027 @@ FLASH AT YOUR OWN RISK!
         if not out:
             return
         try:
+            self.status_label.config(text="Patching boot image with Magisk...")
+            self.progress.start()
+            self.log("Patching boot image with Magisk...", 'info')
             magiskboot = tool_resolve("magiskboot") or os.path.join(TOOLS_DIR, "magiskboot", "magiskboot.exe")
             if not os.path.exists(magiskboot):
                 raise RuntimeError("magiskboot not found")
-            # Simplified: unpack, patch, repack using magiskboot
             temp = tempfile.mkdtemp(prefix="magisk_patch_")
             try:
-                res1 = run_cmd([magiskboot, "unpack", boot])
+                res1 = run_cmd([magiskboot, "unpack", boot], cwd=temp)
                 if res1.returncode != 0:
-                    raise RuntimeError("magiskboot unpack failed")
-                # typical patch step is handled by Magisk app; here we only demonstrate repack
-                res2 = run_cmd([magiskboot, "repack", boot, out])
+                    raise RuntimeError(f"magiskboot unpack failed: {res1.stderr.decode(errors='replace')}")
+                res2 = run_cmd([magiskboot, "repack", boot], cwd=temp)
                 if res2.returncode != 0:
-                    raise RuntimeError("magiskboot repack failed")
+                    raise RuntimeError(f"magiskboot repack failed: {res2.stderr.decode(errors='replace')}")
+                new_boot = os.path.join(temp, "new-boot.img")
+                if os.path.exists(new_boot):
+                    shutil.copy2(new_boot, out)
+                else:
+                    raise RuntimeError("magiskboot did not produce new-boot.img")
             finally:
                 shutil.rmtree(temp, ignore_errors=True)
             self.log("✓ Boot image repacked with Magisk tooling", 'success')
-            messagebox.showinfo("Success", f"Patched boot saved to: {out}\nNote: Full Magisk patching usually requires the Magisk app on-device.")
+            self.status_label.config(text="Ready")
+            styled_messagebox(self, "Success", f"Patched boot saved to: {out}\nNote: Full Magisk patching usually requires the Magisk app on-device.", "success")
         except Exception as e:
+            self.status_label.config(text="Ready")
             self.log(f"Magisk patch failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
+
+    # ========== New Tool Methods - Magisk Advanced ==========
+    def magisk_hex_patch_menu(self):
+        """Hex patch any binary file using magiskboot"""
+        target = filedialog.askopenfilename(title="Select binary file to patch")
+        if not target:
+            return
+        from_pattern = simpledialog.askstring("Hex Patch", "Enter hex pattern to find (e.g. 6f746f7563682075):")
+        if not from_pattern:
+            return
+        from_pattern = from_pattern.replace(" ", "").replace("0x", "")
+        to_pattern = simpledialog.askstring("Hex Patch", "Enter replacement hex pattern:")
+        if to_pattern is None:
+            return
+        to_pattern = to_pattern.replace(" ", "").replace("0x", "")
+        try:
+            magiskboot = tool_resolve("magiskboot") or os.path.join(TOOLS_DIR, "magiskboot", "magiskboot.exe")
+            if not os.path.exists(magiskboot):
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Hex patching {os.path.basename(target)}: {from_pattern[:20]}... → {to_pattern[:20]}...", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "hexpatch", target, from_pattern, to_pattern])
+            if res.returncode == 0:
+                self.log("✓ Hex patch successful", 'success')
+                styled_messagebox(self, "Success", "Hex patch applied successfully", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Hex patch failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Hex patch failed:\n{err}", "error")
+        except Exception as e:
+            self.log(f"Hex patch error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.progress.stop()
+
+    def magisk_cpio_menu(self):
+        """CPIO operations on a ramdisk using magiskboot"""
+        cpio_file = filedialog.askopenfilename(title="Select ramdisk cpio file", filetypes=[("CPIO", "*.cpio"), ("GZIP", "*.cpio.gz"), ("LZ4", "*.cpio.lz4"), ("All", "*.*")])
+        if not cpio_file:
+            return
+        action = tk.Toplevel(self)
+        action.title("CPIO Operations")
+        action.geometry("400x350")
+        action.transient(self)
+        ttk.Label(action, text="Choose CPIO operation:").pack(pady=10)
+        op_var = tk.StringVar(value="extract")
+        for op, desc in [
+            ("extract", "Extract all entries to folder"),
+            ("exists", "Check if entry exists"),
+            ("rm", "Remove entry"),
+            ("mkdir", "Create directory"),
+            ("add", "Add file to cpio"),
+            ("patch", "Apply Magisk ramdisk patches"),
+            ("test", "Test cpio status"),
+        ]:
+            ttk.Radiobutton(action, text=f"{op} - {desc}", variable=op_var, value=op).pack(anchor='w', padx=20)
+        def do_action():
+            choice = op_var.get()
+            action.destroy()
+            if choice == "extract":
+                out_dir = filedialog.askdirectory(title="Select output directory")
+                if not out_dir:
+                    return
+                self._run_cpio_command(["extract"], cpio_file, out_dir)
+            elif choice == "exists":
+                entry = simpledialog.askstring("CPIO Exists", "Entry path to check (e.g. init):")
+                if entry:
+                    self._run_cpio_command(["exists", entry], cpio_file)
+            elif choice == "rm":
+                entry = simpledialog.askstring("CPIO Remove", "Entry path to remove:")
+                if entry:
+                    self._run_cpio_command(["rm", entry], cpio_file)
+            elif choice == "mkdir":
+                mode = simpledialog.askstring("CPIO Mkdir", "Mode (octal, e.g. 0755):", initialvalue="0755")
+                entry = simpledialog.askstring("CPIO Mkdir", "Directory path:")
+                if mode and entry:
+                    self._run_cpio_command(["mkdir", mode, entry], cpio_file)
+            elif choice == "add":
+                src = filedialog.askopenfilename(title="Select file to add")
+                if not src:
+                    return
+                mode = simpledialog.askstring("CPIO Add", "Mode (octal, e.g. 0755):", initialvalue="0755")
+                entry = simpledialog.askstring("CPIO Add", "Entry path in cpio:", initialvalue=os.path.basename(src))
+                if mode and entry:
+                    self._run_cpio_command(["add", mode, entry, src], cpio_file)
+            elif choice == "patch":
+                self._run_cpio_command(["patch"], cpio_file)
+            elif choice == "test":
+                self._run_cpio_command(["test"], cpio_file)
+        ttk.Button(action, text="Execute", command=do_action).pack(pady=10)
+        ttk.Button(action, text="Cancel", command=action.destroy).pack(pady=5)
+
+    def _run_cpio_command(self, commands, cpio_file, out_dir=None):
+        try:
+            magiskboot = tool_resolve("magiskboot") or os.path.join(TOOLS_DIR, "magiskboot", "magiskboot.exe")
+            if not os.path.exists(magiskboot):
+                raise RuntimeError("magiskboot not found")
+            cwd = out_dir if out_dir else os.path.dirname(cpio_file) or "."
+            cmd = [magiskboot, "cpio", cpio_file] + commands
+            self.log(f"Running: magiskboot cpio {' '.join(commands)}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd, cwd=cwd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ CPIO {commands[0]} successful", 'success')
+                if commands[0] == "test":
+                    self.log(f"CPIO status: {res.stdout.decode(errors='replace').strip()}", 'info')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"CPIO {commands[0]} failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"CPIO operation failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"CPIO error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_dtb_patch_menu(self):
+        """Patch DTB to remove verity/avb using magiskboot"""
+        dtb_file = filedialog.askopenfilename(title="Select DTB file", filetypes=[("DTB", "*.dtb"), ("All", "*.*")])
+        if not dtb_file:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot") or os.path.join(TOOLS_DIR, "magiskboot", "magiskboot.exe")
+            if not os.path.exists(magiskboot):
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Patching DTB: {os.path.basename(dtb_file)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "dtb", dtb_file, "patch"])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log("✓ DTB patched (verity/avb flags removed)", 'success')
+                styled_messagebox(self, "Success", "DTB patched successfully", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"DTB patch failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"DTB patch failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"DTB patch error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== New Tool Methods - APK Advanced ==========
+    def apktool_decode_advanced_menu(self):
+        """Apktool decode with advanced options"""
+        apk = filedialog.askopenfilename(title="Select APK to decode", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        out_dir = filedialog.askdirectory(title="Select output directory (or cancel for default)")
+        if not out_dir:
+            out_dir = os.path.splitext(apk)[0] + "_decoded"
+        opts = simpledialog.askstring("Apktool Options",
+            "Enter options (space-separated, e.g. '-s -r --no-debug-info'):\n"
+            "Common: -s (no sources), -r (no res), --force, --keep-broken-res, -b (no debug info)",
+            initialvalue="-f")
+        if opts is None:
+            return
+        try:
+            apktool_path = tool_resolve("apktool")
+            if not apktool_path:
+                raise RuntimeError("apktool not found")
+            if apktool_path.lower().endswith('.jar'):
+                java = tool_resolve("java")
+                cmd = [java, "-jar", apktool_path, "d", apk, "-o", out_dir, "-f"] + (opts.split() if opts else [])
+            else:
+                cmd = [apktool_path, "d", apk, "-o", out_dir, "-f"] + (opts.split() if opts else [])
+            self.log(f"Running apktool decode: {os.path.basename(apk)}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decoded to: {out_dir}", 'success')
+                styled_messagebox(self, "Success", f"APK decoded to:\n{out_dir}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Apktool decode failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Apktool decode failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Apktool error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def apktool_build_advanced_menu(self):
+        """Apktool build with advanced options"""
+        src = filedialog.askdirectory(title="Select decoded APK directory")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save built APK as", defaultextension=".apk",
+                                           initialfile=os.path.basename(src) + ".apk")
+        if not out:
+            return
+        opts = simpledialog.askstring("Apktool Build Options",
+            "Enter options (e.g. '-d' for debug, '--use-aapt2'):",
+            initialvalue="")
+        if opts is None:
+            return
+        try:
+            apktool_path = tool_resolve("apktool")
+            if not apktool_path:
+                raise RuntimeError("apktool not found")
+            if apktool_path.lower().endswith('.jar'):
+                java = tool_resolve("java")
+                cmd = [java, "-jar", apktool_path, "b", src, "-o", out] + (opts.split() if opts else [])
+            else:
+                cmd = [apktool_path, "b", src, "-o", out] + (opts.split() if opts else [])
+            self.log(f"Running apktool build: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Built: {out}", 'success')
+                styled_messagebox(self, "Success", f"APK built:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Apktool build failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Apktool build failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Apktool error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def apktool_install_framework_menu(self):
+        """Install framework resources with apktool"""
+        apk = filedialog.askopenfilename(title="Select framework APK", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        tag = simpledialog.askstring("Framework Tag", "Enter tag (e.g. 'samsung' or 'oneplus'):")
+        if not tag:
+            return
+        try:
+            apktool_path = tool_resolve("apktool")
+            if not apktool_path:
+                raise RuntimeError("apktool not found")
+            if apktool_path.lower().endswith('.jar'):
+                java = tool_resolve("java")
+                cmd = [java, "-jar", apktool_path, "if", apk, "-t", tag]
+            else:
+                cmd = [apktool_path, "if", apk, "-t", tag]
+            self.log(f"Installing framework: {os.path.basename(apk)} as '{tag}'", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Framework '{tag}' installed", 'success')
+                styled_messagebox(self, "Success", f"Framework '{tag}' installed", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Framework install failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Framework install failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Framework install error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def apksigner_verify_menu(self):
+        """Verify APK signature"""
+        apk = filedialog.askopenfilename(title="Select APK to verify", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        try:
+            apksigner = tool_resolve("apksigner")
+            java = tool_resolve("java") or ""
+            if not apksigner:
+                # Try bundled apksigner.jar
+                bundled = os.path.join(TOOLS_DIR, "boot_editor", "aosp", "apksigner", "apksigner.jar")
+                if os.path.exists(bundled):
+                    apksigner = bundled
+                else:
+                    raise RuntimeError("apksigner not found")
+            if apksigner.lower().endswith('.jar') and not os.path.isfile(java):
+                raise RuntimeError("Java required to run apksigner.jar")
+            if apksigner.lower().endswith('.jar'):
+                cmd = [java, "-jar", apksigner, "verify", "--verbose", apk]
+            else:
+                cmd = [apksigner, "verify", "--verbose", apk]
+            self.log(f"Verifying: {os.path.basename(apk)}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            out = res.stdout.decode(errors='replace') + "\n" + res.stderr.decode(errors='replace')
+            TextOutputDialog(self, "APK Signature Verification", out)
+            if res.returncode == 0:
+                self.log("✓ Signature verified", 'success')
+            else:
+                self.log("✗ Signature verification failed", 'warning')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Verify error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== New Tool Methods - OTA / Payload ==========
+    def payload_dumper_menu(self):
+        """Extract partitions from payload.bin using payload_dumper"""
+        payload = filedialog.askopenfilename(title="Select payload.bin (inside OTA ZIP or extracted)",
+                                            filetypes=[("Payload", "payload.bin"), ("All", "*.*")])
+        if not payload:
+            return
+        out_dir = filedialog.askdirectory(title="Select output directory for extracted images")
+        if not out_dir:
+            return
+        # Detect if inside zip
+        if payload.lower().endswith('.zip'):
+            self.log("Detected ZIP - extracting payload.bin first...", 'info')
+            seven_z = tool_resolve("7z")
+            if not seven_z:
+                styled_messagebox(self, "Error", "7z required to extract from ZIP", "error")
+                return
+            extract_dir = tempfile.mkdtemp(prefix="payload_")
+            res = run_cmd([seven_z, "x", payload, "payload.bin", f"-o{extract_dir}"])
+            if res.returncode != 0:
+                styled_messagebox(self, "Error", "Failed to extract payload.bin from ZIP", "error")
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                return
+            actual_payload = os.path.join(extract_dir, "payload.bin")
+        else:
+            actual_payload = payload
+        try:
+            pd = tool_resolve("payload_dumper")
+            if not pd:
+                raise RuntimeError("payload_dumper not found in tools directory")
+            cmd = [pd, actual_payload, "-o", out_dir]
+            self.log(f"Extracting partitions from payload.bin to: {out_dir}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Partitions extracted to: {out_dir}", 'success')
+                styled_messagebox(self, "Success", f"Partitions extracted to:\n{out_dir}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"payload_dumper failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"payload_dumper failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"payload_dumper error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def extract_rom_zip_menu(self):
+        """Extract a ROM ZIP (tar.md5, .zip, .7z etc) using bsdtar/7z"""
+        rom = filedialog.askopenfilename(title="Select ROM ZIP/tar file", filetypes=[
+            ("All ROM files", "*.zip;*.tar;*.tar.md5;*.7z;*.lz4;*.tar.lz4"),
+            ("All files", "*.*")])
+        if not rom:
+            return
+        out_dir = filedialog.askdirectory(title="Select extraction directory")
+        if not out_dir:
+            return
+        try:
+            self.log(f"Extracting ROM: {os.path.basename(rom)}", 'info')
+            self.progress.start()
+            bsdtar = tool_resolve("bsdtar")
+            seven_z = tool_resolve("7z")
+            success = False
+            if rom.endswith('.md5') and bsdtar:
+                # Strip MD5 footer
+                tmp = tempfile.mktemp(suffix=".tar")
+                with open(rom, 'rb') as f:
+                    data = f.read()
+                if data[-32:].decode(errors='replace').strip().lower() == data[-65:-33].decode(errors='replace').strip().lower():
+                    pass
+                with open(tmp, 'wb') as f:
+                    f.write(data[:-32])
+                res = run_cmd([bsdtar, "-xf", tmp, "-C", out_dir])
+                os.unlink(tmp)
+                success = res.returncode == 0
+            if not success and seven_z:
+                res = run_cmd([seven_z, "x", rom, f"-o{out_dir}"])
+                success = res.returncode == 0
+            if not success and bsdtar:
+                res = run_cmd([bsdtar, "-xf", rom, "-C", out_dir])
+                success = res.returncode == 0
+            self.progress.stop()
+            if success:
+                self.log(f"✓ ROM extracted to: {out_dir}", 'success')
+                styled_messagebox(self, "Success", f"ROM extracted to:\n{out_dir}", "success")
+            else:
+                self.log("ROM extraction failed - no tool succeeded", 'error')
+                styled_messagebox(self, "Error", "ROM extraction failed. Ensure 7z or bsdtar is available.", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"ROM extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def resize_ext4_menu(self):
+        """Resize an EXT4 image"""
+        img = filedialog.askopenfilename(title="Select EXT4 image", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not img:
+            return
+        out = filedialog.asksaveasfilename(title="Save resized image as", defaultextension=".img",
+                                          initialfile=os.path.splitext(os.path.basename(img))[0] + "_resized.img")
+        if not out:
+            return
+        new_size = simpledialog.askinteger("Resize EXT4", "New size in MB:", initialvalue=2048, minvalue=1, maxvalue=65536)
+        if not new_size:
+            return
+        try:
+            resize2fs = tool_resolve("resize2fs")
+            if not resize2fs:
+                raise RuntimeError("resize2fs not found. Install e2fsprogs.")
+            self.log(f"Resizing {os.path.basename(img)} to {new_size}MB", 'info')
+            self.progress.start()
+            # First, expand the image file
+            with open(img, 'rb') as f:
+                f.seek(0, 2)
+                current = f.tell()
+            target = new_size * 1024 * 1024
+            if target > current:
+                with open(img, 'ab') as f:
+                    f.write(b'\x00' * (target - current))
+            res = run_cmd([resize2fs, img])
+            if res.returncode == 0:
+                shutil.copy2(img, out)
+                self.log(f"✓ Resized image saved to: {out}", 'success')
+                styled_messagebox(self, "Success", f"Resized image:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Resize failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Resize failed:\n{err}", "error")
+            self.progress.stop()
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Resize error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def mount_ext4_menu(self):
+        """Show mount command for EXT4 image (read-only)"""
+        img = filedialog.askopenfilename(title="Select EXT4 image", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not img:
+            return
+        abs_path = os.path.abspath(img)
+        # Check for Windows vs Unix
+        if os.name == 'nt':
+            msg = (f"Windows: Use WSL or a tool like ext2fsd/imdisk.\n\n"
+                   f"WSL command:\n  wsl sudo mkdir -p /mnt/ext4\n  wsl sudo mount -t ext4 -o ro {self._wsl_path(abs_path)} /mnt/ext4\n\n"
+                   f"Or use 7z to list files:\n  7z l {abs_path}")
+        else:
+            msg = (f"Linux mount command (read-only):\n\n"
+                   f"  sudo mkdir -p /mnt/ext4\n"
+                   f"  sudo mount -t ext4 -o ro,loop,noexec,nodev {abs_path} /mnt/ext4\n\n"
+                   f"Or use 7z to list files:\n  7z l {abs_path}")
+        TextOutputDialog(self, "Mount EXT4 Image", msg)
+
+    def _wsl_path(self, windows_path: str) -> str:
+        """Convert Windows path to WSL /mnt/ path"""
+        drive, rest = os.path.splitdrive(windows_path)
+        if not drive:
+            return windows_path
+        drive_letter = drive.rstrip(':').lower()
+        rest = rest.replace('\\', '/')
+        return f"/mnt/{drive_letter}{rest}"
+
+    # ========== New Tool Methods - AVB Advanced ==========
+    def avb_extract_menu(self):
+        """Extract vbmeta/boot image from payload.bin (using magiskboot extract)"""
+        payload = filedialog.askopenfilename(title="Select payload.bin", filetypes=[("Payload", "payload.bin"), ("All", "*.*")])
+        if not payload:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        partition = simpledialog.askstring("Partition", "Partition to extract (boot, init_boot, vbmeta, etc.):", initialvalue="boot")
+        if not partition:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            out_file = os.path.join(out, f"{partition}.img")
+            self.log(f"Extracting {partition} from payload.bin", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "extract", payload, partition, out_file])
+            self.progress.stop()
+            if res.returncode == 0 and os.path.exists(out_file):
+                self.log(f"✓ Extracted to: {out_file}", 'success')
+                styled_messagebox(self, "Success", f"Extracted {partition} to:\n{out_file}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Extract failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Extract failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== New Tool Methods - Firmware Analysis ==========
+    def analyze_boot_img_menu(self):
+        """Analyze and display boot image header information"""
+        boot = filedialog.askopenfilename(title="Select boot.img", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not boot:
+            return
+        try:
+            with open(boot, 'rb') as f:
+                data = f.read(4096)
+            info = []
+            info.append(f"File: {os.path.basename(boot)}")
+            info.append(f"Size: {os.path.getsize(boot):,} bytes")
+            # Boot image magic
+            if data[:8] == b'ANDROID!':
+                info.append("Magic: ANDROID! (Android boot image)")
+            else:
+                info.append(f"Magic: {data[:8]!r}")
+            # Kernel size
+            if len(data) >= 36:
+                import struct
+                kernel_size = struct.unpack("<I", data[8:12])[0]
+                kernel_addr = struct.unpack("<I", data[12:16])[0]
+                ramdisk_size = struct.unpack("<I", data[16:20])[0]
+                ramdisk_addr = struct.unpack("<I", data[20:24])[0]
+                second_size = struct.unpack("<I", data[24:28])[0]
+                second_addr = struct.unpack("<I", data[28:32])[0]
+                tags_addr = struct.unpack("<I", data[32:36])[0]
+                page_size = struct.unpack("<I", data[36:40])[0]
+                info.append(f"")
+                info.append(f"=== Boot Image Header (v0) ===")
+                info.append(f"Kernel size: {kernel_size:,} bytes")
+                info.append(f"Kernel load addr: 0x{kernel_addr:08X}")
+                info.append(f"Ramdisk size: {ramdisk_size:,} bytes")
+                info.append(f"Ramdisk load addr: 0x{ramdisk_addr:08X}")
+                info.append(f"Second stage size: {second_size:,} bytes")
+                info.append(f"Second stage addr: 0x{second_addr:08X}")
+                info.append(f"Tags addr: 0x{tags_addr:08X}")
+                info.append(f"Page size: {page_size:,} bytes")
+                # Header version at 40
+                if len(data) >= 44:
+                    header_version = data[40]
+                    info.append(f"Header version: {header_version}")
+                    if header_version >= 2 and len(data) >= 72:
+                        dt_size = struct.unpack("<I", data[44:48])[0]
+                        info.append(f"DT size: {dt_size:,} bytes")
+            # Extract name (at offset 48, 16 bytes)
+            if len(data) >= 64:
+                name = data[48:64].split(b'\x00', 1)[0].decode(errors='replace')
+                if name:
+                    info.append(f"Name: {name}")
+            # Cmdline (at offset 64, 512 bytes)
+            if len(data) >= 576:
+                cmdline = data[64:576].split(b'\x00', 1)[0].decode(errors='replace')
+                if cmdline:
+                    info.append(f"")
+                    info.append(f"=== Kernel Cmdline ===")
+                    info.append(cmdline)
+            TextOutputDialog(self, "Boot Image Analysis", "\n".join(info))
+        except Exception as e:
+            styled_messagebox(self, "Error", f"Analysis failed: {e}", "error")
+
+    def compare_firmware_menu(self):
+        """Compare two ROM ZIP/tar files - list files unique to each and common"""
+        rom1 = filedialog.askopenfilename(title="Select first ROM", filetypes=[("ROM", "*.zip;*.tar;*.tar.md5;*.7z"), ("All", "*.*")])
+        if not rom1:
+            return
+        rom2 = filedialog.askopenfilename(title="Select second ROM", filetypes=[("ROM", "*.zip;*.tar;*.tar.md5;*.7z"), ("All", "*.*")])
+        if not rom2:
+            return
+        try:
+            self.log(f"Comparing ROMs: {os.path.basename(rom1)} vs {os.path.basename(rom2)}", 'info')
+            self.progress.start()
+            files1 = self._list_rom_contents(rom1)
+            files2 = self._list_rom_contents(rom2)
+            self.progress.stop()
+            only1 = sorted(files1 - files2)
+            only2 = sorted(files2 - files1)
+            common = sorted(files1 & files2)
+            output = []
+            output.append(f"ROM 1: {os.path.basename(rom1)} ({len(files1)} files)")
+            output.append(f"ROM 2: {os.path.basename(rom2)} ({len(files2)} files)")
+            output.append(f"Common: {len(common)} files")
+            output.append(f"")
+            output.append(f"=== Only in {os.path.basename(rom1)} ({len(only1)}) ===")
+            output.extend(only1[:200])
+            if len(only1) > 200:
+                output.append(f"... and {len(only1) - 200} more")
+            output.append(f"")
+            output.append(f"=== Only in {os.path.basename(rom2)} ({len(only2)}) ===")
+            output.extend(only2[:200])
+            if len(only2) > 200:
+                output.append(f"... and {len(only2) - 200} more")
+            TextOutputDialog(self, "Firmware Comparison", "\n".join(output))
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Compare error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def _list_rom_contents(self, rom_path: str) -> set:
+        """List files in a ROM using bsdtar/7z"""
+        result = set()
+        # Try bsdtar
+        bsdtar = tool_resolve("bsdtar")
+        if bsdtar:
+            tmp_path = rom_path
+            if rom_path.endswith('.md5'):
+                with open(rom_path, 'rb') as f:
+                    data = f.read()
+                tmp_path = tempfile.mktemp(suffix=".tar")
+                with open(tmp_path, 'wb') as f:
+                    f.write(data[:-32])
+            res = run_cmd([bsdtar, "-tf", tmp_path])
+            if tmp_path != rom_path:
+                try: os.unlink(tmp_path)
+                except: pass
+            if res.returncode == 0:
+                for line in res.stdout.decode(errors='replace').splitlines():
+                    if line.strip():
+                        result.add(line.strip())
+                return result
+        # Fallback to 7z
+        seven_z = tool_resolve("7z")
+        if seven_z:
+            res = run_cmd([seven_z, "l", "-slt", rom_path])
+            if res.returncode == 0:
+                for line in res.stdout.decode(errors='replace').splitlines():
+                    if line.startswith("Path = "):
+                        path = line[7:].strip()
+                        if path:
+                            result.add(path)
+        return result
+
+    def verify_firmware_checksums_menu(self):
+        """Verify MD5 checksums in a tar.md5 ROM file"""
+        rom = filedialog.askopenfilename(title="Select ROM tar.md5 file", filetypes=[("MD5 ROM", "*.md5"), ("All", "*.*")])
+        if not rom:
+            return
+        try:
+            self.log(f"Verifying checksums: {os.path.basename(rom)}", 'info')
+            self.progress.start()
+            bsdtar = tool_resolve("bsdtar")
+            if not bsdtar:
+                raise RuntimeError("bsdtar required for checksum verification")
+            res = run_cmd([bsdtar, "-taf", rom])
+            self.progress.stop()
+            out = res.stdout.decode(errors='replace') + "\n" + res.stderr.decode(errors='replace')
+            if "FAIL" in out or "fail" in out.lower():
+                self.log("✗ Some checksums failed", 'error')
+            else:
+                self.log("✓ All checksums verified", 'success')
+            TextOutputDialog(self, "Checksum Verification", out or "All checksums OK")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Verify error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def ozip_decrypt_menu(self):
+        """Decrypt an OZIP-encrypted Samsung firmware"""
+        ozip = filedialog.askopenfilename(title="Select OZIP file", filetypes=[("OZIP", "*.ozip"), ("All", "*.*")])
+        if not ozip:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            ozipdecrypt = tool_resolve("ozipdecrypt")
+            if not ozipdecrypt:
+                raise RuntimeError("ozipdecrypt not found")
+            self.log(f"Decrypting OZIP: {os.path.basename(ozip)}", 'info')
+            self.progress.start()
+            res = run_cmd([ozipdecrypt, ozip, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decrypted to: {out}", 'success')
+                styled_messagebox(self, "Success", f"Decrypted to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"OZIP decrypt failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"OZIP decrypt failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"OZIP decrypt error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def omc_decode_menu(self):
+        """Decode Samsung CSC/OMC XML files"""
+        omc = filedialog.askopenfilename(title="Select OMC file", filetypes=[("OMC", "*.omc"), ("All", "*.*")])
+        if not omc:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            omcdecoder = tool_resolve("omcdecoder")
+            if not omcdecoder:
+                raise RuntimeError("omcdecoder not found")
+            self.log(f"Decoding OMC: {os.path.basename(omc)}", 'info')
+            self.progress.start()
+            res = run_cmd([omcdecoder, omc, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decoded to: {out}", 'success')
+                styled_messagebox(self, "Success", f"Decoded to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"OMC decode failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"OMC decode failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"OMC decode error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== New Tool Methods - Compression ==========
+    def zstd_compress_menu(self):
+        """Compress/decompress with zstandard"""
+        src = filedialog.askopenfilename(title="Select file to compress/decompress")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Output file")
+        if not out:
+            return
+        try:
+            zstd_exe = tool_resolve("zstandard")
+            if not zstd_exe:
+                # Try common path
+                cand = os.path.join(TOOLS_DIR, "zstandard", "zstd.exe")
+                if os.path.exists(cand):
+                    zstd_exe = cand
+                else:
+                    raise RuntimeError("zstandard not found")
+            self.log(f"Compressing with zstd: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd([zstd_exe, src, "-o", out, "-f"])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Compressed to: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"zstd failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"zstd failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"zstd error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def brotli_compress_menu(self):
+        """Compress/decompress with brotli"""
+        src = filedialog.askopenfilename(title="Select file")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Output file")
+        if not out:
+            return
+        try:
+            brotli = tool_resolve("brotli")
+            if not brotli:
+                raise RuntimeError("brotli not found")
+            self.log(f"Brotli: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd([brotli, src, "-o", out, "-f"])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Done: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"brotli failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"brotli failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"brotli error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def lz4_compress_tool_menu(self):
+        """Compress/decompress with lz4"""
+        src = filedialog.askopenfilename(title="Select file")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Output file")
+        if not out:
+            return
+        try:
+            lz4 = tool_resolve("lz4")
+            if not lz4:
+                raise RuntimeError("lz4 not found")
+            self.log(f"LZ4: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            # Detect decompression if input is .lz4
+            if src.lower().endswith('.lz4'):
+                res = run_cmd([lz4, "-d", "-f", src, out])
+            else:
+                res = run_cmd([lz4, "-9", "-f", src, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Done: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"lz4 failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"lz4 failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"lz4 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== Magiskboot UI - Unpack/Repack ==========
+    def magisk_unpack_ui_menu(self):
+        """Unpack a boot image with magiskboot - UI to show all components"""
+        boot = filedialog.askopenfilename(title="Select boot.img / init_boot.img", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not boot:
+            return
+        out_dir = filedialog.askdirectory(title="Select output directory for unpacked components")
+        if not out_dir:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Unpacking: {os.path.basename(boot)}", 'info')
+            self.progress.start()
+            # Use temp dir if -h flag wanted
+            res = run_cmd([magiskboot, "unpack", "-h", boot], cwd=out_dir)
+            self.progress.stop()
+            # Try to also list what was produced
+            files = []
+            for f in os.listdir(out_dir):
+                fp = os.path.join(out_dir, f)
+                if os.path.isfile(fp):
+                    files.append(f"  {f} ({os.path.getsize(fp):,} bytes)")
+            out = res.stdout.decode(errors='replace') + res.stderr.decode(errors='replace')
+            if files:
+                out += "\n\nFiles in working directory:\n" + "\n".join(files)
+            TextOutputDialog(self, "Magiskboot Unpack", out)
+            if res.returncode == 0:
+                self.log(f"✓ Unpacked to: {out_dir}", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Unpack error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_repack_ui_menu(self):
+        """Repack components into boot.img with magiskboot"""
+        work_dir = filedialog.askdirectory(title="Select working directory with components")
+        if not work_dir:
+            return
+        orig_boot = filedialog.askopenfilename(title="Select ORIGINAL boot.img (for header reference)", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not orig_boot:
+            return
+        out = filedialog.asksaveasfilename(title="Save new boot image as", defaultextension=".img", initialfile="new-boot.img")
+        if not out:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Repacking boot image to: {out}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "repack", orig_boot, out], cwd=work_dir)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Repacked: {out}", 'success')
+                styled_messagebox(self, "Success", f"Boot image repacked:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Repack failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Repack failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Repack error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_verify_menu(self):
+        """Verify AVB 1.0 signature on a boot image"""
+        boot = filedialog.askopenfilename(title="Select boot.img", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not boot:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Verifying AVB signature: {os.path.basename(boot)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "verify", boot])
+            self.progress.stop()
+            out = f"Return code: {res.returncode}\n"
+            out += "0=valid, 1=error, 2=chromeos\n\n"
+            out += res.stdout.decode(errors='replace') + "\n" + res.stderr.decode(errors='replace')
+            TextOutputDialog(self, "AVB Verification", out)
+            if res.returncode == 0:
+                self.log("✓ AVB signature valid", 'success')
+            else:
+                self.log("✗ AVB verification failed", 'warning')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Verify error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_sign_menu(self):
+        """Sign a boot image with AVB 1.0 signature"""
+        boot = filedialog.askopenfilename(title="Select boot.img to sign", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not boot:
+            return
+        out = filedialog.asksaveasfilename(title="Save signed boot as", defaultextension=".img", initialfile="signed-boot.img")
+        if not out:
+            return
+        name = simpledialog.askstring("AVB Sign", "Partition name:", initialvalue="/boot")
+        if not name:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            # Copy file first
+            shutil.copy2(boot, out)
+            self.log(f"Signing: {os.path.basename(boot)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "sign", out, name])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Signed: {out}", 'success')
+                styled_messagebox(self, "Success", f"Boot image signed:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Sign failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Sign failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Sign error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_split_dtb_menu(self):
+        """Split kernel+dtb from image.*-dtb"""
+        inp = filedialog.askopenfilename(title="Select image.*-dtb (combined kernel+dtb)", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not inp:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Splitting kernel+dtb: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "split", inp])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log("✓ Split complete (kernel + kernel_dtb in current dir)", 'success')
+                styled_messagebox(self, "Success", "Split complete. kernel and kernel_dtb created in the source directory.", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Split failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Split failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Split error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_sha1_menu(self):
+        """Print SHA1 of a file using magiskboot"""
+        inp = filedialog.askopenfilename(title="Select file", filetypes=[("All", "*.*")])
+        if not inp:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Computing SHA1: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "sha1", inp])
+            self.progress.stop()
+            sha1 = res.stdout.decode(errors='replace').strip()
+            self.log(f"✓ SHA1: {sha1}", 'success')
+            TextOutputDialog(self, "SHA1 Checksum", f"File: {inp}\nSHA1: {sha1}")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"SHA1 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_compress_menu(self):
+        """Compress a file using magiskboot (auto format detection)"""
+        inp = filedialog.askopenfilename(title="Select file to compress")
+        if not inp:
+            return
+        out = filedialog.asksaveasfilename(title="Save compressed file as")
+        if not out:
+            return
+        fmt = simpledialog.askstring("Compress", "Format (gzip, xz, lzma, bzip2, lz4, lz4_legacy, lz4_lg):", initialvalue="gzip")
+        if not fmt:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Compressing with {fmt}: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, f"compress={fmt}", inp, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Compressed: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Compress failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Compress failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Compress error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_decompress_menu(self):
+        """Auto-detect and decompress a file using magiskboot"""
+        inp = filedialog.askopenfilename(title="Select file to decompress (auto-detect format)")
+        if not inp:
+            return
+        out = filedialog.asksaveasfilename(title="Save decompressed file as")
+        if not out:
+            return
+        try:
+            magiskboot = tool_resolve("magiskboot")
+            if not magiskboot:
+                raise RuntimeError("magiskboot not found")
+            self.log(f"Decompressing: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskboot, "decompress", inp, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decompressed: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Decompress failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Decompress failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Decompress error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== AAPT2 Methods ==========
+    def aapt2_run(self, subcmd, apk_or_target=None, target=None, extra_args=None):
+        """Run AAPT2 with given subcommand and return result.
+
+        Usage:
+            aapt2_run("dump", "badging", apk)
+            aapt2_run("dump", "xmltree", apk, [f"--file={target}"])
+            aapt2_run("dump", apk)  # bare subcommand
+        """
+        aapt2 = tool_resolve("aapt2")
+        if not aapt2:
+            raise RuntimeError("aapt2 not found")
+        # Determine if subcmd is actually an APK
+        # If apk_or_target looks like an APK and target is None, treat as bare subcmd
+        if target is None and extra_args is None and apk_or_target and (
+            apk_or_target.lower().endswith('.apk') or '/' in apk_or_target or '\\' in apk_or_target
+        ):
+            cmd = [aapt2, subcmd, apk_or_target]
+        elif extra_args is not None and target is None and apk_or_target:
+            # 3-positional form: subcmd, apk, extra_args
+            cmd = [aapt2, subcmd, apk_or_target]
+        elif target is not None:
+            # 4-positional form: subcmd, subsubcmd, apk, extra_args
+            cmd = [aapt2, subcmd, apk_or_target, target]
+        else:
+            cmd = [aapt2, subcmd]
+        if extra_args:
+            if target is not None:
+                # Already added target, but need to re-build properly
+                cmd = [aapt2, subcmd, apk_or_target]
+                cmd.extend(extra_args)
+            else:
+                cmd.extend(extra_args)
+        self.progress.start()
+        res = run_cmd(cmd)
+        self.progress.stop()
+        out = res.stdout if res and res.stdout is not None else b""
+        err = res.stderr if res and res.stderr is not None else b""
+        if isinstance(out, bytes):
+            out = out.decode(errors='replace')
+        if isinstance(err, bytes):
+            err = err.decode(errors='replace')
+        return out + "\n" + err
+
+    def aapt2_dump_badging_menu(self):
+        """Dump badging info from an APK"""
+        apk = filedialog.askopenfilename(title="Select APK", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        try:
+            self.log(f"AAPT2 dump badging: {os.path.basename(apk)}", 'info')
+            out = self.aapt2_run("dump", "badging", apk)
+            TextOutputDialog(self, "AAPT2 Badging", out)
+            self.log("✓ AAPT2 badging complete", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"aapt2 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def aapt2_dump_permissions_menu(self):
+        """Dump permissions from an APK"""
+        apk = filedialog.askopenfilename(title="Select APK", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        try:
+            self.log(f"AAPT2 dump permissions: {os.path.basename(apk)}", 'info')
+            out = self.aapt2_run("dump", "permissions", apk)
+            TextOutputDialog(self, "AAPT2 Permissions", out)
+            self.log("✓ AAPT2 permissions dumped", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"aapt2 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def aapt2_dump_xmltree_menu(self):
+        """Dump XML tree of a resource or file from an APK"""
+        apk = filedialog.askopenfilename(title="Select APK", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        target = simpledialog.askstring("XMLTree", "Resource path (e.g. AndroidManifest.xml, res/layout/main.xml):", initialvalue="AndroidManifest.xml")
+        if not target:
+            return
+        try:
+            self.log(f"AAPT2 xmltree: {target}", 'info')
+            out = self.aapt2_run("dump", "xmltree", apk, [f"--file={target}"])
+            TextOutputDialog(self, f"XMLTree: {target}", out)
+            self.log("✓ XMLTree dumped", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"aapt2 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def aapt2_dump_resources_menu(self):
+        """Dump resources from an APK"""
+        apk = filedialog.askopenfilename(title="Select APK", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        try:
+            self.log(f"AAPT2 dump resources: {os.path.basename(apk)}", 'info')
+            out = self.aapt2_run("dump", "resources", apk)
+            TextOutputDialog(self, "AAPT2 Resources", out)
+            self.log("✓ Resources dumped", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"aapt2 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def aapt2_dump_strings_menu(self):
+        """Dump string resources from an APK"""
+        apk = filedialog.askopenfilename(title="Select APK", filetypes=[("APK", "*.apk"), ("All", "*.*")])
+        if not apk:
+            return
+        try:
+            self.log(f"AAPT2 dump strings: {os.path.basename(apk)}", 'info')
+            out = self.aapt2_run("dump", "strings", apk)
+            TextOutputDialog(self, "AAPT2 Strings", out)
+            self.log("✓ Strings dumped", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"aapt2 error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== Image Tools - imgrepacker, amlogic, lpunpack/lpmake, mkdtboimg, DTB ==========
+    def imgrepacker_unpack_menu(self):
+        """Unpack Allwinner LiveSuit/PhoenixSuit firmware"""
+        inp = filedialog.askopenfilename(title="Select .img (Allwinner firmware)", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            ir = tool_resolve("imgrepacker")
+            if not ir:
+                raise RuntimeError("imgrepacker not found")
+            self.log(f"imgRePacker unpack: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([ir, inp, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Unpacked to: {out}", 'success')
+                styled_messagebox(self, "Success", f"Unpacked to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"imgRePacker failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"imgRePacker failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"imgRePacker error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def imgrepacker_pack_menu(self):
+        """Pack Allwinner firmware using imgrepacker"""
+        src = filedialog.askdirectory(title="Select unpacked source directory")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save firmware as", defaultextension=".img", initialfile="packed.img")
+        if not out:
+            return
+        try:
+            ir = tool_resolve("imgrepacker")
+            if not ir:
+                raise RuntimeError("imgrepacker not found")
+            self.log(f"imgRePacker pack: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd([ir, src, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Packed: {out}", 'success')
+                styled_messagebox(self, "Success", f"Packed to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"imgRePacker pack failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"imgRePacker pack failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"imgRePacker pack error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def amlogic_unpack_menu(self):
+        """Unpack Amlogic firmware"""
+        inp = filedialog.askopenfilename(title="Select Amlogic firmware file", filetypes=[("Allwinner/Amlogic", "*.img;*.bin"), ("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            aml = tool_resolve("amlogic")
+            if not aml:
+                raise RuntimeError("amlogic tool not found")
+            self.log(f"Amlogic unpack: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([aml, "unpack", inp, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Unpacked to: {out}", 'success')
+                styled_messagebox(self, "Success", f"Unpacked to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Amlogic failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Amlogic failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Amlogic error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def amlogic_pack_menu(self):
+        """Pack Amlogic firmware"""
+        src = filedialog.askdirectory(title="Select unpacked source directory")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save firmware as", defaultextension=".img", initialfile="aml_packed.img")
+        if not out:
+            return
+        try:
+            aml = tool_resolve("amlogic")
+            if not aml:
+                raise RuntimeError("amlogic tool not found")
+            self.log(f"Amlogic pack: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd([aml, "pack", src, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Packed: {out}", 'success')
+                styled_messagebox(self, "Success", f"Packed to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"Amlogic pack failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"Amlogic pack failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"Amlogic pack error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def lpunpack_menu(self):
+        """Unpack super partition (lpunpack)"""
+        super_img = filedialog.askopenfilename(title="Select super.img", filetypes=[("Image", "super.img"), ("All", "*.*")])
+        if not super_img:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            lpu = tool_resolve("lpunpack")
+            if not lpu:
+                raise RuntimeError("lpunpack not found")
+            self.log(f"lpunpack: {os.path.basename(super_img)}", 'info')
+            self.progress.start()
+            res = run_cmd([lpu, super_img, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Unpacked super to: {out}", 'success')
+                styled_messagebox(self, "Success", f"Super partition unpacked to:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"lpunpack failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"lpunpack failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"lpunpack error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def lpmake_menu(self):
+        """Build super partition (lpmake)"""
+        out = filedialog.asksaveasfilename(title="Save super.img as", defaultextension="super.img", initialfile="super.img")
+        if not out:
+            return
+        # Show options
+        opts = simpledialog.askstring("lpmake",
+            "Enter lpmake args (e.g. --super-name super --metadata-size 65536 --block-size 4096 "
+            "--device-size=3221225472 --group=main:3221225472 --partition=system:readonly:0:IMAGE "
+            "--image=system=./system.img ...):",
+            initialvalue="")
+        if opts is None:
+            return
+        try:
+            lpm = tool_resolve("lpmake")
+            if not lpm:
+                raise RuntimeError("lpmake not found")
+            self.log(f"lpmake: building {os.path.basename(out)}", 'info')
+            self.progress.start()
+            cmd = [lpm, "--output", out] + (opts.split() if opts else [])
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Super built: {out}", 'success')
+                styled_messagebox(self, "Success", f"Super partition built:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"lpmake failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"lpmake failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"lpmake error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def mkdtboimg_unpack_menu(self):
+        """Dump/unpack DTBO image"""
+        inp = filedialog.askopenfilename(title="Select DTBO image", filetypes=[("DTBO", "*.img"), ("All", "*.*")])
+        if not inp:
+            return
+        out_dir = filedialog.askdirectory(title="Select output directory")
+        if not out_dir:
+            return
+        try:
+            mdi = tool_resolve("mkdtboimg")
+            if not mdi:
+                raise RuntimeError("mkdtboimg not found")
+            self.log(f"mkdtboimg dump: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([mdi, "dump", inp, "-b", out_dir])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ DTBO dumped to: {out_dir}", 'success')
+                TextOutputDialog(self, "DTBO Dump", res.stdout.decode(errors='replace') + res.stderr.decode(errors='replace'))
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"mkdtboimg failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"mkdtboimg failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"mkdtboimg error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def mkdtboimg_pack_menu(self):
+        """Pack DTBO image"""
+        out = filedialog.asksaveasfilename(title="Save DTBO as", defaultextension=".img", initialfile="dtbo.img")
+        if not out:
+            return
+        opts = simpledialog.askstring("mkdtboimg", "Enter mkdtboimg args (e.g. --id=1 board1.dtb --id=2 board2.dtb):", initialvalue="")
+        if opts is None:
+            return
+        try:
+            mdi = tool_resolve("mkdtboimg")
+            if not mdi:
+                raise RuntimeError("mkdtboimg not found")
+            self.log(f"mkdtboimg create: {os.path.basename(out)}", 'info')
+            self.progress.start()
+            cmd = [mdi, "create", out] + (opts.split() if opts else [])
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ DTBO packed: {out}", 'success')
+                styled_messagebox(self, "Success", f"DTBO packed:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"mkdtboimg failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"mkdtboimg failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"mkdtboimg error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def extract_dtb_tool_menu(self):
+        """Extract DTBs from a kernel image using extract-dtb"""
+        inp = filedialog.askopenfilename(title="Select kernel or dtb-containing file", filetypes=[("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            ed = tool_resolve("extract-dtb")
+            if not ed:
+                # Try common path
+                cand = os.path.join(TOOLS_DIR, "extract-dtb", "extract-dtb.py")
+                if os.path.exists(cand):
+                    ed = cand
+                else:
+                    raise RuntimeError("extract-dtb not found")
+            self.log(f"extract-dtb: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            if ed.endswith('.py'):
+                python_exe = sys.executable
+                res = run_cmd([python_exe, ed, inp, "-o", out])
+            else:
+                res = run_cmd([ed, inp, "-o", out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ DTBs extracted to: {out}", 'success')
+                styled_messagebox(self, "Success", f"DTBs extracted to:\n{out}\n\n{res.stdout.decode(errors='replace')}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"extract-dtb failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"extract-dtb failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"extract-dtb error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def dtb_converter_menu(self):
+        """DTB ↔ DTS conversion using dtb-converter"""
+        action = tk.Toplevel(self)
+        action.title("DTB ↔ DTS Converter")
+        action.geometry("400x200")
+        action.transient(self)
+        ttk.Label(action, text="Choose conversion direction:").pack(pady=10)
+        op_var = tk.StringVar(value="dtb2dts")
+        ttk.Radiobutton(action, text="DTB → DTS (decompile)", variable=op_var, value="dtb2dts").pack(anchor='w', padx=20)
+        ttk.Radiobutton(action, text="DTS → DTB (compile)", variable=op_var, value="dts2dtb").pack(anchor='w', padx=20)
+        def do_action():
+            choice = op_var.get()
+            action.destroy()
+            if choice == "dtb2dts":
+                self.dtc_decompile_menu()
+            else:
+                self.dtc_compile_menu()
+        ttk.Button(action, text="Continue", command=do_action).pack(pady=10)
+        ttk.Button(action, text="Cancel", command=action.destroy).pack(pady=5)
+
+    def dtc_compile_menu(self):
+        """DTS → DTB (compile using dtc)"""
+        dts = filedialog.askopenfilename(title="Select .dts file", filetypes=[("DTS", "*.dts"), ("All", "*.*")])
+        if not dts:
+            return
+        out = filedialog.asksaveasfilename(title="Save DTB as", defaultextension=".dtb", initialfile=os.path.splitext(os.path.basename(dts))[0] + ".dtb")
+        if not out:
+            return
+        try:
+            dtc = tool_resolve("dtc")
+            if not dtc:
+                raise RuntimeError("dtc not found")
+            self.log(f"dtc compile: {os.path.basename(dts)}", 'info')
+            self.progress.start()
+            res = run_cmd([dtc, "-O", "dtb", "-o", out, dts])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Compiled: {out}", 'success')
+                styled_messagebox(self, "Success", f"DTB compiled:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"dtc failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"dtc failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"dtc error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def dtc_decompile_menu(self):
+        """DTB → DTS (decompile using dtc)"""
+        dtb = filedialog.askopenfilename(title="Select .dtb file", filetypes=[("DTB", "*.dtb"), ("All", "*.*")])
+        if not dtb:
+            return
+        out = filedialog.asksaveasfilename(title="Save DTS as", defaultextension=".dts", initialfile=os.path.splitext(os.path.basename(dtb))[0] + ".dts")
+        if not out:
+            return
+        try:
+            dtc = tool_resolve("dtc")
+            if not dtc:
+                raise RuntimeError("dtc not found")
+            self.log(f"dtc decompile: {os.path.basename(dtb)}", 'info')
+            self.progress.start()
+            res = run_cmd([dtc, "-O", "dts", "-o", out, dtb])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decompiled: {out}", 'success')
+                styled_messagebox(self, "Success", f"DTS decompiled:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"dtc failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"dtc failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"dtc error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def make_ext4fs_menu(self):
+        """Build EXT4 image from a folder using make_ext4fs"""
+        src = filedialog.askdirectory(title="Select source directory")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save EXT4 image as", defaultextension=".img", initialfile="system.img")
+        if not out:
+            return
+        size_mb = simpledialog.askinteger("make_ext4fs", "Image size in MB:", initialvalue=2048, minvalue=1, maxvalue=65536)
+        if not size_mb:
+            return
+        try:
+            mke = tool_resolve("make_ext4fs")
+            if not mke:
+                raise RuntimeError("make_ext4fs not found")
+            self.log(f"make_ext4fs: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd([mke, "-s", "-l", f"{size_mb}M", "-a", "system", out, src])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ EXT4 image built: {out}", 'success')
+                styled_messagebox(self, "Success", f"EXT4 image built:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"make_ext4fs failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"make_ext4fs failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"make_ext4fs error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def pack_sparse_menu(self):
+        """Convert a raw image to sparse (img2simg)"""
+        # Uses existing raw_to_sparse_menu but re-labeled
+        self.raw_to_sparse_menu()
+
+    # ========== Samsung OPS Crypto ==========
+    def opscrypto_menu(self):
+        """OPS decrypt/encrypt (Samsung firmware protection)"""
+        inp = filedialog.askopenfilename(title="Select OPS-encrypted file", filetypes=[("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.asksaveasfilename(title="Save output as", initialfile=os.path.basename(inp) + ".decrypted")
+        if not out:
+            return
+        try:
+            ops = tool_resolve("opscrypto")
+            if not ops:
+                raise RuntimeError("opscrypto not found")
+            self.log(f"OPS decrypt: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            # opscrypto typically takes: input output key
+            res = run_cmd([ops, "-d", inp, out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Decrypted: {out}", 'success')
+                styled_messagebox(self, "Success", f"Decrypted:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"opscrypto failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"opscrypto failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"opscrypto error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== SELinux Tools ==========
+    def sefcontext_compile_menu(self):
+        """Compile SELinux file_contexts binary"""
+        inp = filedialog.askopenfilename(title="Select file_contexts (text)", filetypes=[("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.asksaveasfilename(title="Save binary file_contexts as", initialfile=os.path.basename(inp) + ".bin")
+        if not out:
+            return
+        try:
+            sf = tool_resolve("sefcontext_compile")
+            if not sf:
+                raise RuntimeError("sefcontext_compile not found")
+            self.log(f"Compiling file_contexts: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([sf, "-o", out, inp])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Compiled: {out}", 'success')
+                styled_messagebox(self, "Success", f"Compiled:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"sefcontext_compile failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"sefcontext_compile failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"sefcontext_compile error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def sefcontext_decode_menu(self):
+        """Decode binary file_contexts back to text"""
+        inp = filedialog.askopenfilename(title="Select binary file_contexts", filetypes=[("All", "*.*")])
+        if not inp:
+            return
+        try:
+            sd = tool_resolve("sefcontext_decode")
+            if not sd:
+                raise RuntimeError("sefcontext_decode not found")
+            self.log(f"Decoding file_contexts: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([sd, inp])
+            self.progress.stop()
+            out = res.stdout.decode(errors='replace')
+            TextOutputDialog(self, "file_contexts (decoded)", out)
+            self.log("✓ Decoded", 'success')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"sefcontext_decode error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def magisk_selinux_patch_menu(self):
+        """Patch sepolicy in a boot image (magiskinit)"""
+        boot = filedialog.askopenfilename(title="Select boot.img with sepolicy", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not boot:
+            return
+        out = filedialog.asksaveasfilename(title="Save patched boot as", defaultextension=".img", initialfile="selinux_patched.img")
+        if not out:
+            return
+        try:
+            magiskinit = tool_resolve("magiskinit")
+            if not magiskinit:
+                raise RuntimeError("magiskinit not found")
+            self.log(f"magiskinit selinux patch: {os.path.basename(boot)}", 'info')
+            self.progress.start()
+            res = run_cmd([magiskinit, "-p", out, boot])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Patched: {out}", 'success')
+                styled_messagebox(self, "Success", f"sepolicy patched boot saved:\n{out}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"magiskinit failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"magiskinit failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"magiskinit error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== AVB Advanced Methods ==========
+    def avb_info_menu(self):
+        """Show info_footer or info_image of an image"""
+        inp = filedialog.askopenfilename(title="Select image with AVB footer/vbmeta", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not inp:
+            return
+        action = tk.Toplevel(self)
+        action.title("AVB Info")
+        action.transient(self)
+        ttk.Label(action, text="Choose:").pack(pady=5)
+        def run_info_footer():
+            action.destroy()
+            self._run_avb("info_footer", inp)
+        def run_info_image():
+            action.destroy()
+            self._run_avb("info_image", inp)
+        ttk.Button(action, text="info_footer", command=run_info_footer).pack(pady=2)
+        ttk.Button(action, text="info_image", command=run_info_image).pack(pady=2)
+        ttk.Button(action, text="Cancel", command=action.destroy).pack(pady=2)
+
+    def _run_avb(self, subcommand, *args):
+        try:
+            avb = tool_resolve("avbtool")
+            if not avb:
+                raise RuntimeError("avbtool not found")
+            cmd = ["python", avb, subcommand] + list(args)
+            self.log(f"avbtool {subcommand}: {args[-1] if args else ''}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            out = res.stdout.decode(errors='replace') + "\n" + res.stderr.decode(errors='replace')
+            TextOutputDialog(self, f"avbtool {subcommand}", out)
+            if res.returncode == 0:
+                self.log(f"✓ avbtool {subcommand} complete", 'success')
+            else:
+                self.log(f"avbtool {subcommand} failed", 'error')
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"avbtool error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def avb_add_hash_footer_menu(self):
+        """Add AVB hash footer to an image"""
+        inp = filedialog.askopenfilename(title="Select image to add hash footer", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not inp:
+            return
+        partition = simpledialog.askstring("Add Hash Footer", "Partition name:", initialvalue="system")
+        if not partition:
+            return
+        partition_size = simpledialog.askinteger("Add Hash Footer", "Partition size in bytes (0 to autodetect):", initialvalue=0)
+        if partition_size is None:
+            return
+        key = filedialog.askopenfilename(title="Select AVB key (.pem) - or Cancel for none", filetypes=[("PEM", "*.pem"), ("All", "*.*")])
+        try:
+            avb = tool_resolve("avbtool")
+            if not avb:
+                raise RuntimeError("avbtool not found")
+            cmd = ["python", avb, "add_hash_footer", "--image", inp, "--partition_name", partition, "--partition_size", str(partition_size)]
+            if key:
+                cmd.extend(["--key", key])
+            self.log(f"Adding AVB hash footer to {partition}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Hash footer added to: {inp}", 'success')
+                styled_messagebox(self, "Success", f"Hash footer added to:\n{inp}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"avbtool failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"avbtool failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"avbtool error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def avb_add_hashtree_footer_menu(self):
+        """Add AVB hashtree footer (for verity)"""
+        inp = filedialog.askopenfilename(title="Select image for hashtree footer", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not inp:
+            return
+        partition = simpledialog.askstring("Add Hashtree Footer", "Partition name:", initialvalue="system")
+        if not partition:
+            return
+        partition_size = simpledialog.askinteger("Add Hashtree Footer", "Partition size (0=autodetect):", initialvalue=0)
+        if partition_size is None:
+            return
+        key = filedialog.askopenfilename(title="Select AVB key (.pem) - or Cancel for none", filetypes=[("PEM", "*.pem"), ("All", "*.*")])
+        try:
+            avb = tool_resolve("avbtool")
+            if not avb:
+                raise RuntimeError("avbtool not found")
+            cmd = ["python", avb, "add_hashtree_footer", "--image", inp, "--partition_name", partition, "--partition_size", str(partition_size)]
+            if key:
+                cmd.extend(["--key", key])
+            self.log(f"Adding AVB hashtree footer to {partition}", 'info')
+            self.progress.start()
+            res = run_cmd(cmd)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Hashtree footer added to: {inp}", 'success')
+                styled_messagebox(self, "Success", f"Hashtree footer added to:\n{inp}", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"avbtool failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"avbtool failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"avbtool error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== AIK (Android Image Kitchen) ==========
+    def aik_unpack_menu(self):
+        """AIK: unpack boot image"""
+        boot = filedialog.askopenfilename(title="Select boot.img (or drag onto AIK)", filetypes=[("Image", "*.img"), ("All", "*.*")])
+        if not boot:
+            return
+        try:
+            aik = tool_resolve("unpackimg")
+            if not aik:
+                raise RuntimeError("AIK unpackimg not found")
+            self.log(f"AIK unpack: {os.path.basename(boot)}", 'info')
+            self.progress.start()
+            res = run_cmd([aik, boot], cwd=os.path.dirname(boot))
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ AIK unpack complete (split_img/ + ramdisk/ created)", 'success')
+                styled_messagebox(self, "Success", "AIK unpack complete. Check split_img/ and ramdisk/ folders.", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"AIK failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"AIK failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"AIK error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def aik_repack_menu(self):
+        """AIK: repack boot image"""
+        work_dir = filedialog.askdirectory(title="Select directory with split_img/ and ramdisk/ (and original boot.img)")
+        if not work_dir:
+            return
+        try:
+            aik = tool_resolve("repackimg")
+            if not aik:
+                raise RuntimeError("AIK repackimg not found")
+            self.log(f"AIK repack in: {os.path.basename(work_dir)}", 'info')
+            self.progress.start()
+            res = run_cmd([aik], cwd=work_dir)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log("✓ AIK repack complete (image-new.img created)", 'success')
+                styled_messagebox(self, "Success", "AIK repack complete. image-new.img created.", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"AIK repack failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"AIK repack failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"AIK repack error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def aik_cleanup_menu(self):
+        """AIK: cleanup working directory"""
+        work_dir = filedialog.askdirectory(title="Select AIK working directory to clean up")
+        if not work_dir:
+            return
+        try:
+            aik = tool_resolve("cleanup")
+            if not aik:
+                raise RuntimeError("AIK cleanup not found")
+            self.log(f"AIK cleanup: {work_dir}", 'info')
+            self.progress.start()
+            res = run_cmd([aik], cwd=work_dir)
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log("✓ AIK cleanup complete", 'success')
+                styled_messagebox(self, "Success", "AIK cleanup complete.", "success")
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"AIK cleanup failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"AIK cleanup failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"AIK cleanup error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    # ========== bsdtar / cpio standalone tools ==========
+    def bsdtar_create_menu(self):
+        """Create a tar archive using bsdtar"""
+        src = filedialog.askdirectory(title="Select directory to archive")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save tar as", defaultextension=".tar", initialfile=os.path.basename(src) + ".tar")
+        if not out:
+            return
+        try:
+            bt = tool_resolve("bsdtar")
+            if not bt:
+                raise RuntimeError("bsdtar not found")
+            self.log(f"bsdtar create: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            res = run_cmd([bt, "-cf", out, "-C", os.path.dirname(src), os.path.basename(src)])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Created: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"bsdtar create failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"bsdtar create failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"bsdtar create error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def bsdtar_extract_menu(self):
+        """Extract a tar archive using bsdtar"""
+        inp = filedialog.askopenfilename(title="Select tar archive", filetypes=[("Tar", "*.tar;*.tar.gz;*.tar.bz2;*.tar.xz;*.tar.lz4;*.tar.zst"), ("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            bt = tool_resolve("bsdtar")
+            if not bt:
+                raise RuntimeError("bsdtar not found")
+            self.log(f"bsdtar extract: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            res = run_cmd([bt, "-xf", inp, "-C", out])
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ Extracted to: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace')
+                self.log(f"bsdtar extract failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"bsdtar extract failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"bsdtar extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def cpio_extract_menu(self):
+        """Extract a CPIO archive using cpio"""
+        inp = filedialog.askopenfilename(title="Select CPIO archive", filetypes=[("CPIO", "*.cpio;*.cpio.gz;*.cpio.lz4;*.cpio.lzma"), ("All", "*.*")])
+        if not inp:
+            return
+        out = filedialog.askdirectory(title="Select output directory")
+        if not out:
+            return
+        try:
+            cp = tool_resolve("cpio")
+            if not cp:
+                raise RuntimeError("cpio not found")
+            self.log(f"cpio extract: {os.path.basename(inp)}", 'info')
+            self.progress.start()
+            # bsdtar handles cpio better
+            bt = tool_resolve("bsdtar")
+            if bt:
+                res = run_cmd([bt, "-xf", inp, "-C", out])
+            else:
+                # Fallback to cpio
+                cpio_in = inp
+                if inp.endswith(('.gz', '.lz4', '.lzma', '.xz', '.zst')):
+                    # Decompress first
+                    import gzip, lzma
+                    if inp.endswith('.gz'):
+                        decomp = tempfile.mktemp()
+                        with gzip.open(inp, 'rb') as fi, open(decomp, 'wb') as fo:
+                            fo.write(fi.read())
+                        cpio_in = decomp
+                    elif inp.endswith(('.lz4', '.lzma', '.xz', '.zst')):
+                        decomp_tool = None
+                        if inp.endswith('.lz4'):
+                            decomp_tool = tool_resolve("lz4")
+                        elif inp.endswith(('.lzma', '.xz')):
+                            decomp_tool = tool_resolve("xz")
+                        elif inp.endswith('.zst'):
+                            decomp_tool = tool_resolve("zstandard")
+                        if decomp_tool:
+                            decomp = tempfile.mktemp()
+                            res_decomp = run_cmd([decomp_tool, "-d", "-f", inp, decomp])
+                            if res_decomp.returncode == 0:
+                                cpio_in = decomp
+                os.makedirs(out, exist_ok=True)
+                res = run_cmd([cp, "-idmu", "--quiet"], cwd=out, input_data=None)
+                # Use pipe
+                with open(cpio_in, 'rb') as f:
+                    import subprocess
+                    proc = subprocess.run([cp, "-idmu"], cwd=out, input=f.read(), capture_output=True)
+                    res = proc
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ CPIO extracted to: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace') if hasattr(res.stderr, 'decode') else str(res.stderr)
+                self.log(f"cpio extract failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"cpio extract failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"cpio extract error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+    def cpio_create_menu(self):
+        """Create a CPIO archive from a directory using cpio"""
+        src = filedialog.askdirectory(title="Select source directory")
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(title="Save CPIO as", defaultextension=".cpio", initialfile=os.path.basename(src) + ".cpio")
+        if not out:
+            return
+        try:
+            cp = tool_resolve("cpio")
+            if not cp:
+                raise RuntimeError("cpio not found")
+            self.log(f"cpio create: {os.path.basename(src)}", 'info')
+            self.progress.start()
+            # Use bsdtar for cpio creation (more reliable)
+            bt = tool_resolve("bsdtar")
+            if bt:
+                res = run_cmd([bt, "--format", "newc", "-cf", out, "-C", src, "."])
+            else:
+                # Fallback to cpio
+                import subprocess
+                with open(out, 'wb') as f:
+                    file_list = []
+                    for root, dirs, files in os.walk(src):
+                        for d in dirs:
+                            full = os.path.join(root, d)
+                            rel = os.path.relpath(full, src)
+                            file_list.append(rel)
+                        for fn in files:
+                            full = os.path.join(root, fn)
+                            rel = os.path.relpath(full, src)
+                            file_list.append(rel)
+                    file_list.sort()
+                    input_data = "\n".join(file_list).encode() + b"\n"
+                    proc = subprocess.run([cp, "-o", "-H", "newc"], cwd=src, input=input_data, capture_output=True)
+                    f.write(proc.stdout)
+                    res = proc
+            self.progress.stop()
+            if res.returncode == 0:
+                self.log(f"✓ CPIO created: {out}", 'success')
+            else:
+                err = res.stderr.decode(errors='replace') if hasattr(res.stderr, 'decode') else str(res.stderr)
+                self.log(f"cpio create failed: {err}", 'error')
+                styled_messagebox(self, "Error", f"cpio create failed:\n{err}", "error")
+        except Exception as e:
+            self.progress.stop()
+            self.log(f"cpio create error: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+
+
 
     def modify_props(self):
         system_dir = filedialog.askdirectory(title="Select system directory")
         if not system_dir:
             return
-        
+
         build_prop = os.path.join(system_dir, "build.prop")
         if not os.path.exists(build_prop):
-            messagebox.showerror("Error", "build.prop not found")
+            self.log("build.prop not found", 'error')
+            styled_messagebox(self, "Error", "build.prop not found", "error")
             return
-        
-        with open(build_prop, "r") as f:
-            initial_text = f.read()
-        
-        def apply_props(new_text):
-            if new_text is None:
-                return  # Cancelled
-            props = {}
-            for line in new_text.split('\n'):
-                if '=' in line:
-                    key, val = line.split('=', 1)
-                    props[key.strip()] = val.strip()
-            
-            try:
-                modify_system_props(system_dir, props)
-                self.log("✓ Properties modified", 'success')
-                messagebox.showinfo("Success", "Properties updated!")
-            except Exception as e:
-                messagebox.showerror("Error", str(e))
-        
-        AdvancedTextEditor(self, initial_text=initial_text, title="Modify Properties", callback=apply_props)
+
+        self._open_file_editor_and_load_file(build_prop)
     
     def build_rom_menu(self):
         images_dir = filedialog.askdirectory(title="Select ROM source directory")
@@ -10685,18 +21637,18 @@ FLASH AT YOUR OWN RISK!
     
     def _build_rom_thread(self, src: str, out: str):
         try:
-            self.status_label.config(text="Building ROM...")
-            self.progress.start()
+            self._worker_set_status("Building ROM...")
+            self._worker_progress_start()
             self.log("Building ROM ZIP...", 'info')
             build_rom_from_images(src, out, "CustomROM")
             self.log("✓ ROM built", 'success')
-            messagebox.showinfo("Success", "ROM ZIP created! Note: Updater-script is placeholder, customize for your device.")
-            self.status_label.config(text="Ready")
+            self._worker_showinfo("Success", "ROM ZIP created! Note: Updater-script is placeholder, customize for your device.")
+            self._worker_set_status("Ready")
         except Exception as e:
             self.log(f"Build failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.progress.stop()
+            self._worker_progress_stop()
     
     # Firmware entries
     def extract_selected_entries(self):
@@ -10713,16 +21665,21 @@ FLASH AT YOUR OWN RISK!
         if not out_dir:
             return
 
+        # Collect names on UI thread before spawning worker
+        names = [self.fw_tree.item(item, 'text') for item in selected_items]
+        self.status_label.config(text=f"Extracting {len(names)} entries...")
+        self.progress.start()
+        self.log(f"Extracting {len(names)} entries from firmware...", 'info')
         threading.Thread(target=self._extract_selected_thread,
-                        args=(selected_items, out_dir), daemon=True).start()
+                        args=(names, out_dir), daemon=True).start()
 
-    def _extract_selected_thread(self, selected_items, out_dir):
+    def _extract_selected_thread(self, names: List[str], out_dir: str):
         try:
-            self.status_label.config(text=f"Extracting {len(selected_items)} entries...")
-            self.progress.start()
+            self._worker_set_status(f"Extracting {len(names)} entries...")
+            self._worker_progress_start()
 
             if not self.current_project or not self.current_project.firmware_file:
-                self.after(0, lambda: messagebox.showerror("Error", "No firmware file loaded"))
+                self._worker_showerror("Error", "No firmware file loaded")
                 return
 
             firmware_file = self.current_project.firmware_file
@@ -10735,11 +21692,10 @@ FLASH AT YOUR OWN RISK!
                 work_tar = tmp_tar
 
             extracted_count = 0
-            for i, item in enumerate(selected_items):
-                name = self.fw_tree.item(item, 'text')
+            for i, name in enumerate(names):
                 out_path = os.path.join(out_dir, os.path.basename(name))
 
-                self.status_label.config(text=f"Extracting {name}... ({i+1}/{len(selected_items)})")
+                self._worker_set_status(f"Extracting {name}... ({i+1}/{len(names)})")
 
                 try:
                     extract_tar_entry(work_tar, name, out_path)
@@ -10748,33 +21704,36 @@ FLASH AT YOUR OWN RISK!
                 except Exception as e:
                     self.log(f"✗ Failed to extract {name}: {e}", 'error')
 
-            self.status_label.config(text=f"Extracted {extracted_count}/{len(selected_items)} entries")
-            self.log(f"Extraction complete: {extracted_count}/{len(selected_items)} files extracted", 'success')
+            self._worker_set_status(f"Extracted {extracted_count}/{len(names)} entries")
+            self.log(f"Extraction complete: {extracted_count}/{len(names)} files extracted", 'success')
 
         except Exception as e:
             self.log(f"Extraction failed: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.progress.stop()
+            self._worker_progress_stop()
     
     def replace_fw_entry(self):
         if not self.fw_tree.selection():
-            messagebox.showinfo("Info", "Select an entry")
+            self.log("No entry selected for replacement", 'warning')
+            styled_messagebox(self, "Info", "Select an entry", "info")
             return
-        
+
         entry = self.fw_tree.selection()[0]
         name = self.fw_tree.item(entry, 'text')
-        
+
         replacement = filedialog.askopenfilename(title="Select replacement file")
         if replacement:
             if not self.current_project or not self.current_project.firmware_file:
-                messagebox.showerror("Error", "No firmware file loaded in the current project.")
+                self.log("No firmware file loaded in project", 'error')
+                styled_messagebox(self, "Error", "No firmware file loaded in the current project.", "error")
                 return
             with open(replacement, "rb") as f:
                 data = f.read()
             try:
+                self.log(f"Replacing {name}...", 'info')
                 replace_tar_entry_inplace(self.current_project.firmware_file, name, data)
-                self.log(f"Replaced {name} and updated MD5 if applicable", 'success')
+                self.log(f"✓ Replaced {name} and updated MD5 if applicable", 'success')
             except Exception as e:
                 self.log(f"Replacement failed: {e}", 'error')
     
@@ -10782,23 +21741,31 @@ FLASH AT YOUR OWN RISK!
     def detect_device(self):
         if not is_admin():
             self.log("✗ Admin privileges required for device detection", 'error')
-            messagebox.showerror("Admin Required", "Administrator privileges are required to detect devices via Heimdall.")
+            styled_messagebox(self, "Admin Required", "Administrator privileges are required to detect devices via Heimdall.", "error")
             return
 
         try:
-            if heimdall_detect_device():
-                self.log("✓ Device detected", 'success')
-                messagebox.showinfo("Success", "Device found!")
+            self.status_label.config(text="Detecting device...")
+            self.progress.start()
+            self.log("Detecting device via Heimdall...", 'info')
+            success, info = heimdall_detect_device()
+            if success:
+                self.log(f"✓ Device detected: {info}", 'success')
+                styled_messagebox(self, "Success", f"Device found!\n\n{info}", "success")
             else:
-                self.log("✗ No device", 'warning')
-                messagebox.showwarning("No Device", "Device not detected")
+                self.log(f"✗ No device: {info}", 'warning')
+                styled_messagebox(self, "No Device", f"Device not detected.\n\n{info}", "warning")
         except Exception as e:
             self.log(f"Detection failed: {e}", 'error')
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
     
     def flash_heimdall(self):
         if not is_admin():
             self.log("✗ Admin privileges required for flashing", 'error')
-            messagebox.showerror("Admin Required", "Administrator privileges are required to flash devices via Heimdall.")
+            styled_messagebox(self, "Admin Required", "Administrator privileges are required to flash devices via Heimdall.", "error")
             return
 
         if not messagebox.askyesno("Flash Warning",
@@ -10810,7 +21777,10 @@ FLASH AT YOUR OWN RISK!
             return
 
         try:
+            self.status_label.config(text="Flashing via Heimdall...")
+            self.progress.start()
             self.log("Preparing to flash via Heimdall...", 'info')
+            self.log("Extracting firmware entries...", 'info')
             firmware = self.current_project.firmware_file
             work_tar = firmware
             if firmware.lower().endswith('.tar.md5'):
@@ -10833,73 +21803,234 @@ FLASH AT YOUR OWN RISK!
             if not partition_map:
                 raise ValueError("No mappable partitions found in firmware")
             
+            self.log("Flashing partitions...", 'info')
             success = heimdall_flash(partition_map)
             if success:
                 self.log("✓ Flashed successfully", 'success')
-                messagebox.showinfo("Success", "Flashing complete!")
+                styled_messagebox(self, "Success", "Flashing complete!", "success")
             else:
                 self.log("✗ Flash failed", 'error')
-                messagebox.showerror("Error", "Flashing failed")
+                styled_messagebox(self, "Error", "Flashing failed", "error")
             
-            # Cleanup temps
             for f in temp_files:
                 try:
                     os.remove(f)
-                except:
+                except OSError:
                     pass
         except Exception as e:
             self.log(f"Flash failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            styled_messagebox(self, "Error", str(e), "error")
+        finally:
+            self.status_label.config(text="Ready")
+            self.progress.stop()
     
     # Tools
     def refresh_tools(self):
-        tools = {
-            'bsdtar': 'TAR/CPIO',
-            'lz4': 'LZ4 compression',
-            'heimdall': 'Device flashing',
-            'magiskboot': 'Boot images',
-            'simg2img': 'Sparse convert',
-            'img2simg': 'Raw to sparse',
-            'apktool': 'APK tools (wrapper)',
-            'apktool.jar': 'APK tools (jar)',
-            'zipalign': 'APK alignment',
-            'apksigner.jar': 'APK signing',
-            '7z': 'Archive tool',
-            'java': 'Java runtime',
-            'notepad++': 'Advanced text editor',
-        }
-        
         self.tools_tree.delete(*self.tools_tree.get_children())
         found = 0
-        
-        for tool, desc in tools.items():
-            if tool == 'apksigner.jar': # Special handling for apksigner
-                path = tool_resolve_apksigner()
-            else:
-                path = tool_resolve(tool)
+        total = len(TOOL_METADATA)
+
+        for tool_name, metadata in TOOL_METADATA.items():
+            path = tool_resolve(tool_name)
 
             if path:
-                status = "✓"
+                status = "Installed"
                 found += 1
-                self.log(f"Resolved tool '{tool}' to: {path}", 'info')
+                self.log(f"Resolved tool '{tool_name}' to: {path}", 'info')
+                self.tools_tree.insert('', 'end', text=tool_name,
+                                      values=(status, path))
             else:
-                path = "NOT FOUND"
-                status = "✗"
-                self.log(f"Tool '{tool}' not found.", 'warning')
-            
-            self.tools_tree.insert('', 'end', text=f"{status} {tool}",
-                                  values=(f"{path} ({desc})",))
-        
+                path = ""
+                status = "Missing"
+                self.log(f"Tool '{tool_name}' not found.", 'warning')
+                self.tools_tree.insert('', 'end', text=tool_name,
+                                      values=(status, path), tags=('missing',))
+
         self.tool_status_label.config(
-            text=f"✓ {found}/{len(tools)} tools",
-            foreground=COLORS['success'] if found == len(tools) else COLORS['warning']
+            text=f"✓ {found}/{total} tools",
+            foreground=COLORS['success'] if found == total else COLORS['warning']
         )
         self.toolbar_tool_label.config(
-            text=f"✓ {found}/{len(tools)} tools",
-            foreground=COLORS['success'] if found == len(tools) else COLORS['warning']
+            text=f"✓ {found}/{total} tools",
+            foreground=COLORS['success'] if found == total else COLORS['warning']
         )
-        self.log(f"Tools: {found}/{len(tools)} found", 'info')
+        self.log(f"Tools: {found}/{total} found", 'info')
     
+    def setup_aik_workspace(self):
+        """Populate AIK/android_win_tools/ with whatever is already downloaded.
+        Mirrors/copies/symlinks tools from other TOOLS_DIR subdirectories so AIK
+        can find them. Returns the count of tools staged."""
+        aik_dir = os.path.join(TOOLS_DIR, "AIK")
+        aik_bin = os.path.join(aik_dir, "android_win_tools")
+        ensure_dir(aik_bin)
+
+        # Ensure cleanup.bat exists (it's called by unpackimg.bat/repackimg.bat)
+        cleanup_bat = os.path.join(aik_dir, "cleanup.bat")
+        if not os.path.exists(cleanup_bat):
+            try:
+                with open(cleanup_bat, "w", encoding="utf-8") as f:
+                    f.write("@echo off\r\nsetlocal\r\nset CYGWIN=nodosfilewarning\r\n"
+                            "set \"bin=%~dp0\\android_win_tools\"\r\n"
+                            "if not \"%~1\" == \"--local\" (\r\n  %~d0\r\n  cd \"%~p0\"\r\n)\r\n"
+                            "\"%bin%\"\\chmod -fR +rw ramdisk split_img >nul 2>&1\r\n"
+                            "rd /s /q ramdisk >nul 2>&1\r\n"
+                            "rd /s /q split_img >nul 2>&1\r\n"
+                            "del *new.* >nul 2>&1\r\n")
+                self.log("AIK: created cleanup.bat", 'info')
+            except Exception as e:
+                self.log(f"AIK: cleanup.bat creation failed: {e}", 'warning')
+
+        # Map: AIK-internal name -> list of candidate sources in TOOLS_DIR
+        # Sources are checked in order; the first existing file wins.
+        aik_tools = {
+            "mkbootimg":    ["boot_editor/tools/bin/mkbootimg.exe",
+                             "boot_editor/tools/bin/mkbootimg",
+                             "boot_editor/bbootimg/mkbootimg.exe",
+                             "mkbootimg/mkbootimg.exe"],
+            "unpackbootimg": ["boot_editor/tools/bin/unpackbootimg.exe",
+                              "boot_editor/tools/bin/unpackbootimg",
+                              "boot_editor/bbootimg/unpackbootimg.exe"],
+            "elftool":      ["boot_editor/tools/bin/elftool.exe",
+                             "boot_editor/tools/bin/elftool"],
+            "unpackelf":    ["boot_editor/tools/bin/unpackelf.exe",
+                             "boot_editor/tools/bin/unpackelf"],
+            "mkmtkhdr":     ["boot_editor/tools/bin/mkmtkhdr.exe",
+                             "boot_editor/tools/bin/mkmtkhdr"],
+            "futility":     ["boot_editor/aosp/vboot/futility/futility",
+                             "boot_editor/aosp/vboot/futility/futility.exe"],
+            "loki":         ["boot_editor/aosp/loki/loki_tool",
+                             "boot_editor/aosp/loki/loki_tool.exe"],
+            "dhtbsign":     ["boot_editor/tools/bin/dhtbsign.exe",
+                             "boot_editor/tools/bin/dhtbsign"],
+            "rkcrc":        ["boot_editor/tools/bin/rkcrc.exe",
+                             "boot_editor/tools/bin/rkcrc"],
+            "pxa-mkbootimg":   ["boot_editor/tools/bin/pxa-mkbootimg.exe",
+                                "boot_editor/tools/bin/pxa-mkbootimg"],
+            "pxa-unpackbootimg": ["boot_editor/tools/bin/pxa-unpackbootimg.exe",
+                                  "boot_editor/tools/bin/pxa-unpackbootimg"],
+            "cpio":         ["cpio/cpio.exe", "cpio/cpio"],
+            "gzip":         ["gzip/gzip.exe", "gzip/gzip"],
+            "lz4":          ["lz4/lz4.exe", "lz4/lz4"],
+            "xz":           ["xz/xz.exe", "xz/xz", "boot_editor/tools/bin/xz.exe",
+                             "boot_editor/tools/bin/xz"],
+            "bzip2":        ["boot_editor/tools/bin/bzip2.exe",
+                             "boot_editor/tools/bin/bzip2"],
+            "lzop":         ["boot_editor/tools/bin/lzop.exe",
+                             "boot_editor/tools/bin/lzop"],
+            "lzma":         ["imgrepacker/lzma.exe", "lzma/lzma.exe"],
+            "file":         ["file/file.exe", "file/file"],
+            "dd":           ["boot_editor/tools/bin/dd.exe",
+                             "boot_editor/tools/bin/dd"],
+            "hexdump":      ["boot_editor/tools/bin/hexdump.exe",
+                             "boot_editor/tools/bin/hexdump"],
+            "printf":       ["boot_editor/tools/bin/printf.exe",
+                             "boot_editor/tools/bin/printf"],
+            "truncate":     ["boot_editor/tools/bin/truncate.exe",
+                             "boot_editor/tools/bin/truncate"],
+            "tail":         ["boot_editor/tools/bin/tail.exe",
+                             "boot_editor/tools/bin/tail"],
+            "cat":          ["boot_editor/tools/bin/cat.exe",
+                             "boot_editor/tools/bin/cat"],
+            "cut":          ["boot_editor/tools/bin/cut.exe",
+                             "boot_editor/tools/bin/cut"],
+            "find":         ["boot_editor/tools/bin/find.exe",
+                             "boot_editor/tools/bin/find"],
+            "chmod":        ["boot_editor/tools/bin/chmod.exe",
+                             "boot_editor/tools/bin/chmod"],
+            "sony_dump":    ["boot_editor/tools/bin/sony_dump.exe",
+                             "boot_editor/tools/bin/sony_dump"],
+        }
+
+        staged = 0
+        skipped = 0
+        for name, sources in aik_tools.items():
+            dest = os.path.join(aik_bin, name + ".exe")
+            if os.path.exists(dest) and os.path.getsize(dest) > 0:
+                skipped += 1
+                continue
+            for src_rel in sources:
+                src_abs = os.path.join(TOOLS_DIR, src_rel.replace("/", os.sep))
+                if os.path.exists(src_abs) and os.path.getsize(src_abs) > 0:
+                    try:
+                        shutil.copy2(src_abs, dest)
+                        staged += 1
+                        self.log(f"AIK staged: {name}.exe <- {src_rel}", 'info')
+                        break
+                    except Exception as e:
+                        self.log(f"AIK stage failed: {name} ({e})", 'warning')
+        # AVB test keys
+        avb_dir = os.path.join(aik_bin, "avb")
+        ensure_dir(avb_dir)
+        for fname in ("verity.pk8", "verity.x509.der"):
+            dest = os.path.join(avb_dir, fname)
+            if os.path.exists(dest) and os.path.getsize(dest) > 0:
+                continue
+            # Try known AOSP test key locations, including boot_editor/aosp/avb/data
+            base = os.path.basename(fname)
+            for src_rel in (os.path.join("avb", fname),
+                            os.path.join("avbtool", fname),
+                            os.path.join("AIK", "android_win_tools", "avb", fname),
+                            os.path.join("boot_editor", "aosp", "avb", "data",
+                                         "testkey_rsa2048.pk8" if base == "verity.pk8" else "testkey_rsa2048.pem"),
+                            os.path.join("boot_editor", "aosp", "avb", "data",
+                                         "testkey_rsa4096.pk8" if base == "verity.pk8" else "testkey_rsa4096.pem")):
+                src_abs = os.path.join(TOOLS_DIR, src_rel)
+                if os.path.exists(src_abs) and os.path.getsize(src_abs) > 0:
+                    try:
+                        shutil.copy2(src_abs, dest)
+                        staged += 1
+                        self.log(f"AIK staged: avb/{fname}", 'info')
+                        break
+                    except Exception as e:
+                        self.log(f"AIK stage failed: {fname} ({e})", 'warning')
+        # Also try to find tools in system PATH as a final fallback (helps when
+        # user has msys/cygwin or similar installed but no per-tool subdir)
+        import shutil as _shutil
+        path_tools = ("gzip", "xz", "bzip2", "lzop", "lzma", "cpio", "file",
+                      "dd", "hexdump", "printf", "truncate", "tail", "cat",
+                      "cut", "find", "chmod", "lz4", "mkbootimg",
+                      "unpackbootimg", "elftool", "unpackelf", "mkmtkhdr",
+                      "futility", "dhtbsign", "rkcrc", "loki", "mboot",
+                      "dumpimage", "mkimage", "blobpack", "blobunpack",
+                      "pxa-mkbootimg", "pxa-unpackbootimg", "sony_dump")
+        for name in path_tools:
+            dest = os.path.join(aik_bin, name + ".exe")
+            if os.path.exists(dest) and os.path.getsize(dest) > 0:
+                continue
+            try:
+                resolved = _shutil.which(name)
+                if resolved and os.path.isfile(resolved):
+                    # Don't copy the staged file onto itself
+                    if os.path.normpath(resolved) == os.path.normpath(dest):
+                        continue
+                    _shutil.copy2(resolved, dest)
+                    staged += 1
+                    self.log(f"AIK staged (from PATH): {name}.exe <- {resolved}", 'info')
+            except Exception as e:
+                self.log(f"AIK stage PATH failed: {name} ({e})", 'warning')
+
+        return staged, skipped
+
+    def _action_setup_aik(self):
+        """Manually trigger AIK workspace setup, then refresh tool status."""
+        try:
+            staged, skipped = self.setup_aik_workspace()
+            self.refresh_tools()
+            if staged == 0 and skipped == 0:
+                styled_messagebox(self, "AIK Setup",
+                    "No AIK-internal tools found to stage. The android_win_tools\n"
+                    "directory is empty. Use the Manage Tools tab to download\n"
+                    "mkbootimg, unpackbootimg, cpio, gzip, lz4, xz, etc.", "info")
+            else:
+                styled_messagebox(self, "AIK Setup",
+                    f"Staged {staged} new tools (already had {skipped}).\n"
+                    f"AIK unpack/repack should now work for: AOSP, AOSP_VNDR,\n"
+                    f"ELF, KRNL, OSIP, U-Boot and ramdisk types gzip/lzop/lzma/\n"
+                    f"xz/bzip2/lz4/lz4-l/cpio.", "info")
+        except Exception as e:
+            self.log(f"AIK setup error: {e}", 'error')
+            styled_messagebox(self, "AIK Setup Error", str(e), "error")
+
     def open_tools_folder(self):
         ensure_dir(TOOLS_DIR)
         if sys.platform.startswith('win'):
@@ -10910,8 +22041,43 @@ FLASH AT YOUR OWN RISK!
     
     
     def show_tool_status(self):
+        """Refresh tool status and navigate directly to the Tool Status tab."""
         self.refresh_tools()
-        messagebox.showinfo("Tool Status", "Tool detection complete. See Tools tab.")
+        if hasattr(self, 'tools_tree'):
+            self.refresh_tool_status()
+
+        def find_tools_notebook(widget):
+            try:
+                if isinstance(widget, ttk.Notebook):
+                    for tab_id in widget.tabs():
+                        if widget.tab(tab_id, 'text') == 'Tools':
+                            return widget, tab_id
+                        result = find_tools_notebook(self.nametowidget(tab_id))
+                        if result:
+                            return result
+                for child in widget.winfo_children():
+                    result = find_tools_notebook(child)
+                    if result:
+                        return result
+            except tk.TclError:
+                return None
+            return None
+
+        result = find_tools_notebook(self.content_frame)
+        if result:
+            outer_notebook, tools_tab_id = result
+            outer_notebook.select(tools_tab_id)
+            tools_notebook = getattr(self, 'tools_notebook', None)
+            if tools_notebook is not None and tools_notebook.winfo_exists():
+                tools_tab_ids = tools_notebook.tabs()
+                if tools_tab_ids:
+                    tools_notebook.select(tools_tab_ids[0])
+            self.log("Opened Tools > Tool Status", 'info')
+            return
+
+        # If a split or a previously closed tab removed the Tools tab, restore it.
+        self.open_tab("Tools")
+        self.after(0, self.show_tool_status)
     
     def show_about(self):
         about_text = f"""{APP_TITLE} v{VERSION}
@@ -10934,7 +22100,7 @@ Complete feature set:
 
 Author: Isaki Dube | License: Dual
 """
-        messagebox.showinfo("About", about_text)
+        styled_messagebox(self, "About", about_text, "info")
     
     def _format_size(self, size: int) -> str:
         """Format file size"""
@@ -10949,6 +22115,12 @@ Author: Isaki Dube | License: Dual
     def hex_editor_open_file(self):
         if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
             self.hex_editor_widget_ref.open_file()
+
+    def hex_open_file(self, file_path: str):
+        """Open a file in the hex editor (used for project state restore)."""
+        if hasattr(self, 'hex_editor_widget') and self.hex_editor_widget:
+            self.hex_file_path = file_path
+            self.hex_editor_widget.load_file(file_path)
 
     def hex_editor_save(self):
         if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
@@ -10986,10 +22158,10 @@ Author: Isaki Dube | License: Dual
     def zoom_in(self):
         """Zoom in on the current view"""
         # Check if main_pane is a Notebook (has tabs)
-        if isinstance(self.main_pane, ttk.Notebook):
+        if isinstance(self.main_pane, ttk.Notebook) and self.main_notebook:
             try:
                 current_tab = self.main_notebook.index(self.main_notebook.select())
-            except:
+            except tk.TclError:
                 current_tab = -1
         else:
             current_tab = -1
@@ -11005,10 +22177,10 @@ Author: Isaki Dube | License: Dual
     def zoom_out(self):
         """Zoom out on the current view"""
         # Check if main_pane is a Notebook (has tabs)
-        if isinstance(self.main_pane, ttk.Notebook):
+        if isinstance(self.main_pane, ttk.Notebook) and self.main_notebook:
             try:
                 current_tab = self.main_notebook.index(self.main_notebook.select())
-            except:
+            except tk.TclError:
                 current_tab = -1
         else:
             current_tab = -1
@@ -11076,6 +22248,8 @@ Author: Isaki Dube | License: Dual
     # Context menu methods for different tabs
     def view_hex_selected(self):
         """View selected item in hex editor"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11101,6 +22275,8 @@ Author: Isaki Dube | License: Dual
 
     def view_entropy_selected(self):
         """View entropy analysis of selected item"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 3:  # Hex Editor tab
             if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
@@ -11110,6 +22286,8 @@ Author: Isaki Dube | License: Dual
 
     def extract_strings_selected(self):
         """Extract strings from selected item"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 3:  # Hex Editor tab
             if hasattr(self, 'hex_editor_widget_ref') and self.hex_editor_widget_ref:
@@ -11119,6 +22297,8 @@ Author: Isaki Dube | License: Dual
 
     def decompress_selected(self):
         """Decompress selected compressed file"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11126,11 +22306,17 @@ Author: Isaki Dube | License: Dual
                 name = self.fw_tree.item(selected[0], 'text')
                 if name.lower().endswith('.lz4'):
                     self.decompress_lz4()
+                elif name.lower().endswith('.zst'):
+                    self._decompress_zstd()
+                elif name.lower().endswith('.gz') or name.lower().endswith('.gzip'):
+                    self._decompress_gzip()
                 else:
-                    messagebox.showinfo("Decompress", f"Decompression for {name} not implemented yet.")
+                    messagebox.showinfo("Decompress", f"Decompression for {name} not supported.\nSupported: .lz4, .zst, .gz")
 
     def unpack_boot_selected(self):
         """Unpack selected boot image"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11143,6 +22329,8 @@ Author: Isaki Dube | License: Dual
 
     def extract_system_selected(self):
         """Extract selected system image"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11155,6 +22343,8 @@ Author: Isaki Dube | License: Dual
 
     def verify_md5_selected(self):
         """Verify MD5 of selected item"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11167,15 +22357,23 @@ Author: Isaki Dube | License: Dual
 
     def compute_hash_selected(self):
         """Compute hash of selected item"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
             if selected:
                 name = self.fw_tree.item(selected[0], 'text')
-                messagebox.showinfo("Compute Hash", f"Hash computation for {name} not implemented yet.")
+                if self.current_project and self.current_project.firmware_file:
+                    # Get the actual file path from the firmware
+                    self.verify_md5()
+                else:
+                    messagebox.showinfo("Compute Hash", "No firmware file loaded.")
 
     def copy_entry_name(self):
         """Copy entry name to clipboard"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11187,6 +22385,8 @@ Author: Isaki Dube | License: Dual
 
     def copy_entry_path(self):
         """Copy entry path to clipboard"""
+        if not self.main_notebook:
+            return
         current_tab = self.main_notebook.index(self.main_notebook.select())
         if current_tab == 0:  # Firmware tab
             selected = self.fw_tree.selection()
@@ -11200,11 +22400,68 @@ Author: Isaki Dube | License: Dual
 
     def extract_vendor_menu(self):
         """Extract vendor partition"""
-        messagebox.showinfo("Extract Vendor", "Vendor extraction not implemented yet.")
+        vendor_img = filedialog.askopenfilename(
+            title="Select vendor.img",
+            filetypes=[("Image", "*.img"), ("LZ4", "*.lz4"), ("All", "*.*")]
+        )
+        if not vendor_img:
+            return
+
+        out_dir = filedialog.askdirectory(title="Extract to")
+        if not out_dir:
+            return
+
+        self.status_label.config(text="Extracting vendor...")
+        self.progress.start()
+        self.log("Extracting vendor partition...", 'info')
+        threading.Thread(target=self._extract_partition_thread,
+                        args=(vendor_img, out_dir, "vendor"), daemon=True).start()
 
     def extract_product_menu(self):
         """Extract product partition"""
-        messagebox.showinfo("Extract Product", "Product extraction not implemented yet.")
+        product_img = filedialog.askopenfilename(
+            title="Select product.img",
+            filetypes=[("Image", "*.img"), ("LZ4", "*.lz4"), ("All", "*.*")]
+        )
+        if not product_img:
+            return
+
+        out_dir = filedialog.askdirectory(title="Extract to")
+        if not out_dir:
+            return
+
+        self.status_label.config(text="Extracting product...")
+        self.progress.start()
+        self.log("Extracting product partition...", 'info')
+        threading.Thread(target=self._extract_partition_thread,
+                        args=(product_img, out_dir, "product"), daemon=True).start()
+
+    def _extract_partition_thread(self, img: str, out_dir: str, partition_type: str):
+        """Thread to extract partition image (vendor, product, etc.)"""
+        try:
+            self._worker_set_status(f"Extracting {partition_type}...")
+            self.log(f"Extracting {partition_type} image...", 'info')
+
+            # Handle .lz4 compressed images
+            if img.lower().endswith('.lz4'):
+                raw_img = tempfile.mktemp(suffix=".img")
+                try:
+                    lz4_decompress(img, raw_img)
+                    img = raw_img
+                except Exception as e:
+                    self.log(f"LZ4 decompression failed: {e}", 'warning')
+                    raise
+
+            # Extract using the same method as system
+            extract_system_image(img, out_dir)
+            self.log(f"✓ {partition_type.capitalize()} extracted", 'success')
+            self._worker_showinfo("Success", f"{partition_type.capitalize()} image extracted!")
+        except Exception as e:
+            self.log(f"Extract failed: {e}", 'error')
+            self._worker_showerror("Error", str(e))
+        finally:
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def modify_build_prop(self):
         """Modify build.prop file"""
@@ -11212,11 +22469,108 @@ Author: Isaki Dube | License: Dual
 
     def modify_default_prop(self):
         """Modify default.prop file"""
-        messagebox.showinfo("Modify Default Prop", "Default.prop modification not implemented yet.")
+        default_prop_paths = [
+            filedialog.askdirectory(title="Select root directory (contains default.prop)"),
+        ]
+        if not default_prop_paths[0]:
+            return
+
+        root_dir = default_prop_paths[0]
+        default_prop = os.path.join(root_dir, "default.prop")
+        if not os.path.exists(default_prop):
+            # Try other common locations
+            default_prop = os.path.join(root_dir, "etc", "default.prop")
+        if not os.path.exists(default_prop):
+            default_prop = os.path.join(root_dir, "system", "etc", "default.prop")
+
+        if not os.path.exists(default_prop):
+            messagebox.showerror("Error", "default.prop not found in selected directory")
+            return
+
+        self._open_file_editor_and_load_file(default_prop)
 
     def create_ota_package(self):
         """Create OTA package"""
-        messagebox.showinfo("Create OTA Package", "OTA package creation not implemented yet.")
+        source_dir = filedialog.askdirectory(title="Select source directory (old system)")
+        if not source_dir:
+            return
+
+        target_dir = filedialog.askdirectory(title="Select target directory (new system)")
+        if not target_dir:
+            return
+
+        out_zip = filedialog.asksaveasfilename(
+            title="Save OTA as",
+            defaultextension=".zip",
+            filetypes=[("ZIP", "*.zip")]
+        )
+        if not out_zip:
+            return
+
+        self.status_label.config(text="Creating OTA package...")
+        self.progress.start()
+        self.log("Creating OTA package...", 'info')
+        threading.Thread(target=self._create_ota_thread,
+                        args=(source_dir, target_dir, out_zip), daemon=True).start()
+
+    def _create_ota_thread(self, source_dir: str, target_dir: str, out_zip: str):
+        """Thread to create OTA package"""
+        try:
+            self._worker_set_status("Creating OTA package...")
+            self.log("Creating OTA package...", 'info')
+
+            ota_dir = tempfile.mkdtemp(prefix="ota_")
+            ensure_dir(ota_dir)
+
+            # Create payload zip structure
+            payload_dir = os.path.join(ota_dir, "payload")
+            ensure_dir(payload_dir)
+
+            # Copy source and target
+            source_copy = os.path.join(ota_dir, "source")
+            target_copy = os.path.join(ota_dir, "target")
+            shutil.copytree(source_dir, source_copy)
+            shutil.copytree(target_dir, target_copy)
+
+            # Create basic updater-script
+            updater_script = os.path.join(ota_dir, "META-INF", "com", "google", "android", "updater-script")
+            ensure_dir(os.path.dirname(updater_script))
+
+            script_content = '''ui_print("Installing OTA update...");
+show_progress(1.0, 0);
+delete_all("/system/*");
+package_extract_dir("system", "/system");
+show_progress(1.0, 0);
+ui_print("OTA installation complete!");
+'''
+            with open(updater_script, "w") as f:
+                f.write(script_content)
+
+            # Create update-binary (stub)
+            update_binary = os.path.join(ota_dir, "META-INF", "com", "google", "android", "update-binary")
+            with open(update_binary, "w") as f:
+                f.write("#!/sbin/sh\n")
+            os.chmod(update_binary, 0o755)
+
+            # Create the OTA zip
+            ota_zip = os.path.join(ota_dir, "ota.zip")
+            with zipfile.ZipFile(ota_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for root, dirs, files in os.walk(ota_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arc_name = os.path.relpath(file_path, ota_dir)
+                        if not arc_name.startswith('ota.zip'):
+                            zf.write(file_path, arc_name)
+
+            shutil.move(ota_zip, out_zip)
+            self.log("✓ OTA package created", 'success')
+            self._worker_showinfo("Success", f"OTA package created:\n{out_zip}")
+        except Exception as e:
+            self.log(f"OTA creation failed: {e}", 'error')
+            self._worker_showerror("Error", str(e))
+        finally:
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def create_update_zip(self):
         """Create update ZIP"""
@@ -11225,6 +22579,8 @@ Author: Isaki Dube | License: Dual
     # File Editor context menu methods
     def view_file_hex(self, file_path=None):
         """View file in hex editor"""
+        if not self.main_notebook:
+            return
         self.main_notebook.select(3)  # Switch to hex editor
         if self.hex_editor_widget_ref:
             if file_path:
@@ -11239,6 +22595,8 @@ Author: Isaki Dube | License: Dual
 
     def view_file_entropy(self):
         """View entropy of current file"""
+        if not self.main_notebook:
+            return
         self.main_notebook.select(3)  # Switch to hex editor
         if self.hex_editor_widget_ref:
             if hasattr(self, 'file_editor_widget_ref') and self.file_editor_widget_ref:
@@ -11251,6 +22609,8 @@ Author: Isaki Dube | License: Dual
 
     def extract_file_strings(self):
         """Extract strings from current file"""
+        if not self.main_notebook:
+            return
         self.main_notebook.select(3)  # Switch to hex editor
         if self.hex_editor_widget_ref:
             if hasattr(self, 'file_editor_widget_ref') and self.file_editor_widget_ref:
@@ -11318,15 +22678,137 @@ Author: Isaki Dube | License: Dual
 
     def compress_folder(self):
         """Compress current folder"""
-        messagebox.showinfo("Compress Folder", "Folder compression not implemented yet.")
+        folder = filedialog.askdirectory(title="Select folder to compress")
+        if not folder:
+            return
+
+        compression = messagebox.askyesno("Compression Method", "Use LZ4 compression?\n\nYes: LZ4 (faster)\nNo: Zstandard (better ratio)")
+        if compression is None:
+            return
+
+        out_file = filedialog.asksaveasfilename(
+            defaultextension=".tar.lz4" if compression else ".tar.zst",
+            initialfile=os.path.basename(folder),
+            filetypes=[("LZ4 Compressed", "*.tar.lz4"), ("Zstandard", "*.tar.zst"), ("Tar", "*.tar")]
+        )
+        if not out_file:
+            return
+
+        self.status_label.config(text="Compressing folder...")
+        self.progress.start()
+        self.log(f"Compressing folder: {os.path.basename(folder)}...", 'info')
+        threading.Thread(target=self._compress_folder_thread,
+                        args=(folder, out_file, compression), daemon=True).start()
+
+    def _compress_folder_thread(self, folder: str, out_file: str, use_lz4: bool):
+        """Thread to compress folder"""
+        try:
+            self._worker_set_status("Compressing folder...")
+            self.log(f"Compressing {os.path.basename(folder)}...", 'info')
+
+            temp_tar = tempfile.mktemp(suffix=".tar")
+
+            # Create tar using bsdtar
+            bsdtar = tool_resolve("bsdtar")
+            if bsdtar:
+                result = run_cmd([bsdtar, "-cf", temp_tar, "-C", os.path.dirname(folder),
+                                 os.path.basename(folder)], cwd=os.path.dirname(folder))
+                if result.returncode != 0:
+                    raise RuntimeError(f"Tar creation failed: {result.stderr}")
+            else:
+                # Fallback: use shutil
+                shutil.make_archive(temp_tar.replace('.tar', ''), 'tar', os.path.dirname(folder),
+                                  os.path.basename(folder))
+
+            # Compress with lz4 or zstd
+            if use_lz4:
+                lz4 = tool_resolve("lz4")
+                if lz4:
+                    result = run_cmd([lz4, "-f", "-9", temp_tar, out_file])
+                    if result.returncode != 0:
+                        raise RuntimeError("LZ4 compression failed")
+                else:
+                    raise FileNotFoundError("lz4 not found, please install lz4")
+            else:
+                zstd = tool_resolve("zstandard")
+                if zstd:
+                    zstd_exe = os.path.join(TOOLS_DIR, "zstandard", "zstd.exe")
+                    result = run_cmd([zstd_exe, "-f", "-19", temp_tar, "-o", out_file])
+                    if result.returncode != 0:
+                        raise RuntimeError("Zstd compression failed")
+                else:
+                    raise FileNotFoundError("zstd not found, please install zstandard")
+
+            # Cleanup temp tar
+            try:
+                os.remove(temp_tar)
+            except Exception:
+                pass
+
+            ratio = (1 - os.path.getsize(out_file) / os.path.getsize(folder)) * 100
+            self.log(f"✓ Folder compressed ({ratio:.1f}% ratio)", 'success')
+            self._worker_showinfo("Success", f"Folder compressed:\n{out_file}\n\nCompression ratio: {ratio:.1f}%")
+        except Exception as e:
+            self.log(f"Compression failed: {e}", 'error')
+            self._worker_showerror("Error", str(e))
+        finally:
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def _rename_folder(self):
         """Rename current folder"""
-        messagebox.showinfo("Rename Folder", "Folder rename not implemented yet.")
+        if not hasattr(self, 'file_editor_widget_ref') or not self.file_editor_widget_ref:
+            messagebox.showwarning("Not Ready", "File editor not initialized")
+            return
+
+        current_folder = getattr(self.file_editor_widget_ref, 'current_folder', None)
+        if not current_folder or not os.path.isdir(current_folder):
+            messagebox.showinfo("Info", "No folder selected in file editor")
+            return
+
+        new_name = simpledialog.askstring("Rename Folder", "Enter new folder name:",
+                                          initialvalue=os.path.basename(current_folder))
+        if not new_name:
+            return
+
+        new_path = os.path.join(os.path.dirname(current_folder), new_name)
+        if os.path.exists(new_path):
+            messagebox.showerror("Error", "A folder with that name already exists")
+            return
+
+        try:
+            os.rename(current_folder, new_path)
+            self.log(f"Renamed folder to: {new_name}", 'success')
+            # Refresh file editor
+            self.file_editor_widget_ref.load_folder(new_path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to rename folder: {e}")
 
     def _delete_folder(self):
         """Delete current folder"""
-        messagebox.showinfo("Delete Folder", "Folder deletion not implemented yet.")
+        if not hasattr(self, 'file_editor_widget_ref') or not self.file_editor_widget_ref:
+            messagebox.showwarning("Not Ready", "File editor not initialized")
+            return
+
+        current_folder = getattr(self.file_editor_widget_ref, 'current_folder', None)
+        if not current_folder or not os.path.isdir(current_folder):
+            messagebox.showinfo("Info", "No folder selected in file editor")
+            return
+
+        confirm = messagebox.askyesno("Confirm Delete",
+                                      f"Are you sure you want to delete this folder?\n\n{current_folder}\n\nThis cannot be undone!")
+        if not confirm:
+            return
+
+        try:
+            shutil.rmtree(current_folder)
+            self.log(f"Deleted folder: {os.path.basename(current_folder)}", 'success')
+            # Refresh to parent folder
+            parent = os.path.dirname(current_folder)
+            if os.path.isdir(parent):
+                self.file_editor_widget_ref.load_folder(parent)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete folder: {e}")
 
     def build_rom_from_folder(self):
         """Build ROM from current folder"""
@@ -11334,7 +22816,27 @@ Author: Isaki Dube | License: Dual
 
     def create_ota_from_folder(self):
         """Create OTA from current folder"""
-        messagebox.showinfo("Create OTA from Folder", "OTA creation from folder not implemented yet.")
+        source_dir = filedialog.askdirectory(title="Select source directory (old system)")
+        if not source_dir:
+            return
+
+        target_dir = filedialog.askdirectory(title="Select target directory (new system)")
+        if not target_dir:
+            return
+
+        out_zip = filedialog.asksaveasfilename(
+            title="Save OTA as",
+            defaultextension=".zip",
+            filetypes=[("ZIP", "*.zip")]
+        )
+        if not out_zip:
+            return
+
+        self.status_label.config(text="Creating OTA package...")
+        self.progress.start()
+        self.log("Creating OTA package from folders...", 'info')
+        threading.Thread(target=self._create_ota_thread,
+                        args=(source_dir, target_dir, out_zip), daemon=True).start()
 
     def extract_source_firmware(self):
         """Extract source firmware for porting"""
@@ -11349,6 +22851,9 @@ Author: Isaki Dube | License: Dual
         if not out_dir:
             return
 
+        self.status_label.config(text="Extracting source firmware...")
+        self.progress.start()
+        self.log("Extracting source firmware...", 'info')
         threading.Thread(target=self._extract_firmware_thread,
                         args=(source_file, out_dir, "source"), daemon=True).start()
 
@@ -11365,14 +22870,17 @@ Author: Isaki Dube | License: Dual
         if not out_dir:
             return
 
+        self.status_label.config(text="Extracting target firmware...")
+        self.progress.start()
+        self.log("Extracting target firmware...", 'info')
         threading.Thread(target=self._extract_firmware_thread,
                         args=(target_file, out_dir, "target"), daemon=True).start()
 
     def _extract_firmware_thread(self, firmware_file: str, out_dir: str, firmware_type: str):
         """Thread to extract firmware"""
         try:
-            self.status_label.config(text=f"Extracting {firmware_type} firmware...")
-            self.progress.start()
+            self._worker_set_status(f"Extracting {firmware_type} firmware...")
+            self._worker_progress_start()
             self.log(f"Extracting {firmware_type} firmware: {os.path.basename(firmware_file)}", 'info')
 
             # Create firmware-specific subdirectory
@@ -11393,21 +22901,25 @@ Author: Isaki Dube | License: Dual
 
             for name, _, _, _ in entries:
                 try:
-                    out_path = os.path.join(firmware_dir, os.path.basename(name))
+                    relative_name = name.lstrip('/')
+                    out_path = os.path.join(firmware_dir, relative_name)
+                    out_subdir = os.path.dirname(out_path)
+                    if out_subdir:
+                        ensure_dir(out_subdir)
                     extract_tar_entry(work_tar, name, out_path)
                     extracted_count += 1
                 except Exception as e:
                     self.log(f"Failed to extract {name}: {e}", 'warning')
 
             self.log(f"✓ Extracted {extracted_count} files from {firmware_type} firmware", 'success')
-            messagebox.showinfo("Success", f"Extracted {extracted_count} files from {firmware_type} firmware!")
+            self._worker_showinfo("Success", f"Extracted {extracted_count} files from {firmware_type} firmware!")
 
         except Exception as e:
             self.log(f"Extraction failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def compare_images(self):
         """Compare two firmware images"""
@@ -11427,14 +22939,17 @@ Author: Isaki Dube | License: Dual
         if not img2:
             return
 
+        self.status_label.config(text="Comparing images...")
+        self.progress.start()
+        self.log("Comparing firmware images...", 'info')
         threading.Thread(target=self._compare_images_thread,
                         args=(img1, img2), daemon=True).start()
 
     def _compare_images_thread(self, img1: str, img2: str):
         """Thread to compare two images"""
         try:
-            self.status_label.config(text="Comparing images...")
-            self.progress.start()
+            self._worker_set_status("Comparing images...")
+            self._worker_progress_start()
             self.log("Comparing firmware images...", 'info')
 
             # Calculate MD5 hashes
@@ -11480,15 +22995,15 @@ File 2: {os.path.basename(img2)}
 
                 self.log("✗ Images are different", 'warning')
 
-            # Show results in dialog
-            TextOutputDialog(self, "Image Comparison", comparison)
+            # Show results in dialog — must be created on UI thread
+            self._call_on_ui(TextOutputDialog, self, "Image Comparison", comparison)
 
         except Exception as e:
             self.log(f"Comparison failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def apply_patches(self):
         """Apply patches to firmware"""
@@ -11516,51 +23031,158 @@ File 2: {os.path.basename(img2)}
         if not out_file:
             return
 
+        self.status_label.config(text="Applying patches...")
+        self.progress.start()
+        self.log("Applying patches to firmware...", 'info')
         threading.Thread(target=self._apply_patches_thread,
                         args=(base_file, patch_source, out_file), daemon=True).start()
 
     def _apply_patches_thread(self, base_file: str, patch_source: str, out_file: str):
         """Thread to apply patches"""
+        temp_dir = None
         try:
-            self.status_label.config(text="Applying patches...")
-            self.progress.start()
+            self._worker_set_status("Applying patches...")
+            self._worker_progress_start()
             self.log("Applying patches to firmware...", 'info')
 
-            # This is a placeholder implementation
-            # In a real implementation, you would:
-            # 1. Extract the base firmware
-            # 2. Apply patches using appropriate tools (diff/patch, bsdiff, etc.)
-            # 3. Rebuild the firmware package
+            # Create temporary directory
+            temp_dir = tempfile.mkdtemp(prefix="patch_")
+            extract_dir = os.path.join(temp_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
 
-            self.log("Patch application not yet implemented", 'warning')
-            messagebox.showinfo("Not Implemented",
-                              "Patch application functionality is not yet implemented.\n\n"
-                              "This would typically involve:\n"
-                              "• Extracting base firmware\n"
-                              "• Applying binary/text patches\n"
-                              "• Rebuilding firmware package\n\n"
-                              "Please use manual methods for now.")
+            # Step 1: Extract base firmware
+            self.log("Extracting base firmware...", 'info')
+            work_tar = base_file
+
+            if base_file.endswith('.tar.md5'):
+                if not verify_tar_md5(base_file):
+                    raise Exception("Base firmware MD5 verification failed")
+                work_tar = base_file[:-4]  # Remove .md5 suffix to get .tar
+
+            entries = list_tar_entries(work_tar)
+            for entry_name, _, _, _ in entries:
+                out_path = os.path.join(extract_dir, os.path.basename(entry_name))
+                extract_tar_entry(work_tar, entry_name, out_path)
+            
+            self.log(f"Extracted {len(entries)} files", 'success')
+
+            # Step 2: Apply patches
+            self.log("Applying patches...", 'info')
+            patch_ext = os.path.splitext(patch_source)[1].lower()
+            
+            if patch_ext == '.patch':
+                # Text-based patch file
+                patch_tool = tool_resolve('patch')
+                if not patch_tool:
+                    raise Exception("patch tool not found")
+                
+                result = subprocess.run(
+                    [patch_tool, '-p1', '-i', patch_source],
+                    cwd=extract_dir,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode != 0:
+                    self.log(f"Patch output: {result.stdout}", 'info')
+                    self.log(f"Patch errors: {result.stderr}", 'warning')
+                    raise Exception(f"Patch application failed: {result.stderr}")
+                
+                self.log("Patches applied successfully", 'success')
+            
+            elif patch_ext in ['.img', '.bin']:
+                # Binary replacement - replace matching file
+                patch_name = os.path.basename(patch_source)
+                target_file = os.path.join(extract_dir, patch_name)
+                
+                if os.path.exists(target_file):
+                    shutil.copy2(patch_source, target_file)
+                    self.log(f"Replaced {patch_name} with patched version", 'success')
+                else:
+                    # Add as new file
+                    shutil.copy2(patch_source, target_file)
+                    self.log(f"Added new file {patch_name}", 'success')
+            
+            else:
+                raise Exception(f"Unsupported patch format: {patch_ext}")
+
+            # Step 3: Rebuild firmware package
+            self.log("Rebuilding firmware package...", 'info')
+            
+            # Create TAR archive
+            temp_tar = out_file.replace('.tar.md5', '.tar') if out_file.endswith('.tar.md5') else out_file
+            
+            bsdtar = tool_resolve('bsdtar')
+            if not bsdtar:
+                raise Exception("bsdtar not found")
+            
+            # Get all files in extract directory
+            files_to_add = [f for f in os.listdir(extract_dir) if os.path.isfile(os.path.join(extract_dir, f))]
+            
+            if not files_to_add:
+                raise Exception("No files to package")
+            
+            # Create TAR
+            result = subprocess.run(
+                [bsdtar, '-cf', temp_tar] + files_to_add,
+                cwd=extract_dir,
+                capture_output=True
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"TAR creation failed: {result.stderr.decode()}")
+            
+            self.log(f"Created TAR with {len(files_to_add)} files", 'success')
+
+            # Add MD5 footer if output is .tar.md5
+            if out_file.endswith('.tar.md5'):
+                md5_hash = compute_md5(temp_tar)
+                
+                with open(temp_tar, 'rb') as f:
+                    tar_data = f.read()
+                
+                with open(out_file, 'wb') as f:
+                    f.write(tar_data)
+                    f.write(md5_hash.encode('ascii'))
+                    f.write(b'\x00' * (0x200 - len(md5_hash)))
+                
+                if os.path.exists(temp_tar) and temp_tar != out_file:
+                    os.remove(temp_tar)
+                
+                self.log(f"Added MD5 footer: {md5_hash}", 'success')
+            
+            self.log(f"✓ Patched firmware saved: {os.path.basename(out_file)}", 'success')
+            self._worker_showinfo("Success", f"Patched firmware created successfully!\n\nOutput: {out_file}")
 
         except Exception as e:
             self.log(f"Patch application failed: {e}", 'error')
-            messagebox.showerror("Error", str(e))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except OSError:
+                    pass
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
     def generate_odin_package(self):
         """Generate Odin package from current port ROM project"""
         if not hasattr(self, 'port_rom_config') or not self.port_rom_config:
-            messagebox.showerror("Error", "No port ROM configuration found. Please set up a port ROM project first.")
+            self.log("No port ROM configuration found", 'error')
+            styled_messagebox(self, "Error", "No port ROM configuration found. Please set up a port ROM project first.", "error")
             return
 
+        self.status_label.config(text="Generating Odin package...")
+        self.progress.start()
+        self.log("Generating Odin package...", 'info')
         threading.Thread(target=self._generate_odin_package_thread, daemon=True).start()
 
     def _generate_odin_package_thread(self):
         """Thread to generate Odin package"""
         try:
-            self.status_label.config(text="Generating Odin package...")
-            self.progress.start()
+            self._worker_set_status("Generating Odin package...")
+            self._worker_progress_start()
             self.log("Generating Odin package...", 'info')
 
             # Use the implementation that creates AP/BL/CP/CSC and verifies md5 footer
@@ -11568,10 +23190,10 @@ File 2: {os.path.basename(img2)}
 
         except Exception as e:
             self.log(f"Odin package generation failed: {e}", 'error')
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self._worker_showerror("Error", str(e))
         finally:
-            self.status_label.config(text="Ready")
-            self.progress.stop()
+            self._worker_set_status("Ready")
+            self._worker_progress_stop()
 
 # -------------------------
 # Entry Point
@@ -11614,6 +23236,6 @@ if __name__ == "__main__":
             root.withdraw() # Hide the main window
             messagebox.showerror("Application Error", "An unexpected error occurred. Details have been written to crash_log.txt")
             root.destroy()
-        except:
+        except Exception:
             pass
         sys.exit(1)

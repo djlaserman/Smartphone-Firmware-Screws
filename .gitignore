@@ -1,5 +1,10 @@
 *
 !src/
+!.github/
+!.github/workflows/
+!.github/workflows/*
+!scripts/
+!scripts/*
 !COMMERCIAL_LICENSE.md
 !LICENSE.md
 !README.md
