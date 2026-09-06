@@ -60,7 +60,7 @@ except Exception:
 # Configuration & Constants
 # -------------------------
 APP_TITLE = "Smartphone Firmware Screws"
-VERSION = "1.0.0"  # Updated for fixes
+VERSION = "1.0.1"  # Updated for fixes
 TOOLS_DIR = os.path.join(os.path.dirname(__file__), "tools")
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "editor_settings.json")
