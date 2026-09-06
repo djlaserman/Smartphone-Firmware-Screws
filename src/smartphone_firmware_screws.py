@@ -14257,11 +14257,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
             ttk.Checkbutton(
                 row, text="Skip", variable=skip_var,
                 command=lambda s=step_num: self._set_port_step_override(s, "skip"),
-            ).grid(row=0, column=3, sticky='e', padx=(2, 0))
+            ).grid(row=0, column=3, sticky='e', padx=(2, 4))
             ttk.Checkbutton(
                 row, text="Done", variable=done_var,
                 command=lambda s=step_num: self._set_port_step_override(s, "done"),
-            ).grid(row=0, column=4, sticky='e', padx=(2, 0))
+            ).grid(row=0, column=4, sticky='e', padx=(2, 8))
             self.port_rom_step_labels[step_num] = (name_lbl, status_lbl)
             # Don't add a progress bar for every step to save space; show on demand
 
