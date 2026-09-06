@@ -7694,9 +7694,9 @@ class SmartphoneFirmwareScrews(tk.Tk):
         
         # Colored split handle for PanedWindow
         style.configure('Colored.TPanedwindow',
-                        background=COLORS['accent_orange'],
+                        background=COLORS['bg_secondary'],
                         sashwidth=4,
-                        sashrelief='raised')
+                        sashrelief='flat')
         startup_logger.debug("SmartphoneFirmwareScrews: _setup_style finished.")
     
     def _build_menu(self):
@@ -8093,86 +8093,6 @@ class SmartphoneFirmwareScrews(tk.Tk):
         """Replace notebook with a split pane containing the notebook and a new notebook"""
         if not notebook:
             return
-
-        # Keep the existing tab widgets intact. Rebuilding tab frames here
-        # loses their state and can leave callbacks pointing at destroyed
-        # notebooks, especially after a second split.
-        try:
-            all_tabs = list(notebook.tabs())
-            if not all_tabs or not notebook.winfo_exists():
-                return
-            selected_id = notebook.select()
-            selected_index = all_tabs.index(selected_id) if selected_id in all_tabs else 0
-            parent = notebook.master
-            pack_info = None
-            grid_info = None
-            if not isinstance(parent, ttk.PanedWindow):
-                try:
-                    pack_info = notebook.pack_info()
-                except tk.TclError:
-                    pass
-                try:
-                    grid_info = notebook.grid_info()
-                except tk.TclError:
-                    pass
-
-            pane = ttk.PanedWindow(
-                parent,
-                orient=tk.VERTICAL if orientation == "horizontal" else tk.HORIZONTAL,
-                style="Colored.TPanedwindow",
-            )
-
-            if isinstance(parent, ttk.PanedWindow):
-                pane_ids = list(parent.panes())
-                pane_index = next(
-                    (i for i, pane_id in enumerate(pane_ids)
-                     if pane_id == str(notebook)),
-                    None,
-                )
-                parent.forget(notebook)
-                if pane_index is not None and pane_index <= len(parent.panes()):
-                    parent.insert(pane_index, pane, weight=1)
-                else:
-                    parent.add(pane, weight=1)
-            elif pack_info:
-                notebook.pack_forget()
-                pane.pack(**pack_info)
-            elif grid_info:
-                notebook.grid_forget()
-                pane.grid(**grid_info)
-            else:
-                notebook.pack_forget()
-                pane.pack(fill="both", expand=True)
-
-            pane.add(notebook, weight=1)
-            right_notebook = ttk.Notebook(pane)
-            pane.add(right_notebook, weight=1)
-            self._enable_tab_dnd(right_notebook)
-
-            # Move only tabs after the selected tab. The original tab frames
-            # remain alive, so editor state and widget bindings are preserved.
-            for tab_id in all_tabs[selected_index + 1:]:
-                tab_widget = self.nametowidget(tab_id)
-                tab_text = notebook.tab(tab_id, "text")
-                notebook.forget(tab_id)
-                right_notebook.add(tab_widget, text=tab_text)
-
-            if right_notebook.tabs():
-                right_notebook.select(0)
-            else:
-                placeholder = ttk.Frame(right_notebook)
-                right_notebook.add(placeholder, text="Empty")
-                ttk.Label(placeholder, text="<- Drag tabs here", font=("Segoe UI", 11)).pack(expand=True)
-
-            remaining_tabs = notebook.tabs()
-            if remaining_tabs:
-                notebook.select(min(selected_index, len(remaining_tabs) - 1))
-            if self.main_notebook is notebook:
-                self.main_notebook = notebook
-            return
-        except tk.TclError as exc:
-            self.log(f"Split failed: {exc}", "error")
-            return
         
         # Get all tabs from the notebook being split
         all_tabs = notebook.tabs()
@@ -8185,7 +8105,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         for i, tab_id in enumerate(all_tabs):
             tab_widget = self.nametowidget(tab_id)
             tab_text = notebook.tab(tab_id, 'text')
-            tab_info.append((tab_widget, tab_text))
+            tab_info.append((tab_id, tab_widget, tab_text))
             if tab_id == notebook.select():
                 selected_tab_index = i
         
@@ -8201,11 +8121,11 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if not isinstance(parent, ttk.PanedWindow):
             try:
                 pack_info = notebook.pack_info()
-            except tk.TclError:
+            except:
                 pass
             try:
                 grid_info = notebook.grid_info()
-            except tk.TclError:
+            except:
                 pass
         
         # Fix orientation
@@ -8227,7 +8147,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                         break
                 parent.forget(notebook)
                 # After forget, check if index is still valid
-                if pane_index is not None and pane_index <= len(parent.panes()):
+                if pane_index is not None and pane_index < len(parent.panes()):
                     parent.insert(pane_index, new_pane, weight=1)
                 else:
                     parent.add(new_pane, weight=1)
@@ -8241,7 +8161,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
                 else:
                     try:
                         notebook.pack_forget()
-                    except tk.TclError:
+                    except:
                         pass
                     new_pane.pack(fill='both', expand=True)
             
@@ -8274,7 +8194,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
             
             parent.forget(notebook)
             # After forget, check if index is still valid
-            if pane_index is not None and pane_index <= len(parent.panes()):
+            if pane_index is not None and pane_index < len(parent.panes()):
                 parent.insert(pane_index, new_pane, weight=1)
             else:
                 parent.add(new_pane, weight=1)
@@ -8298,7 +8218,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         new_pane.add(left_notebook, weight=1)
         self._enable_tab_dnd(left_notebook)
         
-        for tab_widget, tab_text in left_tabs:
+        for tab_id, tab_widget, tab_text in left_tabs:
             new_frame = ttk.Frame(left_notebook)
             left_notebook.add(new_frame, text=tab_text)
             
@@ -8322,7 +8242,7 @@ class SmartphoneFirmwareScrews(tk.Tk):
         
         # Add tabs to the right of selected tab to right notebook
         if right_tabs:
-            for tab_widget, tab_text in right_tabs:
+            for tab_id, tab_widget, tab_text in right_tabs:
                 new_frame = ttk.Frame(right_notebook)
                 right_notebook.add(new_frame, text=tab_text)
                 
@@ -8391,6 +8311,33 @@ class SmartphoneFirmwareScrews(tk.Tk):
         if not notebook:
             self.log("No notebook to close", 'warning')
             return
+        
+        # Close the last active (selected) tab first
+        try:
+            selected_tab = notebook.select()
+            if selected_tab:
+                tab_widget = self.nametowidget(selected_tab)
+                self._close_tab(notebook, tab_widget)
+        except Exception:
+            pass
+        
+        # Check if notebook still exists and has content
+        try:
+            if not notebook.winfo_exists():
+                return
+            tabs = notebook.tabs()
+            # If notebook still has tabs, just return (tab was closed but pane still has content)
+            if tabs:
+                # Check if there's an Empty placeholder - if so, remove it
+                for tab_id in tabs:
+                    if notebook.tab(tab_id, 'text') == 'Empty':
+                        placeholder_widget = self.nametowidget(tab_id)
+                        notebook.forget(tab_id)
+                        placeholder_widget.destroy()
+                        break
+                return
+        except Exception:
+            pass
         
         try:
             parent = notebook.master
@@ -8687,6 +8634,17 @@ class SmartphoneFirmwareScrews(tk.Tk):
         
         target_nb = target_widget
         
+        # If target_nb is not source_nb but source_nb contains the tab widget,
+        # this is likely a same-notebook reorder where winfo_containing returned wrong widget
+        if target_nb != source_nb:
+            def notebook_contains(nb, widget):
+                for tab_id in nb.tabs():
+                    if self.nametowidget(tab_id) == widget:
+                        return True
+                return False
+            if notebook_contains(source_nb, tab_widget):
+                target_nb = source_nb
+        
         # Don't move if source has only one tab
         if len(source_nb.tabs()) <= 1 and source_nb != target_nb:
             return
@@ -8730,6 +8688,12 @@ class SmartphoneFirmwareScrews(tk.Tk):
         except tk.TclError:
             return
 
+        # Get tab info before moving
+        try:
+            tab_text = source_nb.tab(tab_widget, 'text')
+        except tk.TclError:
+            return
+
         # Remove placeholder if exists in target
         for tab_id in target_nb.tabs():
             if target_nb.tab(tab_id, 'text') == 'Empty':
@@ -8742,30 +8706,23 @@ class SmartphoneFirmwareScrews(tk.Tk):
         source_nb.forget(tab_widget)
         tab_widget.destroy()
         
-        # Recreate tab in target notebook
+        # Create new tab in target notebook
         new_frame = ttk.Frame(target_nb)
+        target_nb.add(new_frame, text=tab_text)
+        
+        # Rebuild the UI for this tab type
         if tab_text == "Firmware":
-            target_nb.add(new_frame, text="Firmware")
             self._build_firmware_ui(new_frame)
         elif tab_text == "ROM Building":
-            target_nb.add(new_frame, text="ROM Building")
             self._build_rom_ui(new_frame)
         elif tab_text == "Hex Editor":
-            target_nb.add(new_frame, text="Hex Editor")
             self._build_hex_editor_ui(new_frame)
         elif tab_text == "File Editor":
-            target_nb.add(new_frame, text="File Editor")
             self._build_file_editor_ui(new_frame)
         elif tab_text == "Port ROM":
-            target_nb.add(new_frame, text="Port ROM")
             self._build_port_rom_ui(new_frame)
         elif tab_text == "Tools":
-            target_nb.add(new_frame, text="Tools")
             self._build_tools_ui(new_frame)
-        else:
-            # Unknown tab type, don't add it
-            new_frame.destroy()
-            return
         
         # Select the new tab
         target_nb.select(new_frame)
